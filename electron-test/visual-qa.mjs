@@ -11,6 +11,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { app, BrowserWindow, ipcMain, nativeImage } from 'electron'
 
 import { isTrustedApplicationSender, registerIpcHandlers } from '../src/main/ipc-controller.mjs'
+import { registerWindowMenu } from '../src/main/window-menu.mjs'
+import { WindowMenuChannel } from '../src/shared/window-menu.mjs'
 import { visualWindowOptions } from './visual-window-options.mjs'
 import { guardVisualOutput } from './visual-output.mjs'
 import { normalizeConsoleMessage, VisualErrorTracker } from './visual-error-tracker.mjs'
@@ -33,11 +35,11 @@ app.commandLine.appendSwitch('force-prefers-reduced-motion')
 // behavior and minimum-size/security defaults are not changed.
 if (process.platform === 'win32') {
     app.commandLine.appendSwitch('force-device-scale-factor', '1')
-    // The virtual Windows GPU produces stable-but-different antialiased pixels
-    // across processes. Software rasterization makes repeat evidence comparable
-    // without enlarging the visual noise budget or altering the real app.
-    app.disableHardwareAcceleration()
 }
+// Use the same software compositor for QA on every host rather than depending
+// on each GPU's antialiasing. Pixel budgets and production GPU behavior remain
+// unchanged; settled renderer state is still required before every capture.
+app.disableHardwareAcceleration()
 
 const projectDirectory = fileURLToPath(new URL('..', import.meta.url))
 const indexPath = fileURLToPath(new URL('../src/index.html', import.meta.url))
@@ -167,6 +169,19 @@ const services = {
 }
 
 const ipcController = registerIpcHandlers({ ipcMain, services })
+// Visual fixtures own no native menus. Keep the real trusted menu boundary so
+// preload reads resolve normally and untrusted/popup requests still fail closed.
+registerWindowMenu({
+    ipcMain,
+    BrowserWindow,
+    isTrustedSender: services.isTrustedSender,
+    Menu: {
+        /** @returns {null} No native application menu exists in visual QA. */
+        getApplicationMenu() {
+            return null
+        }
+    }
+})
 
 /**
  * Waits for one renderer selector without guessing at fixed load timings.
@@ -653,11 +668,11 @@ async function captureEntry(window, entry, errorTracker, cursor, functionalEvide
     await positionSceneForCapture(window.webContents, entry.state)
     await stabilizeInteractionForCapture(window)
     const inspection = await inspectRenderer(window, entry, errorTracker, cursor, functionalEvidence)
-    assertVisualSnapshot(inspection, entry)
-    errorTracker.assertEmptySince(cursor, `${entry.state}/${entry.viewport.name}`)
     let candidateImage
     let capture
     try {
+        assertVisualSnapshot(inspection, entry)
+        errorTracker.assertEmptySince(cursor, `${entry.state}/${entry.viewport.name}`)
         capture = await captureValidatedVisualImage({
             /** @returns {Promise<Electron.NativeImage>} One candidate compositor frame. */
             async capture() {
@@ -678,6 +693,7 @@ async function captureEntry(window, entry, errorTracker, cursor, functionalEvide
     } catch (error) {
         // Capture only this isolated fixture's failed pixels/inspection so a
         // real paint/layout failure remains diagnosable without weakening it.
+        if (!candidateImage) candidateImage = await window.webContents.capturePage()
         if (candidateImage && !candidateImage.isEmpty()) await writeFile(join(evidenceDirectory, `failed-${entry.screenshot}`), candidateImage.toPNG())
         await writeFile(join(evidenceDirectory, `failed-${entry.screenshot}.json`), JSON.stringify(inspection, null, 2))
         throw new Error(`Visual QA failed at ${entry.state}/${entry.viewport.name}: ${error.message}`, { cause: error })
@@ -740,6 +756,14 @@ async function writeVisualScreenshot(screenshotPath, image, injectRasterNoise, c
         const confirmedImage = await confirmReplacement()
         const confirmedComparison = compareVisualImages(trackedImage, confirmedImage)
         if (!confirmedComparison.meaningfulDifference) return
+        // Preserve exact before/after pixels for diagnosing drift without
+        // changing the comparison decision or replacing evidence prematurely.
+        const driftDirectory = process.env.OPENRDX_VISUAL_QA_DIAGNOSTICS_DIRECTORY ?? join(dirname(screenshotPath), 'raster-drift')
+        await mkdir(driftDirectory, { recursive: true })
+        const driftName = `${process.pid}-${basename(screenshotPath)}`
+        await writeFile(join(driftDirectory, `tracked-${driftName}`), trackedImage.toPNG())
+        await writeFile(join(driftDirectory, `candidate-${driftName}`), image.toPNG())
+        await writeFile(join(driftDirectory, `confirmed-${driftName}`), confirmedImage.toPNG())
         if (hasMeaningfulVisualDifference(comparison.freshRaster, confirmedComparison.freshRaster)) {
             throw new Error(`Visual QA screenshot remained unstable after confirmation: ${basename(screenshotPath)}`)
         }
@@ -874,6 +898,8 @@ async function runVisualQa() {
         if (debuggerSession.isAttached()) debuggerSession.detach()
         trustedWebContents.delete(window.webContents)
         ipcController.dispose()
+        ipcMain.removeHandler(WindowMenuChannel.list)
+        ipcMain.removeHandler(WindowMenuChannel.open)
         window.destroy()
     }
 }

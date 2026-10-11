@@ -181,13 +181,13 @@ async function waitForFixtureTurn() {
     await new Promise(schedule)
 }
 
-/** @returns {object} Deterministic local support API with no file, network, or hardware effects. */
-function createSupportApi() {
+/** @param {object} appInfo - Settled metadata from the real preload boundary. @returns {object} Deterministic local support API with no file, network, or hardware effects. */
+function createSupportApi(appInfo) {
     return {
         app: {
             /** @returns {Promise<object>} Returns bounded fixture metadata. */
             async getInfo() {
-                return (await globalThis.openRdx?.app?.getInfo({})) ?? { ok: false, reason: 'service-unavailable' }
+                return appInfo
             }
         },
         logs: {
@@ -251,6 +251,10 @@ async function openSceneSurface(scene) {
  * @returns {Promise<void>} Resolves after the surface is mounted and settled.
  */
 export async function mountVisualFixture(scene) {
+    // Resolve the real read-only metadata boundary before mounting. Startup and
+    // support reads then share settled package metadata rather than racing IPC
+    // completions that can reconcile a dialog during an otherwise stable paint.
+    const appInfo = (await globalThis.openRdx?.app?.getInfo({})) ?? { ok: false, reason: 'service-unavailable' }
     globalThis.__openRdxVisualFixture?.controller?.destroy()
     const currentRoot = document.querySelector('#app')
     const root = currentRoot.cloneNode(false)
@@ -280,7 +284,7 @@ export async function mountVisualFixture(scene) {
         platform: 'darwin',
         securityStateProvider: createSecurityStateProvider(scene),
         store: createStore(state),
-        supportApi: createSupportApi(),
+        supportApi: createSupportApi(appInfo),
         translator: createTranslator(getCatalog(language), englishCatalog),
         utilityController
     })

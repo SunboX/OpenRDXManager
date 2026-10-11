@@ -11,6 +11,7 @@ Development setup and implementation notes. These documents describe code and ho
 - [Licensing](licensing.md)
 - [Device workflows](device-workflows.md)
 - [Documentation screenshots](documentation-screenshots.md)
+- [Installer builds and releases](installer-builds.md)
 - [TI compiler handoff (2026-09-15)](ti-compiler-handoff-2026-09-15.md)
 - [Development dependencies](dependencies.md)
 - [Diagnostic feedback](diagnostic-feedback.md)

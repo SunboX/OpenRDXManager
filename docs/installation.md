@@ -7,6 +7,14 @@ OpenRDXManager runs on macOS, Windows and Linux. Opening its window and obtainin
 
 ## Launch and device access
 
+Download the matching package from [GitHub Releases](https://github.com/SunboX/OpenRDXManager/releases/latest). Choose ARM64 for Apple silicon or an ARM Windows/Linux computer, and x64 for Intel/AMD computers.
+
+- **macOS:** Open the DMG and move OpenRDXManager to Applications, or extract the ZIP. The first release uses an ad-hoc signature and is not notarized. Its privileged hardware service remains unavailable without a trusted Apple-signed Manager.
+- **Windows:** Run the installer EXE, or extract the portable ZIP. The first release is unsigned. Its privileged service requires a trusted signed Manager; the portable package does not install a Windows service.
+- **Linux:** Install the DEB with your package manager, or use the AppImage/TAR.GZ for a portable app. The DEB installs the native systemd socket and device policy. An administrator must explicitly add the intended desktop user to the `openrdx` group (`sudo usermod -aG openrdx "$USER"`); sign out and back in afterward. Portable packages do not install the system service.
+
+Unsigned packages may show operating-system trust warnings. Read the release notes before installation; a successful launch does not override these service-access limits.
+
 1. Connect the RDX dock and launch OpenRDXManager.
 2. Follow any service setup or approval action shown by the application.
 3. Check the service status, then select the dock in the device rail. Use **Scan for RDX devices** if it has not appeared.

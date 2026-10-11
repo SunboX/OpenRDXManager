@@ -205,6 +205,7 @@ test('consecutive real visual QA commands preserve isolated captures and leave c
         const output = await runVisualQaCommand(index === 0 ? [] : ['--visual-qa-inject-raster-noise=starting-runtime-minimum-1024x768.png'])
         // A zero process exit alone does not prove the complete matrix ran.
         assert.match(output, /OpenRDXManager visual QA passed: 62 screenshots/)
+        assert.doesNotMatch(output, /No handler registered|Error occurred in handler/u)
         runs.push({
             manifestHash: await hashEvidenceFile(join(evidenceDirectory, 'visual-qa-results.json')),
             screenshotSetHash: await hashScreenshotSet(),

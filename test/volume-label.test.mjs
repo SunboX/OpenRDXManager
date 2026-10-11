@@ -10,6 +10,7 @@ import { updateVolumeLabelForm } from '../src/renderer/volume-label-form.mjs'
 import { createStore } from '../src/renderer/store.mjs'
 import { renderUtilitiesView } from '../src/renderer/views/utilities-view.mjs'
 import { completeDeviceSnapshot } from './helpers/device-snapshot.mjs'
+import { collectVisualDisabledReasons } from '../electron-test/visual-qa-contract.mjs'
 
 /** @param {object} overrides - Media overrides. @param {number} revision - Device revision. @returns {object} Complete selected cartridge fixture. */
 function device(overrides = {}, revision = 12) {
@@ -45,6 +46,29 @@ test('label card displays current label, filesystem limit, and preserves unavail
     ]) {
         const view = renderUtilitiesView(selected, { document, ...options })
         assert.equal(view.querySelector('[data-utility-volume-label]').disabled, true)
+    }
+    window.window.close()
+})
+
+test('disabled label input exposes its visible capability reason outside its enclosing label', () => {
+    const window = dom()
+    const document = window.window.document
+    const unsupported = structuredClone(device())
+    unsupported.capabilities['volume-label-set'] = { state: 'unsupported-platform', reason: 'unsupported-platform' }
+    for (const [selected, options, expectedState] of [
+        [unsupported, {}, 'unsupported-platform'],
+        [device(), { locked: true }, 'busy'],
+        [device({ label: undefined }), {}, 'evidence-incomplete']
+    ]) {
+        const view = renderUtilitiesView(selected, { document, ...options })
+        document.querySelector('#app').replaceChildren(view)
+        const input = view.querySelector('[data-utility-volume-label]')
+        assert.equal(input.disabled, true)
+        const reasons = collectVisualDisabledReasons(input, document, (element) => !element.hidden)
+        assert.equal(reasons.length, 1, 'The input must reference rendered reason text, not only a tooltip')
+        const capability = input.closest('[data-feature]').querySelector('[data-capability-state]')
+        assert.equal(capability.dataset.capabilityState, expectedState)
+        assert.equal(reasons[0], capability.querySelector('[data-capability-reason]').textContent.trim())
     }
     window.window.close()
 })

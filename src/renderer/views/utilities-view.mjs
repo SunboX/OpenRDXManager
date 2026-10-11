@@ -336,10 +336,10 @@ function utilityButton(document, model) {
 }
 
 /**
- * Associates an action with the visible capability explanation in its card.
+ * Associates a control with the visible capability explanation in its card.
  * @param {HTMLElement} card - Utility card that owns the capability status.
- * @param {HTMLButtonElement} button - Action button to describe.
- * @returns {HTMLButtonElement} The same button with an accessible description.
+ * @param {HTMLButtonElement|HTMLInputElement} button - Control to describe.
+ * @returns {HTMLButtonElement|HTMLInputElement} The same control with an accessible description.
  */
 function describeUtilityButton(card, button) {
     const reason = card.querySelector('.utility-capability [data-capability-reason]')
@@ -609,7 +609,7 @@ function renderVolumeLabelCard(document, device, options) {
     const card = utilityCard(document, 'volume-label', 'ph-tag', 'utilities.volumeLabel.eyebrow', 'utilities.volumeLabel.title', 'utilities.volumeLabel.description', t)
     const current = device.media?.label
     card.append(paragraph(document, t('utilities.volumeLabel.current', { label: typeof current === 'string' ? (current === '' ? t('utilities.volumeLabel.unnamed') : current) : t('state.notReported') }), 'utility-guidance'))
-    const capability = resolveUtilityCapability(device, 'volume-label-set', [], options)
+    const capability = resolveUtilityCapability(device, 'volume-label-set', [{ met: typeof current === 'string' }], { ...options, unmetState: 'evidence-incomplete', unmetReason: 'volume-label-current-name-unreported' })
     const { maximum, bytes } = volumeLabelLimits(device.media?.filesystem)
     const label = document.createElement('label')
     label.className = 'utility-select-label'
@@ -639,6 +639,7 @@ function renderVolumeLabelCard(document, device, options) {
         ])
     }
     appendWorkflowState(card, workflow, device, [workflow.kind], options)
+    describeUtilityButton(card, input)
     card.append(describeUtilityButton(card, utilityButton(document, { action: 'set-volume-label', kind: workflow.kind, label: t('utilities.volumeLabel.action'), disabled: true, reason: translateUtilityReason(capability.reason, t) })))
     return card
 }

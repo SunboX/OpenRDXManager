@@ -48,10 +48,15 @@
         "test:linux-label:electron": "electron electron-test/linux-label-acceptance.mjs",
         "test:firmware-selection:electron": "electron electron-test/firmware-selection-acceptance.mjs",
         "prescreenshots:docs": "npm run build:preload",
-        "screenshots:docs": "electron electron-test/documentation-screenshots.mjs"
+        "screenshots:docs": "electron electron-test/documentation-screenshots.mjs",
+        "dist": "npm run build:preload && node scripts/prepare-installer-runtime.mjs && electron-builder --config scripts/installer-config.mjs --publish=never",
+        "dist:dir": "npm run dist -- --dir",
+        "verify:release-assets": "node scripts/release-assets.mjs",
+        "verify:packaged-app": "node scripts/verify-packaged-app.mjs"
     },
     "devDependencies": {
         "electron": "^44.0.0",
+        "electron-builder": "26.17.0",
         "esbuild": "^0.28.2",
         "jsdom": "^27.0.1",
         "node-gyp": "^12.1.0",
@@ -67,5 +72,9 @@
         "@phosphor-icons/web": "^2.1.2",
         "zod": "^4.4.3"
     },
-    "license": "AGPL-3.0-or-later"
+    "license": "AGPL-3.0-or-later",
+    "author": {
+        "name": "André Fiedler",
+        "email": "83344+SunboX@users.noreply.github.com"
+    }
 }

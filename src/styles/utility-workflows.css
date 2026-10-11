@@ -335,6 +335,15 @@
     }
 }
 
+/* Keep the complete destructive preflight visible above the desktop panel's
+   lower edge when title-bar chrome reduces the minimum window's usable height. */
+@media (min-width: 821px) and (max-height: 800px) {
+    .utility-card[data-feature='format'] {
+        gap: 10px;
+        padding: 16px;
+    }
+}
+
 @media (max-width: 760px) {
     .utilities-workspace__header {
         align-items: flex-start;
