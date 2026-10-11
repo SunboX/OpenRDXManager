@@ -1,0 +1,27 @@
+# Attribution and notices
+
+OpenRDXManager was created by André Fiedler / SunboX.
+
+Copyright (C) 2026 André Fiedler.
+
+Project repository: https://github.com/SunboX/OpenRDXManager
+Related firmware project: https://github.com/SunboX/OpenRDX
+
+Repository-owned software is licensed under AGPL-3.0-or-later.
+Repository-owned documentation and non-code media are licensed under
+CC-BY-SA-4.0 where identified by .reuse/dep5 or their SPDX notices.
+Preserve the copyright, license, attribution and third-party notices required
+by the applicable licenses when redistributing source, modified versions,
+binaries or packaged applications.
+
+OpenRDX firmware fixtures and the migration bootstrap contain Texas Instruments
+TUSB926x firmware material and OpenRDX additions. Their existing notices and
+terms remain applicable; the Manager license does not replace or broaden the
+terms for the Texas Instruments material. See LICENSES/LicenseRef-TI-TUSB926x.txt
+and .reuse/dep5. Original vendor firmware and vendor documentation retain the
+rights and terms supplied by their publishers.
+
+Dependencies, including Electron, Inter, Oxanium, Phosphor Icons, the MCP SDK
+and Rust dependencies, retain their own licenses and notices. Their source and
+license files are supplied with the installed packages. A packaged distribution
+must include the notices required by the dependencies it ships.

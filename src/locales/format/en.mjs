@@ -1,0 +1,43 @@
+// SPDX-FileCopyrightText: 2026 André Fiedler
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+/** Localized format choices, confirmation and native-host guidance. */
+export const formatCatalog = Object.freeze({
+    'utilities.format.eyebrow': 'DESTRUCTIVE · HOST STORAGE',
+    'utilities.format.title': 'Partition & Format Cartridge',
+    'utilities.format.description': 'Recreate the selected cartridge partition and filesystem, then prove the volume reappears.',
+    'utilities.format.tooling': 'NTFS is the default. NTFS and exFAT use quick format; missing tooling blocks before dismount or layout changes.',
+    'utilities.format.filesystem.fat': 'MS-DOS (FAT)',
+    'utilities.format.filesystem.fat12': 'MS-DOS (FAT12)',
+    'utilities.format.filesystem.fat16': 'MS-DOS (FAT16)',
+    'utilities.format.filesystem.fat32': 'MS-DOS (FAT32)',
+    'utilities.format.filesystem.hfs': 'Mac OS Extended',
+    'utilities.format.filesystem.hfs-case-sensitive': 'Mac OS Extended (Case-sensitive)',
+    'utilities.format.filesystem.hfs-journaled': 'Mac OS Extended (Journaled)',
+    'utilities.format.filesystem.hfs-case-sensitive-journaled': 'Mac OS Extended (Case-sensitive, Journaled)',
+    'utilities.format.filesystem.apfs': 'APFS',
+    'utilities.format.filesystem.apfs-case-sensitive': 'APFS (Case-sensitive)',
+    'utilities.format.filesystem.apfs-encrypted': 'APFS (Encrypted)',
+    'utilities.format.filesystem.apfs-case-sensitive-encrypted': 'APFS (Case-sensitive, Encrypted)',
+    'utilities.format.password': 'Encryption password',
+    'utilities.format.passwordConfirm': 'Confirm encryption password',
+    'utilities.format.passwordRequired': 'Enter matching encryption passwords (up to 512 UTF-8 bytes, without line breaks). Keep this password: it is needed to unlock the cartridge.',
+    'utilities.format.capacityUnsupported': 'The selected filesystem does not support this cartridge capacity.',
+    'utilities.format.tooling.linux': 'ext4 is the Linux default. Choose a Linux filesystem or a cross-platform format. Required filesystem tools are checked before unmounting or changing the disk layout.',
+    'utilities.format.filesystem.ext2': 'ext2',
+    'utilities.format.filesystem.ext3': 'ext3',
+    'utilities.format.filesystem.ext4': 'ext4',
+    'utilities.format.filesystem.xfs': 'XFS',
+    'utilities.format.filesystem.btrfs': 'Btrfs',
+    'utilities.format.filesystem.f2fs': 'F2FS',
+    'utilities.format.filesystem.ntfs.linux': 'NTFS',
+    'utilities.format.tooling.macos': 'exFAT and FAT work with Windows and macOS. APFS and Mac OS Extended are Mac formats. macOS cannot create NTFS. FAT12 and FAT16 require small media.',
+    'utilities.format.tooling.unavailable': 'No supported native formatter was proven for this host, so formatting remains disabled.',
+    'utilities.format.filesystemLabel': 'Filesystem',
+    'utilities.format.filesystem.ntfs': 'NTFS quick format (default)',
+    'utilities.format.filesystem.exfat': 'exFAT quick format',
+    'utilities.format.identityUnavailable': 'Exact cartridge identity unavailable',
+    'utilities.format.typeIdentity': 'Type {identity} exactly',
+    'utilities.format.consequence': 'This destroys all data on the selected cartridge. Quick format is not cryptographic erasure of previously unencrypted data.',
+    'utilities.format.action': 'Erase & Format Exact Cartridge'
+})

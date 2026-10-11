@@ -1,0 +1,7 @@
+error: cannot construct `InstallableFirmwareImage` with struct literal syntax due to private fields
+ --> tests/ui/firmware_installable_fields.rs:6:13
+  |
+6 |     let _ = InstallableFirmwareImage { image };
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^   ----- private field
+  |
+  = note: ...and other private field `authorization` that was not provided

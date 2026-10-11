@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: 2026 André Fiedler
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Reserve only the proven Tandberg RDX USB identity for the root-owned daemon.
+# The `openrdx` group controls the local IPC socket only and receives no raw SG access.
+ACTION=="add|change", SUBSYSTEM=="scsi_generic", ATTRS{idVendor}=="1a5a", ATTRS{idProduct}=="0006", OWNER="root", GROUP="root", MODE="0600"

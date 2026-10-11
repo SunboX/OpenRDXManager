@@ -1,0 +1,30 @@
+error[E0599]: no function or associated item named `from_cdb` found for struct `ScsiOperation` in the current scope
+ --> tests/ui/raw_cdb.rs:4:28
+  |
+4 |     let _ = ScsiOperation::from_cdb(vec![0x12, 0, 0, 0, 0xFE, 0]);
+  |                            ^^^^^^^^ function or associated item not found in `ScsiOperation`
+  |
+note: if you're trying to build a new `ScsiOperation` consider using one of the following associated functions:
+      ScsiOperation::self_test
+      ScsiOperation::led_test
+      ScsiOperation::unit_reset
+      ScsiOperation::eject_media
+      and $N others
+ --> src/sg.rs
+  |
+  |     pub const fn self_test() -> Self {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+  |     pub const fn led_test(on: bool) -> Self {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+  |     pub const fn unit_reset() -> Self {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+  |     pub const fn eject_media() -> Self {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: there is an associated function `from` with a similar name
+  |
+4 -     let _ = ScsiOperation::from_cdb(vec![0x12, 0, 0, 0, 0xFE, 0]);
+4 +     let _ = ScsiOperation::from(vec![0x12, 0, 0, 0, 0xFE, 0]);
+  |

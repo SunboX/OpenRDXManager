@@ -1,0 +1,282 @@
+{
+  "applicationVersion": "1.0.0",
+  "captureDate": "2026-10-11",
+  "data": "Demonstration fixtures, not connected hardware",
+  "captures": [
+    {
+      "name": "status",
+      "scene": "status",
+      "anchor": null,
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 610670
+    },
+    {
+      "name": "encryption",
+      "scene": "encryption",
+      "anchor": null,
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 767818
+    },
+    {
+      "name": "credentials",
+      "scene": "encryption",
+      "anchor": ".security-section--wide h3",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 615350
+    },
+    {
+      "name": "credential-actions",
+      "scene": "encryption",
+      "anchor": "[data-action=\"change-credential\"]",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 688060
+    },
+    {
+      "name": "automatic-access",
+      "scene": "encryption",
+      "anchor": "[data-automatic-write-access]",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 831736
+    },
+    {
+      "name": "protection-reset",
+      "scene": "encryption",
+      "anchor": "[data-action=\"reset-protection\"]",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 744695
+    },
+    {
+      "name": "diagnostics",
+      "scene": "tests",
+      "anchor": null,
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 703498
+    },
+    {
+      "name": "write-read-test",
+      "scene": "tests",
+      "anchor": "[data-test-kind=\"write-read-test\"] h3",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 569133
+    },
+    {
+      "name": "firmware-update",
+      "scene": "utilities",
+      "anchor": "[data-feature=\"firmware\"] h3",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 626846
+    },
+    {
+      "name": "eject",
+      "scene": "utilities",
+      "anchor": "[data-feature=\"eject\"] h3",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 714395
+    },
+    {
+      "name": "sata-mode",
+      "scene": "utilities",
+      "anchor": "[data-feature=\"sata-mode\"] h3",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 736449
+    },
+    {
+      "name": "volume-label",
+      "scene": "utilities",
+      "anchor": "[data-feature=\"volume-label\"] h3",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 549068
+    },
+    {
+      "name": "format",
+      "scene": "destructive-preflight",
+      "anchor": "[data-format-confirmation]",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 545341
+    },
+    {
+      "name": "drive-letter",
+      "scene": "windows-utilities",
+      "anchor": "[data-feature=\"drive-letter\"] h3",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 729499
+    },
+    {
+      "name": "manufacturing-backup",
+      "scene": "manufacturing",
+      "anchor": "[data-manufacturing-panel] h3",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 711164
+    },
+    {
+      "name": "manufacturing-restore",
+      "scene": "manufacturing",
+      "anchor": "[data-manufacturing-action=\"restore\"]",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 710185
+    },
+    {
+      "name": "migration-recovery",
+      "scene": "recovery",
+      "anchor": "[data-recovery-panel] h2",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 239519
+    },
+    {
+      "name": "firmware-progress",
+      "scene": "critical-active",
+      "anchor": "[data-feature=\"firmware\"] h3",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 620417
+    },
+    {
+      "name": "activity-log",
+      "scene": "activity",
+      "anchor": null,
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 466259
+    },
+    {
+      "name": "help",
+      "scene": "help",
+      "anchor": null,
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 591005
+    },
+    {
+      "name": "compatibility",
+      "scene": "compatibility",
+      "anchor": null,
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 592335
+    },
+    {
+      "name": "support",
+      "scene": "support",
+      "anchor": null,
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 654155
+    },
+    {
+      "name": "languages",
+      "scene": "language-de",
+      "anchor": null,
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 694623
+    },
+    {
+      "name": "ai-agent-access",
+      "scene": "status",
+      "anchor": "[data-mcp-settings] h1",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 564825
+    },
+    {
+      "name": "discovery",
+      "scene": "no-device",
+      "anchor": null,
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "fixture": true,
+      "bytes": 250128
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+error[E0599]: no method named `clone` found for struct `ValidatedVolumeMutationLease<'device>` in the current scope
+ --> tests/ui/windows_validated_volume_lease_clone.rs:4:35
+  |
+4 |     let _second_authority = lease.clone();
+  |                                   ^^^^^ method not found in `ValidatedVolumeMutationLease<'_>`

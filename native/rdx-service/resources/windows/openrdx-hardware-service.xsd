@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 André Fiedler -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+
+<xs:schema
+  xmlns:xs="http://www.w3.org/2001/XMLSchema"
+  targetNamespace="urn:openrdx:windows-service-metadata:1"
+  xmlns="urn:openrdx:windows-service-metadata:1"
+  elementFormDefault="qualified"
+>
+  <xs:simpleType name="strictBoolean">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="true" />
+      <xs:enumeration value="false" />
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:element name="serviceMetadata">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="identity">
+          <xs:complexType>
+            <xs:attribute name="serviceName" type="xs:string" use="required" />
+            <xs:attribute name="displayName" type="xs:string" use="required" />
+            <xs:attribute name="executable" type="xs:string" use="required" />
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="runtime">
+          <xs:complexType>
+            <xs:attribute name="account" type="xs:string" use="required" />
+            <xs:attribute name="arguments" use="required" fixed="--service-mode named-pipe --protocol-version 1" />
+            <xs:attribute name="startMode" use="required" fixed="demand" />
+            <xs:attribute name="errorControl" use="required" fixed="normal" />
+            <xs:attribute name="loadOrderGroup" use="required" fixed="none" />
+            <xs:attribute name="dependencies" use="required" fixed="none" />
+            <xs:attribute name="interactive" type="strictBoolean" use="required" fixed="false" />
+            <xs:attribute name="networkAccess" type="strictBoolean" use="required" fixed="false" />
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="serviceLifecycle">
+          <xs:complexType>
+            <xs:attribute name="dispatcher" use="required" fixed="windows-scm" />
+            <xs:attribute name="acceptedControls" use="required" fixed="stop shutdown" />
+            <xs:attribute name="statusSequence" use="required" fixed="start-pending running stop-pending stopped" />
+            <xs:attribute name="stopPollMs" use="required" fixed="250" />
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="endpoint">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="accessControl">
+                <xs:complexType>
+                  <xs:attribute name="protectedDacl" type="strictBoolean" use="required" fixed="true" />
+                  <xs:attribute name="serviceSid" use="required" fixed="S-1-5-19" />
+                  <xs:attribute name="administratorsSid" use="required" fixed="S-1-5-32-544" />
+                  <xs:attribute name="currentUserResolution" use="required" fixed="verified-session-token-at-connect" />
+                  <xs:attribute name="currentUserAccessMask" use="required" fixed="0x00100183" />
+                  <xs:attribute name="currentUserCanCreatePipeInstance" type="strictBoolean" use="required" fixed="false" />
+                  <xs:attribute name="rejectAnonymous" type="strictBoolean" use="required" fixed="true" />
+                  <xs:attribute name="rejectNetwork" type="strictBoolean" use="required" fixed="true" />
+                </xs:complexType>
+              </xs:element>
+            </xs:sequence>
+            <xs:attribute name="pipeName" use="required" fixed="\\.\pipe\OpenRDXHardwareService" />
+            <xs:attribute name="rejectRemoteClients" type="strictBoolean" use="required" fixed="true" />
+            <xs:attribute name="maxInstances" use="required" fixed="8" />
+            <xs:attribute name="maxFrameBytes" use="required" fixed="65536" />
+            <xs:attribute name="acceptTimeoutMs" use="required" fixed="10000" />
+            <xs:attribute name="handshakeTimeoutMs" use="required" fixed="2000" />
+            <xs:attribute name="clientConnector" use="required" fixed="direct-napi" />
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="deviceAccess">
+          <xs:complexType>
+            <xs:attribute name="interfaceClass" type="xs:string" use="required" />
+            <xs:attribute name="discoveryDesiredAccess" use="required" fixed="none" />
+            <xs:attribute name="transportDesiredAccess" use="required" fixed="read-write" />
+            <xs:attribute name="volumeMappingDesiredAccess" use="required" fixed="none" />
+            <xs:attribute name="volumeMutationDesiredAccess" use="required" fixed="read-write" />
+            <xs:attribute name="volumeMutationControls" use="required" fixed="lock dismount" />
+            <xs:attribute name="shareMode" use="required" fixed="read-write" />
+            <xs:attribute name="explicitDeviceAclRequired" type="strictBoolean" use="required" fixed="true" />
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="serviceAccessProvisioning">
+          <xs:complexType>
+            <xs:attribute name="provisioner" use="required" fixed="openrdx-service-acl.exe" />
+            <xs:attribute name="installerContract" use="required" fixed="provision-openrdx-service-access.ps1" />
+            <xs:attribute name="provisionAction" use="required" fixed="provision" />
+            <xs:attribute name="verifyAction" use="required" fixed="verify" />
+            <xs:attribute name="removeAction" use="required" fixed="remove" />
+            <xs:attribute name="managerIdentityInput" use="required" fixed="active-console-process-id" />
+            <xs:attribute name="managerAccessMask" use="required" fixed="0x00000015" />
+            <xs:attribute name="protectedCanonicalDacl" type="strictBoolean" use="required" fixed="true" />
+            <xs:attribute name="idempotent" type="strictBoolean" use="required" fixed="true" />
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="driveLetterRegistryProvisioning">
+          <xs:complexType>
+            <xs:attribute name="key" use="required" fixed="HKEY_LOCAL_MACHINE\SOFTWARE\OpenRDXManager\DriveLetters" />
+            <xs:attribute name="createWithFinalDescriptor" type="strictBoolean" use="required" fixed="true" />
+            <xs:attribute name="transactionRollback" use="required" fixed="new-empty-key-on-service-failure" />
+            <xs:attribute name="ownerSid" use="required" fixed="S-1-5-32-544" />
+            <xs:attribute name="groupSid" use="required" fixed="S-1-5-18" />
+            <xs:attribute name="protectedCanonicalDacl" type="strictBoolean" use="required" fixed="true" />
+            <xs:attribute name="systemAccessMask" use="required" fixed="0x000f003f" />
+            <xs:attribute name="administratorsAccessMask" use="required" fixed="0x000f003f" />
+            <xs:attribute name="localServiceParentAccessMask" use="required" fixed="0x0002000f" />
+            <xs:attribute name="localServiceChildAccessMask" use="required" fixed="0x0003000f" />
+            <xs:attribute name="localServiceChildAce" use="required" fixed="container-inherit inherit-only" />
+            <xs:attribute name="rejectForeignOrBroadenedAcl" type="strictBoolean" use="required" fixed="true" />
+            <xs:attribute name="verifyBeforeReadiness" type="strictBoolean" use="required" fixed="true" />
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="readiness">
+          <xs:complexType>
+            <xs:attribute name="serviceControlAccess" use="required" fixed="query-config query-status start" />
+            <xs:attribute name="serviceControlPrincipal" use="required" fixed="verified-current-manager-user" />
+            <xs:attribute name="serviceControlAccessMask" use="required" fixed="0x00000015" />
+            <xs:attribute name="serviceControlOtherUnprivilegedAccess" use="required" fixed="none" />
+            <xs:attribute name="serviceControlCanStop" type="strictBoolean" use="required" fixed="false" />
+            <xs:attribute name="serviceControlCanChangeConfig" type="strictBoolean" use="required" fixed="false" />
+            <xs:attribute name="serviceControlCanDelete" type="strictBoolean" use="required" fixed="false" />
+            <xs:attribute name="activationTimeoutMs" use="required" fixed="5000" />
+            <xs:attribute name="nativeActivationTimeoutMs" use="required" fixed="7000" />
+            <xs:attribute name="outerActivationTimeoutMs" use="required" fixed="8000" />
+            <xs:attribute name="preStartConfigValidation" type="strictBoolean" use="required" fixed="true" />
+            <xs:attribute name="serviceMustBeRunning" type="strictBoolean" use="required" fixed="true" />
+            <xs:attribute name="servicePidMustMatchCurrentProcess" type="strictBoolean" use="required" fixed="true" />
+            <xs:attribute name="servicePidMustRemainStable" type="strictBoolean" use="required" fixed="true" />
+            <xs:attribute name="serviceRuntimeTypeMustBeOwnProcess" type="strictBoolean" use="required" fixed="true" />
+            <xs:attribute name="serviceConfigMustRemainStable" type="strictBoolean" use="required" fixed="true" />
+            <xs:attribute name="serviceBinaryMustMatchCurrentProcess" type="strictBoolean" use="required" fixed="true" />
+            <xs:attribute name="serviceTokenUserMustBeLocalService" type="strictBoolean" use="required" fixed="true" />
+            <xs:attribute name="clientMustVerifyServerPid" type="strictBoolean" use="required" fixed="true" />
+            <xs:attribute name="clientMustVerifyStableServiceConfig" type="strictBoolean" use="required" fixed="true" />
+            <xs:attribute name="processAccess" use="required" fixed="query-limited-information" />
+            <xs:attribute name="tokenAccess" use="required" fixed="query" />
+            <xs:attribute name="directAuthorityRequiresElevatedToken" type="strictBoolean" use="required" fixed="true" />
+            <xs:attribute name="directAuthorityRequiresExactDeviceAccess" type="strictBoolean" use="required" fixed="true" />
+          </xs:complexType>
+        </xs:element>
+      </xs:sequence>
+      <xs:attribute name="schemaVersion" use="required" fixed="1" />
+      <xs:attribute name="autoInstall" type="strictBoolean" use="required" fixed="false" />
+      <xs:attribute name="autoElevate" type="strictBoolean" use="required" fixed="false" />
+      <xs:attribute name="hardwareVerified" type="strictBoolean" use="required" fixed="false" />
+    </xs:complexType>
+  </xs:element>
+</xs:schema>

@@ -1,0 +1,5 @@
+error[E0599]: no method named `clone` found for struct `ResolvedDevice<'registry>` in the current scope
+ --> tests/ui/resolved_device_clone.rs:4:26
+  |
+4 |     let _copy = resolved.clone();
+  |                          ^^^^^ method not found in `ResolvedDevice<'_>`

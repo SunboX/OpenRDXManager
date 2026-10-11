@@ -1,0 +1,78 @@
+[
+  {
+    "scenario": "first-power-cycle",
+    "fixtureOnly": true,
+    "inspected": {
+      "text": "First power cycle: staging is complete. Disconnect USB, then reconnect the dock to the same USB port. Leave J7 open; do not bridge it.",
+      "buttonText": "Continue after reconnecting",
+      "enabled": true,
+      "withinWindow": true,
+      "overflow": false,
+      "locked": true,
+      "calls": 0
+    },
+    "accepted": {
+      "disabled": true,
+      "calls": 1,
+      "successVisible": false
+    },
+    "errors": []
+  },
+  {
+    "scenario": "first-power-cycle-dock-absent",
+    "fixtureOnly": true,
+    "inspected": {
+      "text": "First power cycle: staging is complete. Disconnect USB, then reconnect the dock to the same USB port. Leave J7 open; do not bridge it.",
+      "buttonText": "Continue after reconnecting",
+      "enabled": true,
+      "withinWindow": true,
+      "overflow": false,
+      "locked": true,
+      "calls": 0
+    },
+    "accepted": {
+      "disabled": true,
+      "calls": 1,
+      "successVisible": false
+    },
+    "errors": []
+  },
+  {
+    "scenario": "second-power-cycle",
+    "fixtureOnly": true,
+    "inspected": {
+      "text": "Second power cycle: startup programming is complete. Disconnect USB, then reconnect the dock to the same USB port again. Leave J7 open so OpenRDX can start.",
+      "buttonText": "Continue after reconnecting",
+      "enabled": true,
+      "withinWindow": true,
+      "overflow": false,
+      "locked": true,
+      "calls": 0
+    },
+    "accepted": {
+      "disabled": true,
+      "calls": 1,
+      "successVisible": false
+    },
+    "errors": []
+  },
+  {
+    "scenario": "second-power-cycle-dock-absent",
+    "fixtureOnly": true,
+    "inspected": {
+      "text": "Second power cycle: startup programming is complete. Disconnect USB, then reconnect the dock to the same USB port again. Leave J7 open so OpenRDX can start.",
+      "buttonText": "Continue after reconnecting",
+      "enabled": true,
+      "withinWindow": true,
+      "overflow": false,
+      "locked": true,
+      "calls": 0
+    },
+    "accepted": {
+      "disabled": true,
+      "calls": 1,
+      "successVisible": false
+    },
+    "errors": []
+  }
+]

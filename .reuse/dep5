@@ -1,0 +1,41 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: OpenRDXManager
+Upstream-Contact: André Fiedler
+Source: https://github.com/SunboX/OpenRDXManager
+
+Files: *
+Copyright: 2026 André Fiedler
+License: AGPL-3.0-or-later
+Comment: Covers repository-owned software, tests, configuration, generated source,
+ data fixtures and files that cannot carry inline comments, including JSON,
+ lockfiles, compile-fail fixtures and their expected diagnostics.
+
+Files: *.md NOTICE docs/**.md docs/**.png docs/**.jpg docs/**.svg
+ resources/icons/*
+Copyright: 2026 André Fiedler
+License: CC-BY-SA-4.0
+Comment: Repository-authored documentation, application screenshots and icons.
+ Documentation that quotes third-party material does not relicense those excerpts.
+
+Files: test/fixtures/OpenRDX-v1-07.bin
+ native/rdx-service/resources/migration/openrdx-migration-template.rom.bin
+Copyright: 2009-2013 Texas Instruments Incorporated
+ 2026 André Fiedler
+License: LicenseRef-TI-TUSB926x AND AGPL-3.0-or-later
+Comment: Existing firmware fixtures remain byte-identical. The OpenRDX license
+ applies only to separately copyrightable OpenRDX additions and modifications.
+
+Files: original-inputs/*.pdf
+Copyright: respective publishers and authors
+License: LicenseRef-ThirdParty-Documentation
+
+Files: original-inputs/*.bin original-inputs/*.zip
+Copyright: Tandberg / Overland-Tandberg and respective authors
+License: LicenseRef-Vendor-Firmware
+
+Files: LICENSES/*
+Copyright: respective license-text authors and rights holders
+License: LicenseRef-License-Texts
+Comment: Standard legal texts are reproduced verbatim and retain their own notices.
+ Project-authored LicenseRef notices record existing rights boundaries; they do
+ not add a license grant or relicense the referenced third-party material.

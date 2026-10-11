@@ -1,0 +1,43 @@
+// SPDX-FileCopyrightText: 2026 André Fiedler
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+/** Localized format choices, confirmation and native-host guidance. */
+export const formatCatalog = Object.freeze({
+    'utilities.format.eyebrow': 'DESTRUKTIV · HOST-SPEICHER',
+    'utilities.format.title': 'Kassette partitionieren und formatieren',
+    'utilities.format.description': 'Erstellen Sie die ausgewählte Kassettenpartition und das Dateisystem neu und prüfen Sie dann, ob das Volume erneut angezeigt wird.',
+    'utilities.format.tooling': 'NTFS ist der Standard. NTFS und exFAT verwenden die Schnellformatierung; fehlende Werkzeuge blockieren den Vorgang vor dem Aushängen oder vor Layoutänderungen.',
+    'utilities.format.filesystem.fat': 'MS-DOS (FAT)',
+    'utilities.format.filesystem.fat12': 'MS-DOS (FAT12)',
+    'utilities.format.filesystem.fat16': 'MS-DOS (FAT16)',
+    'utilities.format.filesystem.fat32': 'MS-DOS (FAT32)',
+    'utilities.format.filesystem.hfs': 'Mac OS Extended',
+    'utilities.format.filesystem.hfs-case-sensitive': 'Mac OS Extended (Groß-/Kleinschreibung)',
+    'utilities.format.filesystem.hfs-journaled': 'Mac OS Extended (Journaled)',
+    'utilities.format.filesystem.hfs-case-sensitive-journaled': 'Mac OS Extended (Groß-/Kleinschreibung, Journaled)',
+    'utilities.format.filesystem.apfs': 'APFS',
+    'utilities.format.filesystem.apfs-case-sensitive': 'APFS (Groß-/Kleinschreibung)',
+    'utilities.format.filesystem.apfs-encrypted': 'APFS (Verschlüsselt)',
+    'utilities.format.filesystem.apfs-case-sensitive-encrypted': 'APFS (Groß-/Kleinschreibung, Verschlüsselt)',
+    'utilities.format.password': 'Verschlüsselungspasswort',
+    'utilities.format.passwordConfirm': 'Verschlüsselungspasswort bestätigen',
+    'utilities.format.passwordRequired': 'Identische Verschlüsselungspasswörter eingeben (bis zu 512 UTF-8-Bytes, ohne Zeilenumbrüche). Das Passwort wird zum Entsperren der Kassette benötigt.',
+    'utilities.format.capacityUnsupported': 'Das ausgewählte Dateisystem unterstützt diese Kassettenkapazität nicht.',
+    'utilities.format.tooling.linux': 'ext4 ist der Linux-Standard. Wählen Sie ein Linux-Dateisystem oder ein plattformübergreifendes Format. Benötigte Dateisystemwerkzeuge werden vor dem Aushängen oder Ändern der Datenträgeraufteilung geprüft.',
+    'utilities.format.filesystem.ext2': 'ext2',
+    'utilities.format.filesystem.ext3': 'ext3',
+    'utilities.format.filesystem.ext4': 'ext4',
+    'utilities.format.filesystem.xfs': 'XFS',
+    'utilities.format.filesystem.btrfs': 'Btrfs',
+    'utilities.format.filesystem.f2fs': 'F2FS',
+    'utilities.format.filesystem.ntfs.linux': 'NTFS',
+    'utilities.format.tooling.macos': 'exFAT und FAT funktionieren unter Windows und macOS. APFS und Mac OS Extended sind Mac-Formate. macOS kann kein NTFS erstellen. FAT12 und FAT16 benötigen kleine Medien.',
+    'utilities.format.tooling.unavailable': 'Für diesen Host wurde kein unterstütztes natives Formatierungsprogramm nachgewiesen. Die Formatierung bleibt daher deaktiviert.',
+    'utilities.format.filesystemLabel': 'Dateisystem',
+    'utilities.format.filesystem.ntfs': 'NTFS Schnellformatierung (Standard)',
+    'utilities.format.filesystem.exfat': 'exFAT Schnellformatierung',
+    'utilities.format.identityUnavailable': 'Genaue Kassettenidentität nicht verfügbar',
+    'utilities.format.typeIdentity': 'Geben Sie {identity} genau ein',
+    'utilities.format.consequence': 'Dadurch werden alle Daten auf der ausgewählten Kassette zerstört. Bei der Schnellformatierung handelt es sich nicht um das kryptografische Löschen zuvor unverschlüsselter Daten.',
+    'utilities.format.action': 'Exakte Kassette löschen und formatieren'
+})

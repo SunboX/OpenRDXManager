@@ -1,0 +1,5 @@
+error[E0599]: no method named `revalidate_for_mutation` found for reference `&VolumeLeaseSet<'_>` in the current scope
+ --> tests/ui/windows_volume_validation_only.rs:4:12
+  |
+4 |     leases.revalidate_for_mutation().unwrap();
+  |            ^^^^^^^^^^^^^^^^^^^^^^^ method not found in `&VolumeLeaseSet<'_>`

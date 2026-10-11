@@ -1,0 +1,10 @@
+error[E0624]: method `execute` is private
+  --> tests/ui/device_session_execute.rs:19:21
+   |
+19 |     let _ = session.execute(&self_test());
+   |                     ^^^^^^^ private method
+   |
+  ::: src/host.rs
+   |
+   |     pub(crate) fn execute(&mut self, command: &Command) -> CommandDispatch {
+   |     ---------------------------------------------------------------------- private method defined here

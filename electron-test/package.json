@@ -1,0 +1,6 @@
+{
+    "name": "openrdxmanager-compact-runtime-test",
+    "private": true,
+    "type": "module",
+    "main": "electron-compact-support.mjs"
+}

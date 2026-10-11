@@ -1,0 +1,43 @@
+// SPDX-FileCopyrightText: 2026 André Fiedler
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+/** Localized format choices, confirmation and native-host guidance. */
+export const formatCatalog = Object.freeze({
+    'utilities.format.eyebrow': 'DESTRUCTIF · STOCKAGE HÔTE',
+    'utilities.format.title': 'Partitionner et formater la cartouche',
+    'utilities.format.description': 'Recréez la partition de cartouche et le système de fichiers sélectionnés, puis prouvez que le volume réapparaît.',
+    'utilities.format.tooling': 'NTFS est le choix par défaut. NTFS et exFAT utilisent le formatage rapide ; les outils manquants bloquent l’opération avant le démontage ou les modifications de disposition.',
+    'utilities.format.filesystem.fat': 'MS-DOS (FAT)',
+    'utilities.format.filesystem.fat12': 'MS-DOS (FAT12)',
+    'utilities.format.filesystem.fat16': 'MS-DOS (FAT16)',
+    'utilities.format.filesystem.fat32': 'MS-DOS (FAT32)',
+    'utilities.format.filesystem.hfs': 'Mac OS étendu',
+    'utilities.format.filesystem.hfs-case-sensitive': 'Mac OS étendu (sensible à la casse)',
+    'utilities.format.filesystem.hfs-journaled': 'Mac OS étendu (journalisé)',
+    'utilities.format.filesystem.hfs-case-sensitive-journaled': 'Mac OS étendu (sensible à la casse, journalisé)',
+    'utilities.format.filesystem.apfs': 'APFS',
+    'utilities.format.filesystem.apfs-case-sensitive': 'APFS (sensible à la casse)',
+    'utilities.format.filesystem.apfs-encrypted': 'APFS (chiffré)',
+    'utilities.format.filesystem.apfs-case-sensitive-encrypted': 'APFS (sensible à la casse, chiffré)',
+    'utilities.format.password': 'Mot de passe de chiffrement',
+    'utilities.format.passwordConfirm': 'Confirmer le mot de passe',
+    'utilities.format.passwordRequired': 'Saisissez deux mots de passe identiques (512 octets UTF-8 maximum, sans saut de ligne). Conservez ce mot de passe pour déverrouiller la cartouche.',
+    'utilities.format.capacityUnsupported': 'Le système de fichiers choisi ne prend pas en charge cette capacité.',
+    'utilities.format.tooling.linux': 'ext4 est le format par défaut sous Linux. Choisissez un système de fichiers Linux ou un format multiplateforme. Les outils nécessaires sont vérifiés avant le démontage ou la modification des partitions.',
+    'utilities.format.filesystem.ext2': 'ext2',
+    'utilities.format.filesystem.ext3': 'ext3',
+    'utilities.format.filesystem.ext4': 'ext4',
+    'utilities.format.filesystem.xfs': 'XFS',
+    'utilities.format.filesystem.btrfs': 'Btrfs',
+    'utilities.format.filesystem.f2fs': 'F2FS',
+    'utilities.format.filesystem.ntfs.linux': 'NTFS',
+    'utilities.format.tooling.macos': 'exFAT et FAT fonctionnent sous Windows et macOS. APFS et Mac OS étendu sont des formats Mac. macOS ne peut pas créer de NTFS. FAT12 et FAT16 nécessitent de petits supports.',
+    'utilities.format.tooling.unavailable': 'Aucun formateur natif pris en charge n’a été confirmé pour cet hôte ; le formatage reste donc désactivé.',
+    'utilities.format.filesystemLabel': 'Système de fichiers',
+    'utilities.format.filesystem.ntfs': 'NTFS formatage rapide (par défaut)',
+    'utilities.format.filesystem.exfat': 'exFAT formatage rapide',
+    'utilities.format.identityUnavailable': 'Identité exacte de la cartouche indisponible',
+    'utilities.format.typeIdentity': 'Tapez {identity} exactement',
+    'utilities.format.consequence': 'Cela détruit toutes les données sur la cartouche sélectionnée. Le formatage rapide ne constitue pas un effacement cryptographique de données précédemment non cryptées.',
+    'utilities.format.action': 'Effacer et formater la cartouche exacte'
+})

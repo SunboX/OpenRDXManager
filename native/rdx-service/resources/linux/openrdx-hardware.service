@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: 2026 André Fiedler
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[Unit]
+Description=OpenRDX privileged hardware service
+Requires=openrdx-hardware.socket
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/openrdx-hardware --service-mode systemd-socket --protocol-version 1
+User=root
+Group=root
+StandardInput=null
+StandardOutput=null
+StandardError=journal
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=false
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_RAWIO
+AmbientCapabilities=
+SystemCallArchitectures=native
+Restart=on-failure
+# Idle accept timeout retires cleanly; the socket unit owns future activation.
+SuccessExitStatus=0
+RestartSec=1s
+TimeoutStartSec=10s
+TimeoutStopSec=10s
+
+[Install]
+WantedBy=multi-user.target

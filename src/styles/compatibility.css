@@ -1,0 +1,307 @@
+/* SPDX-FileCopyrightText: 2026 André Fiedler
+ * SPDX-License-Identifier: AGPL-3.0-or-later */
+
+.compatibility-view {
+    width: min(1180px, calc(100vw - 48px));
+    max-height: min(900px, calc(100vh - 48px));
+}
+
+.compatibility-view .support-panel__header p {
+    max-width: 68ch;
+    margin: 8px 0 0;
+    color: var(--color-text-muted);
+}
+
+.compatibility-body {
+    display: grid;
+    gap: 18px;
+    padding: 20px;
+    overflow: auto;
+}
+
+.compatibility-section {
+    padding: 20px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-large);
+    background: linear-gradient(145deg, rgb(9 24 39 / 94%), rgb(6 16 29 / 96%));
+    box-shadow: inset 0 1px rgb(255 255 255 / 3%);
+}
+
+.compatibility-section--live {
+    border-color: rgb(44 224 255 / 34%);
+    box-shadow:
+        inset 0 1px rgb(255 255 255 / 3%),
+        0 0 28px rgb(44 224 255 / 7%);
+}
+
+.compatibility-heading {
+    margin-bottom: 16px;
+}
+
+.compatibility-heading h2 {
+    margin: 5px 0 7px;
+}
+
+.compatibility-heading p {
+    max-width: 88ch;
+    margin: 0;
+    color: var(--color-text-muted);
+}
+
+.compatibility-facts {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin: 0;
+}
+
+.compatibility-fact {
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid rgb(95 130 157 / 28%);
+    border-radius: var(--radius-medium);
+    background: rgb(2 12 22 / 62%);
+}
+
+.compatibility-fact dt {
+    margin-bottom: 6px;
+    color: var(--color-text-muted);
+    font-size: 0.73rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.compatibility-fact dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+    color: var(--color-text);
+}
+
+.live-capability-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.live-capability {
+    padding: 12px;
+    border-left: 2px solid var(--color-cyan);
+    background: rgb(7 20 33 / 72%);
+}
+
+.live-capability h3,
+.live-capability p {
+    margin: 0;
+}
+
+.live-capability strong {
+    display: block;
+    margin: 7px 0 4px;
+    color: var(--color-cyan-bright);
+}
+
+.live-capability strong[data-capability-state='evidence-incomplete'],
+.live-capability strong[data-capability-state='wrong-media-state'],
+.live-capability strong[data-capability-state='transport-unavailable'] {
+    color: var(--color-orange);
+}
+
+.live-capability p {
+    color: var(--color-text-muted);
+    font-size: 0.82rem;
+}
+
+.compatibility-table {
+    width: 100%;
+    margin-top: 14px;
+    border-collapse: collapse;
+}
+
+.compatibility-table caption {
+    margin-bottom: 8px;
+    color: var(--color-text);
+    font-weight: 700;
+    text-align: left;
+}
+
+.compatibility-table th,
+.compatibility-table td {
+    padding: 9px 10px;
+    border-bottom: 1px solid rgb(95 130 157 / 22%);
+    text-align: left;
+    vertical-align: top;
+}
+
+.compatibility-table thead th {
+    color: var(--color-cyan-bright);
+    font-size: 0.75rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.compatibility-table tbody th {
+    width: 34%;
+    color: var(--color-text);
+}
+
+.compatibility-table td,
+.compatibility-note {
+    color: var(--color-text-muted);
+}
+
+.compatibility-note {
+    padding: 12px;
+    border-left: 2px solid var(--color-orange);
+    background: rgb(255 170 42 / 6%);
+}
+
+.diagnostic-order,
+.known-limits,
+.feature-coverage-list {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.troubleshooting-notes {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.troubleshooting-notes article {
+    padding: 12px;
+    border: 1px solid rgb(255 122 26 / 25%);
+    border-radius: var(--radius-medium);
+    background: rgb(255 122 26 / 5%);
+}
+
+.troubleshooting-notes h3,
+.troubleshooting-notes p {
+    margin: 0;
+}
+
+.troubleshooting-notes h3 {
+    margin-bottom: 7px;
+    color: var(--color-orange-soft);
+}
+
+.troubleshooting-notes p {
+    color: var(--color-text-muted);
+}
+
+.diagnostic-order li,
+.known-limits li,
+.feature-coverage-list li {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid rgb(95 130 157 / 22%);
+    border-radius: var(--radius-medium);
+    background: rgb(2 12 22 / 50%);
+}
+
+.diagnostic-order__number {
+    flex: 0 0 auto;
+    color: var(--color-cyan-bright);
+    font-family: var(--font-display);
+}
+
+.known-limits i {
+    flex: 0 0 auto;
+    margin-top: 2px;
+    color: var(--color-orange);
+}
+
+.feature-coverage-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    counter-reset: feature;
+}
+
+.feature-coverage-list li {
+    justify-content: space-between;
+    min-width: 0;
+}
+
+.feature-coverage-list li::before {
+    content: counter(list-item, decimal-leading-zero);
+    flex: 0 0 auto;
+    color: var(--color-cyan-bright);
+    font-family: var(--font-display);
+}
+
+.feature-coverage-list div {
+    min-width: 0;
+}
+
+.feature-coverage-list strong,
+.feature-coverage-list small {
+    display: block;
+}
+
+.feature-coverage-list small {
+    margin-top: 3px;
+    overflow-wrap: anywhere;
+    color: var(--color-text-muted);
+}
+
+.feature-coverage-list code {
+    flex: 0 1 45%;
+    overflow-wrap: anywhere;
+    color: var(--color-cyan-bright);
+    text-align: right;
+}
+
+.feature-coverage-list code[data-mapping-type='evidence-state'],
+.feature-coverage-list code[data-mapping-type='platform-state'] {
+    color: var(--color-orange);
+}
+
+@media (max-width: 1100px) {
+    .compatibility-facts,
+    .live-capability-grid,
+    .troubleshooting-notes {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .feature-coverage-list {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 720px) {
+    .compatibility-view {
+        width: calc(100vw - 20px);
+        max-height: calc(100vh - 20px);
+    }
+
+    .compatibility-body,
+    .compatibility-section {
+        padding: 14px;
+    }
+
+    .compatibility-facts,
+    .live-capability-grid,
+    .troubleshooting-notes {
+        grid-template-columns: 1fr;
+    }
+
+    .compatibility-table {
+        font-size: 0.8rem;
+    }
+
+    .feature-coverage-list li {
+        flex-wrap: wrap;
+    }
+
+    .feature-coverage-list code {
+        flex-basis: 100%;
+        padding-left: 32px;
+        text-align: left;
+    }
+}

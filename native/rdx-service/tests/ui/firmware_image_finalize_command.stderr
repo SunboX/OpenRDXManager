@@ -1,0 +1,5 @@
+error[E0599]: no method named `finalize_command` found for struct `FirmwareImage` in the current scope
+ --> tests/ui/firmware_image_finalize_command.rs:6:19
+  |
+6 |     let _ = image.finalize_command();
+  |                   ^^^^^^^^^^^^^^^^ method not found in `FirmwareImage`

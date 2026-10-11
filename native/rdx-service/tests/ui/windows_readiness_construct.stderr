@@ -1,0 +1,11 @@
+error[E0603]: struct `WindowsReadiness` is private
+ --> tests/ui/windows_readiness_construct.rs:1:37
+  |
+1 | use rdx_service::platform::windows::WindowsReadiness;
+  |                                     ^^^^^^^^^^^^^^^^ private struct
+  |
+note: the struct `WindowsReadiness` is defined here
+ --> src/platform/windows.rs
+  |
+  | struct WindowsReadiness {
+  | ^^^^^^^^^^^^^^^^^^^^^^^

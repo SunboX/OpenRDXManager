@@ -1,0 +1,155 @@
+/* SPDX-FileCopyrightText: 2026 André Fiedler
+ * SPDX-License-Identifier: AGPL-3.0-or-later */
+
+.mcp-settings {
+    width: min(580px, calc(100vw - 40px));
+    max-height: calc(100vh - 40px);
+    padding: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-large);
+    background: linear-gradient(145deg, rgba(11, 31, 46, 0.98), rgba(5, 12, 22, 0.99)), var(--color-surface);
+    color: var(--color-text);
+    box-shadow: var(--shadow-window), var(--shadow-cyan);
+}
+
+.mcp-settings::backdrop {
+    background: rgba(1, 5, 11, 0.78);
+    backdrop-filter: blur(12px);
+}
+
+.mcp-settings__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 18px 22px;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.mcp-settings__header h1 {
+    margin: 0;
+    font-size: 1.3rem;
+    line-height: 1.3;
+}
+
+.mcp-settings__header .icon-button {
+    flex: 0 0 38px;
+}
+
+.mcp-settings__body {
+    display: grid;
+    gap: 20px;
+    padding: 22px;
+}
+
+.mcp-settings__description,
+.mcp-settings__port p {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: 0.78rem;
+    line-height: 1.6;
+}
+
+.mcp-settings__toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+}
+
+.mcp-settings__toggle input {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    accent-color: var(--color-cyan);
+}
+
+.mcp-settings__port {
+    display: grid;
+    gap: 7px;
+}
+
+.mcp-settings__port label {
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+
+.mcp-settings__port input {
+    width: 150px;
+    min-height: 38px;
+    padding: 8px 12px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-small);
+    background: var(--color-background-deep);
+    color: var(--color-text);
+}
+
+.mcp-settings__port input[aria-invalid='true'] {
+    border-color: var(--color-orange);
+}
+
+.mcp-settings input:disabled {
+    opacity: 0.55;
+}
+
+.mcp-settings__connection {
+    display: grid;
+    gap: 12px;
+    margin: 0;
+    padding: 16px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-medium);
+    background: var(--color-surface-soft);
+    font-size: 0.78rem;
+}
+
+.mcp-settings__connection > div {
+    display: grid;
+    gap: 4px;
+}
+
+.mcp-settings__connection dt {
+    color: var(--color-text-muted);
+}
+
+.mcp-settings__connection dd {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.mcp-settings__connection [data-state='listening'] {
+    color: var(--color-cyan-bright);
+}
+
+.mcp-settings__feedback {
+    min-height: 1.5em;
+    margin: 0;
+    color: var(--color-cyan-bright);
+    font-size: 0.78rem;
+    overflow-wrap: anywhere;
+}
+
+.mcp-settings__feedback[data-tone='error'] {
+    color: var(--color-orange-soft);
+}
+
+.mcp-settings__actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+@media (max-width: 480px) {
+    .mcp-settings__header,
+    .mcp-settings__body {
+        padding: 16px;
+    }
+
+    .mcp-settings__actions .button {
+        width: 100%;
+    }
+}

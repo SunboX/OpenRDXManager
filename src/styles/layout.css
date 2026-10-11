@@ -1,0 +1,117 @@
+/* SPDX-FileCopyrightText: 2026 André Fiedler
+ * SPDX-License-Identifier: AGPL-3.0-or-later */
+
+#app,
+.application-shell {
+    min-height: 100vh;
+}
+
+.application-shell {
+    border: 1px solid var(--color-border-strong);
+    background: rgba(3, 8, 16, 0.91);
+    box-shadow: var(--shadow-window), var(--shadow-cyan);
+}
+
+.topbar {
+    position: sticky;
+    z-index: 10;
+    top: 0;
+    display: flex;
+    min-height: var(--topbar-height);
+    align-items: center;
+    gap: 14px;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--color-border);
+    background: linear-gradient(90deg, rgba(8, 32, 47, 0.98), rgba(12, 15, 25, 0.98));
+    backdrop-filter: blur(18px);
+}
+
+.shell-grid {
+    display: grid;
+    /* Reserve the shell's top and bottom border inside the viewport. */
+    min-height: calc(100vh - var(--topbar-height) - 2px);
+    grid-template-columns: var(--device-rail-width) minmax(520px, 1fr) var(--command-rail-width);
+}
+
+.shell-grid--state {
+    grid-template-columns: var(--device-rail-width) minmax(0, 1fr);
+}
+
+.device-rail,
+.command-rail {
+    min-width: 0;
+    padding: 20px 16px;
+    background: rgba(6, 16, 28, 0.8);
+}
+
+.device-rail {
+    border-right: 1px solid var(--color-border);
+}
+
+.device-rail__content {
+    display: block;
+}
+
+.device-rail__toggle {
+    display: none;
+}
+
+.main-workspace {
+    container-name: main-workspace;
+    container-type: inline-size;
+    min-width: 0;
+    padding: 20px 24px 32px;
+}
+
+.command-rail {
+    border-left: 1px solid var(--color-border);
+}
+
+.workspace-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 18px;
+}
+
+.metric-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.metric-card--capacity {
+    grid-column: span 2;
+}
+
+.detail-grid,
+.command-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.detail-grid {
+    margin-top: 12px;
+}
+
+.command-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.state-workspace {
+    display: grid;
+    min-height: calc(100vh - var(--topbar-height) - 2px);
+    padding: 32px;
+    place-items: center;
+}
+
+.state-workspace:has(> .failure-banner) {
+    align-content: start;
+    gap: 24px;
+}
+
+.state-workspace > .failure-banner {
+    width: 100%;
+}

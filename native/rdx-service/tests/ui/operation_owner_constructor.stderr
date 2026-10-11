@@ -1,0 +1,11 @@
+error[E0599]: no function or associated item named `new` found for struct `OperationOwner` in the current scope
+ --> tests/ui/operation_owner_constructor.rs:7:41
+  |
+7 |     let _manufactured = OperationOwner::new(
+  |                                         ^^^ function or associated item not found in `OperationOwner`
+  |
+help: there is a method `ne` with a similar name, but with different arguments
+ --> $RUST/core/src/cmp.rs
+  |
+  |     fn ne(&self, other: &Rhs) -> bool {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

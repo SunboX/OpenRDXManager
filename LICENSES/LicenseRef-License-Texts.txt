@@ -1,0 +1,10 @@
+License-text notices
+
+Files in LICENSES/ reproduce the applicable standard license texts or record
+third-party rights boundaries. Standard texts retain their existing copyright,
+copying permissions and notices, including any requirement for verbatim copying.
+
+Project-authored LicenseRef notices record the referenced material's existing
+rights boundary. They do not create an additional grant or replace its terms.
+This identifier does not relicense either the legal texts or the referenced
+third-party material.

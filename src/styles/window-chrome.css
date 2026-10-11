@@ -1,0 +1,151 @@
+/* SPDX-FileCopyrightText: 2026 André Fiedler
+ * SPDX-License-Identifier: AGPL-3.0-or-later */
+
+:root {
+    color-scheme: dark;
+    --window-titlebar-height: 36px;
+    --window-titlebar-background: #081422;
+    --window-chrome-height: env(titlebar-area-height, var(--window-titlebar-height));
+}
+
+:root:has(.window-menubar > button) {
+    --window-chrome-height: calc(env(titlebar-area-height, var(--window-titlebar-height)) + 28px);
+}
+
+/* Keep the native controls accessible on either side of the draggable title. */
+.window-titlebar {
+    display: flex;
+    height: env(titlebar-area-height, var(--window-titlebar-height));
+    align-items: center;
+    background: var(--window-titlebar-background);
+    color: var(--color-text);
+    user-select: none;
+    -webkit-app-region: drag;
+}
+
+.window-titlebar__title {
+    width: env(titlebar-area-width, 100%);
+    margin-left: env(titlebar-area-x, 0px);
+    overflow: hidden;
+    padding: 0 16px;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.window-menubar {
+    display: flex;
+    height: 28px;
+    align-items: center;
+    gap: 2px;
+    padding: 0 8px;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--window-titlebar-background);
+    -webkit-app-region: no-drag;
+}
+
+.window-menubar:empty {
+    display: none;
+}
+
+.window-menubar button {
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    padding: 2px 9px;
+    font-size: 13px;
+    line-height: 20px;
+}
+
+.window-menubar button:hover,
+.window-menubar button[aria-expanded='true'] {
+    background: rgba(22, 230, 238, 0.12);
+}
+
+.window-menubar button:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: -2px;
+}
+
+/* The title replaces the system frame rather than adding dashboard scroll space. */
+#app,
+.application-shell {
+    min-height: calc(100vh - var(--window-chrome-height));
+}
+
+.shell-grid,
+.state-workspace {
+    min-height: calc(100vh - var(--topbar-height) - var(--window-chrome-height) - 2px);
+}
+
+/* Fractional Windows scaling can clip an edge-aligned line after resizing.
+   Restored windows need only a subpixel inset; maximized windows keep the
+   larger native-edge guard. Main owns that state. Neither frame intercepts input. */
+.application-shell {
+    border-color: transparent;
+}
+
+#app::after {
+    position: fixed;
+    z-index: 21;
+    inset: var(--window-chrome-height) 0 0;
+    border: 1px solid var(--color-border-strong);
+    content: '';
+    pointer-events: none;
+}
+
+:root[data-window-frame='restored'] #app::after {
+    inset: var(--window-chrome-height) 0.5px 0.5px;
+}
+
+:root[data-window-frame='maximized'] #app::after {
+    inset: var(--window-chrome-height) 2px 2px;
+}
+
+@media (min-width: 821px) and (min-height: 700px) {
+    /* #app starts below the title/menu; 100% would put its bottom off-screen. */
+    #app {
+        height: calc(100vh - var(--window-chrome-height));
+        min-height: 0;
+    }
+
+    .shell-grid,
+    .state-workspace {
+        min-height: 0;
+    }
+}
+
+@media (display-mode: fullscreen) {
+    #app::after,
+    :root[data-window-frame] #app::after {
+        inset: 0;
+    }
+    .window-titlebar,
+    .window-menubar {
+        display: none;
+    }
+
+    #app,
+    .application-shell {
+        min-height: 100vh;
+    }
+
+    .shell-grid,
+    .state-workspace {
+        min-height: calc(100vh - var(--topbar-height) - 2px);
+    }
+
+    @media (min-width: 821px) and (min-height: 700px) {
+        #app {
+            height: 100vh;
+            min-height: 0;
+        }
+
+        .shell-grid,
+        .state-workspace {
+            min-height: 0;
+        }
+    }
+}

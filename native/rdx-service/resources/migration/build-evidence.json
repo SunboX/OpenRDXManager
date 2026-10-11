@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "purpose": "unpersonalized semantic-record migration bootstrap",
+  "source_revision": "ca82dbec4e1f59c4d0683321e83c0f6205c0d6d6",
+  "source_input_manifest_sha256": "dba7207bd7df7692281bb9c455c9fe902e6a99abdab50a43d80ad36a49bcd1fa",
+  "compiler_revision": "5.2.9",
+  "rom_sha256": "4ed054e7d257fb67d0690fb9e168081d67aaafca01c99d1c3bca52d6ce686cf8",
+  "rom_bytes": 61710,
+  "runtime_bytes": 61696,
+  "initialized_runtime_bytes": 51360,
+  "package_offset_in_rom": 49893,
+  "package_runtime_address": "0x0800c2d8",
+  "package_length": 384,
+  "pd_mem_origin": 134217984,
+  "pd_mem_length": 64255,
+  "pd_mem_used": 57888,
+  "pd_mem_unused": 6367,
+  "reserved_ram_used": 0,
+  "hardware_verified": false,
+  "installed": false,
+  "package_header": "RDXMIG01 / schema1 / header64 / total384 / addresses3e000,3f000 / lengths256,64 / SHA256(payload)",
+  "limitations": [
+    "semantic reconstruction, not raw original backup",
+    "ordinary ROM programming erases the entire flash",
+    "existing SpiOps polling is unbounded",
+    "template is invalid until personalized; no device data is included"
+  ],
+  "artifacts": {
+    "bootstrap.hex": "dd2a138c47f4a90ec9d6b3c8563e26e1ad9d588dbf78504701d1a880b0a4bb2c",
+    "bootstrap.map": "c794b52f453e7bb7bcf4fa2da071b8012510880a7946e41b96173db5f387c6f8",
+    "bootstrap.out": "a0a32a021cc7274da4334db74607358d9710d88f544cf9aab9354ef1e17820a0",
+    "openrdx-migration-template.rom.bin": "4ed054e7d257fb67d0690fb9e168081d67aaafca01c99d1c3bca52d6ce686cf8"
+  }
+}

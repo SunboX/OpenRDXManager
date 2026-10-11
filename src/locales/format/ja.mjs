@@ -1,0 +1,43 @@
+// SPDX-FileCopyrightText: 2026 André Fiedler
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+/** Localized format choices, confirmation and native-host guidance. */
+export const formatCatalog = Object.freeze({
+    'utilities.format.eyebrow': '破壊的なホストストレージ',
+    'utilities.format.title': 'カートリッジのパーティション作成とフォーマット',
+    'utilities.format.description': '選択したカートリッジパーティションとファイルシステムを再作成し、ボリュームが再表示されることを確認します。',
+    'utilities.format.tooling': 'NTFS は既定値です。NTFS と exFAT はクイックフォーマットを使用します。必要なツールがない場合は、アンマウントやレイアウト変更の前に中止します。',
+    'utilities.format.filesystem.fat': 'MS-DOS (FAT)',
+    'utilities.format.filesystem.fat12': 'MS-DOS (FAT12)',
+    'utilities.format.filesystem.fat16': 'MS-DOS (FAT16)',
+    'utilities.format.filesystem.fat32': 'MS-DOS (FAT32)',
+    'utilities.format.filesystem.hfs': 'Mac OS 拡張',
+    'utilities.format.filesystem.hfs-case-sensitive': 'Mac OS 拡張 (大文字と小文字を区別)',
+    'utilities.format.filesystem.hfs-journaled': 'Mac OS 拡張 (ジャーナリング)',
+    'utilities.format.filesystem.hfs-case-sensitive-journaled': 'Mac OS 拡張 (大文字と小文字を区別, ジャーナリング)',
+    'utilities.format.filesystem.apfs': 'APFS',
+    'utilities.format.filesystem.apfs-case-sensitive': 'APFS (大文字と小文字を区別)',
+    'utilities.format.filesystem.apfs-encrypted': 'APFS (暗号化)',
+    'utilities.format.filesystem.apfs-case-sensitive-encrypted': 'APFS (大文字と小文字を区別, 暗号化)',
+    'utilities.format.password': '暗号化パスワード',
+    'utilities.format.passwordConfirm': 'パスワードを確認',
+    'utilities.format.passwordRequired': '同じパスワードを入力してください（UTF-8 で最大512バイト、改行不可）。カートリッジのロック解除に必要なので保管してください。',
+    'utilities.format.capacityUnsupported': '選択したファイルシステムは、このカートリッジの容量に対応していません。',
+    'utilities.format.tooling.linux': 'Linux の既定値は ext4 です。Linux ファイルシステムまたはクロスプラットフォーム形式を選択できます。必要なツールはアンマウントやパーティション変更の前に確認されます。',
+    'utilities.format.filesystem.ext2': 'ext2',
+    'utilities.format.filesystem.ext3': 'ext3',
+    'utilities.format.filesystem.ext4': 'ext4',
+    'utilities.format.filesystem.xfs': 'XFS',
+    'utilities.format.filesystem.btrfs': 'Btrfs',
+    'utilities.format.filesystem.f2fs': 'F2FS',
+    'utilities.format.filesystem.ntfs.linux': 'NTFS',
+    'utilities.format.tooling.macos': 'exFAT と FAT は Windows と macOS で使用できます。APFS と Mac OS 拡張は Mac 用です。macOS では NTFS を作成できません。FAT12 と FAT16 は小容量メディア向けです。',
+    'utilities.format.tooling.unavailable': 'このホストではサポート対象のネイティブフォーマッタが確認されていないため、フォーマットは無効のままです。',
+    'utilities.format.filesystemLabel': 'ファイルシステム',
+    'utilities.format.filesystem.ntfs': 'NTFS クイックフォーマット (デフォルト)',
+    'utilities.format.filesystem.exfat': 'exFAT クイックフォーマット',
+    'utilities.format.identityUnavailable': '正確なカートリッジID が利用できません',
+    'utilities.format.typeIdentity': '{identity} と正確に入力してください',
+    'utilities.format.consequence': 'これにより、選択したカートリッジ上のすべてのデータが破壊されます。クイック フォーマットは、以前に暗号化されていなかったデータを暗号的に消去するものではありません。',
+    'utilities.format.action': '対象カートリッジを消去してフォーマット'
+})

@@ -1,0 +1,5 @@
+error[E0599]: no method named `locator` found for reference `&CandidateDevice` in the current scope
+ --> tests/ui/candidate_device_locator.rs:4:34
+  |
+4 |     let _raw_locator = candidate.locator();
+  |                                  ^^^^^^^ private field, not a method

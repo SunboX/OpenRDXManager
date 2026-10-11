@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2026 André Fiedler
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[package]
+name = "rdx-macos-native"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[features]
+default = []
+test-hooks = []
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2.180"
+
+[build-dependencies]
+cc = "1.2"
+
+[dev-dependencies]
+tempfile = "3.23.0"
+
+[dependencies]
+unicode-normalization = "0.1.25"
+zeroize = "1.9.0"

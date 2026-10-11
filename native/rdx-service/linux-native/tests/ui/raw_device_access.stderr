@@ -1,0 +1,31 @@
+error[E0308]: mismatched types
+ --> tests/ui/raw_device_access.rs:6:36
+  |
+6 |     let device = LinuxDevice::open(OsStr::new("opaque")).unwrap();
+  |                  ----------------- ^^^^^^^^^^^^^^^^^^^^ expected `ScsiGenericCandidate`, found `&OsStr`
+  |                  |
+  |                  arguments to this function are incorrect
+  |
+note: associated function defined here
+ --> src/lib.rs
+  |
+  |     pub fn open(candidate: ScsiGenericCandidate) -> Result<Self, NativeError> {
+  |            ^^^^
+
+error[E0599]: no method named `raw_fd` found for struct `LinuxDevice` in the current scope
+ --> tests/ui/raw_device_access.rs:7:22
+  |
+7 |     let _fd = device.raw_fd();
+  |                      ^^^^^^ method not found in `LinuxDevice`
+
+error[E0599]: no method named `path` found for struct `LinuxDevice` in the current scope
+ --> tests/ui/raw_device_access.rs:8:24
+  |
+8 |     let _path = device.path();
+  |                        ^^^^ method not found in `LinuxDevice`
+
+error[E0599]: no method named `into_recipe` found for struct `ScsiGenericCandidate` in the current scope
+  --> tests/ui/raw_device_access.rs:12:29
+   |
+12 |     let _recipe = candidate.into_recipe();
+   |                             ^^^^^^^^^^^ method not found in `ScsiGenericCandidate`

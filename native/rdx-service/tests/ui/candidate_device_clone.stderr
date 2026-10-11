@@ -1,0 +1,5 @@
+error[E0599]: no method named `clone` found for struct `CandidateDevice` in the current scope
+  --> tests/ui/candidate_device_clone.rs:10:27
+   |
+10 |     let _copy = candidate.clone();
+   |                           ^^^^^ method not found in `CandidateDevice`

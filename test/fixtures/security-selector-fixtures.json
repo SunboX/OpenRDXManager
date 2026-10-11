@@ -1,0 +1,147 @@
+{
+  "descriptorLayouts": [
+    {
+      "bodyLength": 76,
+      "id": "0xC0",
+      "provenance": "0x004696E0"
+    },
+    {
+      "bodyLength": 112,
+      "id": "0xC1",
+      "provenance": "0x00469890"
+    },
+    {
+      "bodyLength": 68,
+      "id": "0xC2",
+      "provenance": "0x00469890"
+    },
+    {
+      "bodyLength": 40,
+      "id": "0xC3",
+      "provenance": "0x00469890"
+    },
+    {
+      "bodyLength": 68,
+      "id": "0xC4",
+      "provenance": "0x00469890"
+    }
+  ],
+  "hostVolume": {
+    "compatibleAesMediaLayout": "incomplete",
+    "windowsFormatCall": {
+      "api": "FormatEx2",
+      "function": "0x0046A1E0"
+    }
+  },
+  "kdf": {
+    "algorithm": "two-stage-pbkdf2-hmac-sha256",
+    "fixture": {
+      "credentialHex": "4f50454e5244582d464958545552452d43524544454e5449414c",
+      "globalIterations": 8192,
+      "globalSaltHex": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
+      "slotIterations": 1500,
+      "slotSaltHex": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+      "stageOneHex": "cfb0fbe66aa66d0312479dc3920622ffb51263bcf0a183778b85fab424b91d4be45531d77cf4cca2de05f1c2112d2dcecf24065978a1ba642d33a4f1e0bcd022",
+      "stageTwoHex": "68612e1d8dd371b03ca9e03bd44b40c614a8fab9ef5c4381885f8a6aa694a9287729a15600e3d4c7ac65be1637754d3f57e8b96d785faa208abbe4b62b5cf6ee"
+    },
+    "outputLength": 64,
+    "provenance": "0x00455AD0"
+  },
+  "mutators": {
+    "add-automatic-association": {
+      "reason": "drive-generated-secret-selector-semantics-unproven",
+      "state": "evidence-incomplete"
+    },
+    "change-credential": {
+      "reason": "temporary-slot-transaction-selectors-unproven",
+      "state": "evidence-incomplete"
+    },
+    "configure-aes": {
+      "reason": "compatible-aes-media-layout-and-security-write-unproven",
+      "state": "evidence-incomplete"
+    },
+    "configure-basic": {
+      "reason": "selector-flags-and-aggregate-semantics-unproven",
+      "state": "evidence-incomplete"
+    },
+    "create-credential": {
+      "reason": "selector-flags-and-aggregate-semantics-unproven",
+      "state": "evidence-incomplete"
+    },
+    "delete-automatic-association": {
+      "reason": "drive-vs-cartridge-delete-selectors-unproven",
+      "state": "evidence-incomplete"
+    },
+    "delete-credential": {
+      "reason": "selector-and-delete-descriptor-semantics-unproven",
+      "state": "evidence-incomplete"
+    },
+    "delete-drive-automatic-credential": {
+      "reason": "drive-credential-delete-selector-semantics-unproven",
+      "state": "evidence-incomplete"
+    },
+    "disable-access": {
+      "reason": "selector-and-session-close-descriptor-semantics-unproven",
+      "state": "evidence-incomplete"
+    },
+    "enable-access": {
+      "reason": "selector-and-authentication-descriptor-semantics-unproven",
+      "state": "evidence-incomplete"
+    },
+    "remove-aes": {
+      "reason": "compatible-aes-media-layout-and-security-write-unproven",
+      "state": "evidence-incomplete"
+    },
+    "remove-basic": {
+      "reason": "selector-and-remove-descriptor-semantics-unproven",
+      "state": "evidence-incomplete"
+    },
+    "reset-protection": {
+      "reason": "reset-selector-and-policy-flags-unproven",
+      "state": "evidence-incomplete"
+    }
+  },
+  "readSelectors": [
+    {
+      "provenance": [
+        "0x0044CF40",
+        "0x00462510"
+      ],
+      "selector": "0x0010",
+      "semantics": "observed-query-family-only"
+    },
+    {
+      "provenance": [
+        "0x00455510",
+        "0x00462510"
+      ],
+      "selector": "0x0020",
+      "semantics": "observed-query-family-only"
+    },
+    {
+      "provenance": [
+        "0x00455700",
+        "0x004557C0",
+        "0x00462510"
+      ],
+      "selector": "0x0021",
+      "semantics": "observed-query-family-only"
+    }
+  ],
+  "schemaVersion": 1,
+  "source": {
+    "artifact": "windows-manager-2.0.1.54-implementation-reference",
+    "kind": "implementation-reference-not-vendor-source",
+    "sha256": "b595f4429760899804b81346998b3ab98509ef15dfec7df5cb972703eea0249e"
+  },
+  "writeSelectors": [
+    {
+      "provenance": [
+        "0x004587A0",
+        "0x00469FC0"
+      ],
+      "selector": "0x0010",
+      "semantics": "aggregate-write-observed-payload-incomplete"
+    }
+  ]
+}

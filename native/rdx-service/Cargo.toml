@@ -1,0 +1,91 @@
+# SPDX-FileCopyrightText: 2026 André Fiedler
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[package]
+name = "rdx-service"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[features]
+default = []
+fixtures = []
+
+[dependencies]
+base64 = "0.22.1"
+rsa = "0.9.8"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+sha2 = { version = "0.10.9", features = ["oid"] }
+zeroize = "1.9.0"
+
+[target.'cfg(windows)'.dependencies]
+rdx-windows-native = { path = "windows-native" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rdx-linux-native = { path = "linux-native" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+rdx-macos-native = { path = "macos-native" }
+
+[target."cfg(unix)".dependencies]
+rustix = { version = "1.1.4", features = ["fs", "process"] }
+
+[dev-dependencies]
+rdx-linux-native = { path = "linux-native" }
+rdx-macos-native = { path = "macos-native", features = ["test-hooks"] }
+rdx-windows-native = { path = "windows-native", features = ["test-hooks"] }
+tempfile = "3.23.0"
+trybuild = "1.0.119"
+
+[[bin]]
+name = "openrdx-platform-panic-fixture"
+path = "src/bin/openrdx-platform-panic-fixture.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "diagnostic_operations"
+path = "tests/diagnostic_operations.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "firmware_0283"
+path = "tests/firmware_0283.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "firmware_operations"
+path = "tests/firmware_operations.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "eject_service_integration"
+path = "tests/eject_service_integration.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "mode_operations"
+path = "tests/mode_operations.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "host_operation_state"
+path = "tests/host_operation_state.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "platform_panic_process"
+path = "tests/platform_panic_process.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "session_api"
+path = "tests/session_api.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "session_ownership"
+path = "tests/session_ownership.rs"
+required-features = ["fixtures"]

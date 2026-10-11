@@ -1,0 +1,7 @@
+{
+    "cmake.sourceDirectory": "/Users/afiedler/Documents/privat/Andrés_Werkstatt/Complete_OpenRDX/OpenRDXManager/analysis/private-firmware/recovered-source",
+    "search.useIgnoreFiles": true,
+    "search.exclude": {
+        "**/analysis/**": true
+    }
+}

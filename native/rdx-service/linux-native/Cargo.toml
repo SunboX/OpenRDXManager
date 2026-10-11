@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 André Fiedler
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[package]
+name = "rdx-linux-native"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[target.'cfg(target_os = "linux")'.dependencies]
+async-io = "2.6.0"
+futures-lite = "2.6.1"
+libc = "0.2.180"
+zbus = "4.4.0"
+
+[dev-dependencies]
+tempfile = "3.23.0"
+trybuild = "1.0.119"

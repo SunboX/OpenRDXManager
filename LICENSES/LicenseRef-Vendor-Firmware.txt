@@ -1,0 +1,7 @@
+Vendor firmware notice
+
+Original Tandberg / Overland-Tandberg RDX firmware and its distribution archive
+retain the copyright notices and terms supplied by their publishers.
+This identifier records a third-party rights boundary. It is not a license grant,
+and OpenRDXManager does not relicense this firmware or its distribution files.
+Obtain and comply with the applicable publisher terms before redistribution.

@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 André Fiedler -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+
+<serviceMetadata
+  xmlns="urn:openrdx:windows-service-metadata:1"
+  schemaVersion="1"
+  autoInstall="false"
+  autoElevate="false"
+  hardwareVerified="false"
+>
+  <identity
+    serviceName="OpenRDXHardwareService"
+    displayName="OpenRDX Hardware Service"
+    executable="openrdx-hardware.exe"
+  />
+  <runtime
+    account="NT AUTHORITY\LocalService"
+    arguments="--service-mode named-pipe --protocol-version 1"
+    startMode="demand"
+    errorControl="normal"
+    loadOrderGroup="none"
+    dependencies="none"
+    interactive="false"
+    networkAccess="false"
+  />
+  <serviceLifecycle
+    dispatcher="windows-scm"
+    acceptedControls="stop shutdown"
+    statusSequence="start-pending running stop-pending stopped"
+    stopPollMs="250"
+  />
+  <endpoint
+    pipeName="\\.\pipe\OpenRDXHardwareService"
+    rejectRemoteClients="true"
+    maxInstances="8"
+    maxFrameBytes="65536"
+    acceptTimeoutMs="10000"
+    handshakeTimeoutMs="2000"
+    clientConnector="direct-napi"
+  >
+    <accessControl
+      protectedDacl="true"
+      serviceSid="S-1-5-19"
+      administratorsSid="S-1-5-32-544"
+      currentUserResolution="verified-session-token-at-connect"
+      currentUserAccessMask="0x00100183"
+      currentUserCanCreatePipeInstance="false"
+      rejectAnonymous="true"
+      rejectNetwork="true"
+    />
+  </endpoint>
+  <deviceAccess
+    interfaceClass="{53F56307-B6BF-11D0-94F2-00A0C91EFB8B}"
+    discoveryDesiredAccess="none"
+    transportDesiredAccess="read-write"
+    volumeMappingDesiredAccess="none"
+    volumeMutationDesiredAccess="read-write"
+    volumeMutationControls="lock dismount"
+    shareMode="read-write"
+    explicitDeviceAclRequired="true"
+  />
+  <serviceAccessProvisioning
+    provisioner="openrdx-service-acl.exe"
+    installerContract="provision-openrdx-service-access.ps1"
+    provisionAction="provision"
+    verifyAction="verify"
+    removeAction="remove"
+    managerIdentityInput="active-console-process-id"
+    managerAccessMask="0x00000015"
+    protectedCanonicalDacl="true"
+    idempotent="true"
+  />
+  <driveLetterRegistryProvisioning
+    key="HKEY_LOCAL_MACHINE\SOFTWARE\OpenRDXManager\DriveLetters"
+    createWithFinalDescriptor="true"
+    transactionRollback="new-empty-key-on-service-failure"
+    ownerSid="S-1-5-32-544"
+    groupSid="S-1-5-18"
+    protectedCanonicalDacl="true"
+    systemAccessMask="0x000f003f"
+    administratorsAccessMask="0x000f003f"
+    localServiceParentAccessMask="0x0002000f"
+    localServiceChildAccessMask="0x0003000f"
+    localServiceChildAce="container-inherit inherit-only"
+    rejectForeignOrBroadenedAcl="true"
+    verifyBeforeReadiness="true"
+  />
+  <readiness
+    serviceControlAccess="query-config query-status start"
+    serviceControlPrincipal="verified-current-manager-user"
+    serviceControlAccessMask="0x00000015"
+    serviceControlOtherUnprivilegedAccess="none"
+    serviceControlCanStop="false"
+    serviceControlCanChangeConfig="false"
+    serviceControlCanDelete="false"
+    activationTimeoutMs="5000"
+    nativeActivationTimeoutMs="7000"
+    outerActivationTimeoutMs="8000"
+    preStartConfigValidation="true"
+    serviceMustBeRunning="true"
+    servicePidMustMatchCurrentProcess="true"
+    servicePidMustRemainStable="true"
+    serviceRuntimeTypeMustBeOwnProcess="true"
+    serviceConfigMustRemainStable="true"
+    serviceBinaryMustMatchCurrentProcess="true"
+    serviceTokenUserMustBeLocalService="true"
+    clientMustVerifyServerPid="true"
+    clientMustVerifyStableServiceConfig="true"
+    processAccess="query-limited-information"
+    tokenAccess="query"
+    directAuthorityRequiresElevatedToken="true"
+    directAuthorityRequiresExactDeviceAccess="true"
+  />
+</serviceMetadata>

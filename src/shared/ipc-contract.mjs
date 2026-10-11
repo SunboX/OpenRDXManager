@@ -1,0 +1,42 @@
+// SPDX-FileCopyrightText: 2026 André Fiedler
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+/** Internal exact IPC channel allowlist; channel names never enter the renderer API. */
+export const IpcChannel = Object.freeze({
+    MANUFACTURING_LIST: 'openrdx:manufacturing:list',
+    MANUFACTURING_BACKUP: 'openrdx:manufacturing:backup',
+    MANUFACTURING_RESTORE: 'openrdx:manufacturing:restore',
+    MANUFACTURING_OPEN_FOLDER: 'openrdx:manufacturing:open-folder',
+    APP_GET: 'openrdx:app:get',
+    MCP_GET_STATUS: 'openrdx:mcp:get-status',
+    MCP_UPDATE: 'openrdx:mcp:update',
+    MCP_COPY_CONFIGURATION: 'openrdx:mcp:copy-configuration',
+    APP_SET_TRAY_SELECTION: 'openrdx:app:set-tray-selection',
+    APP_RENDERER_MOUNTED: 'openrdx:app:renderer-mounted',
+    DEVICES_LIST: 'openrdx:devices:list',
+    DEVICES_SCAN: 'openrdx:devices:scan',
+    DEVICES_EVENT: 'openrdx:devices:event',
+    RECOVERY_LIST: 'openrdx:recovery:list',
+    RECOVERY_STATUS: 'openrdx:recovery:status',
+    RECOVERY_START: 'openrdx:recovery:start',
+    RECOVERY_CONTINUE: 'openrdx:recovery:continue',
+    FILES_CHOOSE_FIRMWARE: 'openrdx:files:choose-firmware',
+    FILES_CHOOSE_EXPORT: 'openrdx:files:choose-export',
+    LOGS_LIST: 'openrdx:logs:list',
+    LOGS_SET_ENABLED: 'openrdx:logs:set-enabled',
+    LOGS_EXPORT: 'openrdx:logs:export',
+    OPERATIONS_START: 'openrdx:operations:start',
+    OPERATIONS_CONFIRM: 'openrdx:operations:confirm',
+    OPERATIONS_CANCEL: 'openrdx:operations:cancel',
+    OPERATIONS_CONTINUE: 'openrdx:operations:continue',
+    OPERATIONS_EVENT: 'openrdx:operations:event',
+    SERVICE_GET_SETUP: 'openrdx:service:get-setup',
+    SERVICE_RETRY: 'openrdx:service:retry',
+    SERVICE_REGISTER: 'openrdx:service:register',
+    SERVICE_OPEN_APPROVAL_SETTINGS: 'openrdx:service:open-approval-settings',
+    SETTINGS_GET: 'openrdx:settings:get',
+    SETTINGS_UPDATE: 'openrdx:settings:update',
+    SETTINGS_EVENT: 'openrdx:settings:event',
+    SUPPORT_GENERATE_SUMMARY: 'openrdx:support:generate-summary',
+    UPDATES_CHECK: 'openrdx:updates:check'
+})

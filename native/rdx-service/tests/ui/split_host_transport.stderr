@@ -1,0 +1,11 @@
+error[E0432]: unresolved import `rdx_service::host::HostOperations`
+ --> tests/ui/split_host_transport.rs:1:5
+  |
+1 | use rdx_service::host::HostOperations;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `HostOperations` in `host`
+
+error[E0432]: unresolved import `rdx_service::transport::Transport`
+ --> tests/ui/split_host_transport.rs:2:5
+  |
+2 | use rdx_service::transport::Transport;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `Transport` in `transport`

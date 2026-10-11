@@ -1,0 +1,5 @@
+error[E0599]: no method named `clone` found for struct `DeviceLease` in the current scope
+ --> tests/ui/device_lease_clone.rs:4:23
+  |
+4 |     let _copy = lease.clone();
+  |                       ^^^^^ method not found in `DeviceLease`

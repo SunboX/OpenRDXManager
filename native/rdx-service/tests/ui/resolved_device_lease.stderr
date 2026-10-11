@@ -1,0 +1,5 @@
+error[E0599]: no method named `lease` found for reference `&ResolvedDevice<'_>` in the current scope
+ --> tests/ui/resolved_device_lease.rs:4:27
+  |
+4 |     let _lease = resolved.lease();
+  |                           ^^^^^ private field, not a method

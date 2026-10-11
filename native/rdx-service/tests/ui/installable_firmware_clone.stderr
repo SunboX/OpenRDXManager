@@ -1,0 +1,5 @@
+error[E0599]: no method named `clone` found for struct `InstallableFirmwareImage` in the current scope
+  --> tests/ui/installable_firmware_clone.rs:25:31
+   |
+25 |     let _copy = authorization.clone();
+   |                               ^^^^^ method not found in `InstallableFirmwareImage`

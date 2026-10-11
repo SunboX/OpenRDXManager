@@ -1,0 +1,16 @@
+error[E0061]: this function takes 2 arguments but 3 arguments were supplied
+  --> tests/ui/windows_completion_command_mismatch.rs:10:19
+   |
+10 |     let _forged = convert_scsi_completion(&mutating, &read_packet, completion);
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^ --------- unexpected argument #1 of type `&rdx_service::protocol::Command`
+   |
+note: function defined here
+  --> src/platform/windows.rs
+   |
+   | pub fn convert_scsi_completion(
+   |        ^^^^^^^^^^^^^^^^^^^^^^^
+help: remove the extra argument
+   |
+10 -     let _forged = convert_scsi_completion(&mutating, &read_packet, completion);
+10 +     let _forged = convert_scsi_completion(&read_packet, completion);
+   |

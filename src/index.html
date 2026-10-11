@@ -1,0 +1,44 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: 2026 André Fiedler -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+        <title>OpenRDXManager</title>
+        <link rel="stylesheet" href="../node_modules/@fontsource/inter/400.css" />
+        <link rel="stylesheet" href="../node_modules/@fontsource/inter/600.css" />
+        <link rel="stylesheet" href="../node_modules/@fontsource/inter/700.css" />
+        <link rel="stylesheet" href="../node_modules/@fontsource/oxanium/500.css" />
+        <link rel="stylesheet" href="../node_modules/@fontsource/oxanium/600.css" />
+        <link rel="stylesheet" href="../node_modules/@fontsource/oxanium/700.css" />
+        <link rel="stylesheet" href="../node_modules/@phosphor-icons/web/src/regular/style.css" />
+        <link rel="stylesheet" href="../node_modules/@phosphor-icons/web/src/duotone/style.css" />
+        <link rel="stylesheet" href="../node_modules/@phosphor-icons/web/src/fill/style.css" />
+        <link rel="stylesheet" href="./styles/tokens.css" />
+        <link rel="stylesheet" href="./styles/base.css" />
+        <link rel="stylesheet" href="./styles/layout.css" />
+        <link rel="stylesheet" href="./styles/components.css" />
+        <link rel="stylesheet" href="./styles/operation-components.css" />
+        <link rel="stylesheet" href="./styles/security-workflows.css" />
+        <link rel="stylesheet" href="./styles/test-workflows.css" />
+        <link rel="stylesheet" href="./styles/utility-workflows.css" />
+        <link rel="stylesheet" href="./styles/support-tools.css" />
+        <link rel="stylesheet" href="./styles/compatibility.css" />
+        <link rel="stylesheet" href="./styles/mcp-settings.css" />
+        <link rel="stylesheet" href="./styles/responsive.css" />
+        <link rel="stylesheet" href="./styles/window-chrome.css" />
+    </head>
+    <body>
+        <header class="window-titlebar" aria-label="OpenRDXManager">
+            <span class="window-titlebar__title">OpenRDXManager</span>
+        </header>
+        <nav class="window-menubar" role="menubar" aria-label="OpenRDXManager"></nav>
+        <a class="skip-link" href="#main-content">Skip to main content</a>
+        <div id="app"></div>
+        <noscript>OpenRDXManager requires JavaScript to display local device status.</noscript>
+        <script type="module" src="./renderer.mjs"></script>
+    </body>
+</html>

@@ -1,0 +1,143 @@
+{
+    "capabilityStates": [
+        "available",
+        "busy",
+        "unsupported-product",
+        "unsupported-platform",
+        "wrong-media-state",
+        "authentication-required",
+        "insufficient-permission",
+        "host-dependency-missing",
+        "evidence-incomplete",
+        "transport-unavailable",
+        "hardware-unverified"
+    ],
+    "operationKinds": [
+        "scan",
+        "status-refresh",
+        "access-enable",
+        "access-disable",
+        "credential-create",
+        "credential-change",
+        "credential-delete",
+        "credential-reset",
+        "credential-configure",
+        "self-test",
+        "led-test",
+        "write-read-test",
+        "firmware-update",
+        "volume-label-set",
+        "drive-letter-set",
+        "drive-letter-reset",
+        "format",
+        "drive-mode-set",
+        "sata-mode-set",
+        "eject-safe",
+        "eject-force"
+    ],
+    "riskClasses": [
+        "read-only",
+        "read-only",
+        "routine",
+        "routine",
+        "configuration",
+        "configuration",
+        "configuration",
+        "destructive",
+        "configuration",
+        "routine",
+        "routine",
+        "routine",
+        "critical",
+        "configuration",
+        "configuration",
+        "configuration",
+        "destructive",
+        "configuration",
+        "configuration",
+        "routine",
+        "critical"
+    ],
+    "operationRequest": {
+        "kind": "self-test",
+        "deviceId": "rdx:1",
+        "deviceRevision": 2
+    },
+    "operationRequests": [
+        { "kind": "scan" },
+        { "kind": "status-refresh", "deviceId": "rdx:1", "deviceRevision": 2 },
+        { "kind": "access-enable", "deviceId": "rdx:1", "deviceRevision": 2, "credentialHandle": "credential:handle" },
+        { "kind": "access-disable", "deviceId": "rdx:1", "deviceRevision": 2 },
+        { "kind": "credential-create", "deviceId": "rdx:1", "deviceRevision": 2, "credentialHandle": "credential:handle", "confirmationToken": "confirm:token" },
+        { "kind": "credential-change", "deviceId": "rdx:1", "deviceRevision": 2, "credentialId": "credential:id", "credentialHandle": "credential:handle", "confirmationToken": "confirm:token" },
+        { "kind": "credential-delete", "deviceId": "rdx:1", "deviceRevision": 2, "credentialId": "credential:id", "confirmationToken": "confirm:token" },
+        { "kind": "credential-reset", "deviceId": "rdx:1", "deviceRevision": 2, "confirmationToken": "confirm:token" },
+        { "kind": "credential-configure", "deviceId": "rdx:1", "deviceRevision": 2, "confirmationToken": "confirm:token" },
+        { "kind": "self-test", "deviceId": "rdx:1", "deviceRevision": 2 },
+        { "kind": "led-test", "deviceId": "rdx:1", "deviceRevision": 2 },
+        { "kind": "write-read-test", "deviceId": "rdx:1", "deviceRevision": 2 },
+        { "kind": "firmware-update", "deviceId": "rdx:1", "deviceRevision": 2, "firmwareFileToken": "firmware:token" },
+        { "kind": "volume-label-set", "deviceId": "rdx:1", "deviceRevision": 2, "label": "Backup" },
+        { "kind": "drive-letter-set", "deviceId": "rdx:1", "deviceRevision": 2, "letter": "A" },
+        { "kind": "drive-letter-reset", "deviceId": "rdx:1", "deviceRevision": 2 },
+        { "kind": "format", "deviceId": "rdx:1", "deviceRevision": 2, "filesystem": "ntfs", "confirmationToken": "confirm:token" },
+        { "kind": "drive-mode-set", "deviceId": "rdx:1", "deviceRevision": 2, "mode": "fixed" },
+        { "kind": "sata-mode-set", "deviceId": "rdx:1", "deviceRevision": 2, "mode": "1.5g-3g" },
+        { "kind": "eject-safe", "deviceId": "rdx:1", "deviceRevision": 2 },
+        { "kind": "eject-force", "deviceId": "rdx:1", "deviceRevision": 2, "confirmationToken": "confirm:token" }
+    ],
+    "operationEvent": {
+        "state": "progress",
+        "operationId": "op:1",
+        "kind": "self-test",
+        "deviceId": "rdx:1",
+        "deviceRevision": 2,
+        "stage": "diagnostic-running",
+        "progress": 0.5,
+        "cancellationState": "cancellable",
+        "messageKey": "tests.selfTest.running"
+    },
+    "firmwareRetryEvent": {
+        "state": "progress",
+        "operationId": "op:firmware-retry",
+        "kind": "firmware-update",
+        "deviceId": "rdx:1",
+        "deviceRevision": 2,
+        "stage": "firmware-writing",
+        "progress": 0.4,
+        "attempt": 2,
+        "cancellationState": "closed",
+        "messageKey": "operations.firmwareUpdate.retrying"
+    },
+    "operationFailureEvent": {
+        "state": "failed",
+        "operationId": "op:firmware-failure",
+        "kind": "firmware-update",
+        "deviceId": "rdx:1",
+        "deviceRevision": 2,
+        "stage": "firmware-readback",
+        "error": {
+            "code": "firmware-revision-mismatch",
+            "messageKey": "errors.firmware.revisionMismatch",
+            "stage": "firmware-writing",
+            "category": "transport",
+            "retryable": false,
+            "supportCorrelationId": "support:firmware-failure",
+            "cleanupEvidence": [
+                {
+                    "stage": "firmware-finalizing",
+                    "code": "transport-timeout",
+                    "dispatchCertainty": "completion-unknown"
+                }
+            ],
+            "attemptHistory": [
+                {
+                    "attempt": 1,
+                    "stage": "firmware-writing",
+                    "code": "transport-unavailable",
+                    "dispatchCertainty": "not-sent"
+                }
+            ]
+        }
+    }
+}

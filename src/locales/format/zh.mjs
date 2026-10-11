@@ -1,0 +1,43 @@
+// SPDX-FileCopyrightText: 2026 André Fiedler
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+/** Localized format choices, confirmation and native-host guidance. */
+export const formatCatalog = Object.freeze({
+    'utilities.format.eyebrow': '破坏性·主机存储',
+    'utilities.format.title': '对介质盒进行分区和格式化',
+    'utilities.format.description': '重新创建选定的介质盒分区和文件系统，然后证明该卷重新出现。',
+    'utilities.format.tooling': 'NTFS 是默认选项。NTFS 和 exFAT 均使用快速格式化；缺少所需工具时，会在卸载或更改布局前阻止操作。',
+    'utilities.format.filesystem.fat': 'MS-DOS (FAT)',
+    'utilities.format.filesystem.fat12': 'MS-DOS (FAT12)',
+    'utilities.format.filesystem.fat16': 'MS-DOS (FAT16)',
+    'utilities.format.filesystem.fat32': 'MS-DOS (FAT32)',
+    'utilities.format.filesystem.hfs': 'Mac OS 扩展',
+    'utilities.format.filesystem.hfs-case-sensitive': 'Mac OS 扩展 (区分大小写)',
+    'utilities.format.filesystem.hfs-journaled': 'Mac OS 扩展 (日志式)',
+    'utilities.format.filesystem.hfs-case-sensitive-journaled': 'Mac OS 扩展 (区分大小写, 日志式)',
+    'utilities.format.filesystem.apfs': 'APFS',
+    'utilities.format.filesystem.apfs-case-sensitive': 'APFS (区分大小写)',
+    'utilities.format.filesystem.apfs-encrypted': 'APFS (加密)',
+    'utilities.format.filesystem.apfs-case-sensitive-encrypted': 'APFS (区分大小写, 加密)',
+    'utilities.format.password': '加密密码',
+    'utilities.format.passwordConfirm': '确认密码',
+    'utilities.format.passwordRequired': '请输入相同的加密密码（最多512个 UTF-8 字节，不含换行）。请保存密码，用于解锁介质。',
+    'utilities.format.capacityUnsupported': '所选文件系统不支持此介质容量。',
+    'utilities.format.tooling.linux': 'Linux 默认使用 ext4。可选择 Linux 文件系统或跨平台格式。所需工具会在卸载或更改磁盘分区前检查。',
+    'utilities.format.filesystem.ext2': 'ext2',
+    'utilities.format.filesystem.ext3': 'ext3',
+    'utilities.format.filesystem.ext4': 'ext4',
+    'utilities.format.filesystem.xfs': 'XFS',
+    'utilities.format.filesystem.btrfs': 'Btrfs',
+    'utilities.format.filesystem.f2fs': 'F2FS',
+    'utilities.format.filesystem.ntfs.linux': 'NTFS',
+    'utilities.format.tooling.macos': 'exFAT 和 FAT 可用于 Windows 和 macOS。APFS 和 Mac OS 扩展是 Mac 格式。macOS 无法创建 NTFS。FAT12 和 FAT16 仅适用于小容量介质。',
+    'utilities.format.tooling.unavailable': '未证实此主机具有受支持的原生格式化程序，因此格式化保持禁用。',
+    'utilities.format.filesystemLabel': '文件系统',
+    'utilities.format.filesystem.ntfs': 'NTFS 快速格式化（默认）',
+    'utilities.format.filesystem.exfat': 'exFAT 快速格式化',
+    'utilities.format.identityUnavailable': '确切的介质盒身份不可用',
+    'utilities.format.typeIdentity': '准确输入 {identity}',
+    'utilities.format.consequence': '这会破坏所选介质盒上的所有数据。快速格式化不是对以前未加密的数据进行加密擦除。',
+    'utilities.format.action': '擦除并格式化指定介质盒'
+})

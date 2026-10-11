@@ -1,0 +1,5 @@
+error[E0599]: no method named `bytes` found for struct `FirmwareImage` in the current scope
+ --> tests/ui/firmware_image_bytes.rs:6:19
+  |
+6 |     let _ = image.bytes();
+  |                   ^^^^^ private field, not a method

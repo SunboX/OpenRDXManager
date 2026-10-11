@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 André Fiedler
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[Unit]
+Description=OpenRDX hardware service socket
+
+[Socket]
+ListenStream=/run/openrdx/openrdx-hardware.sock
+FileDescriptorName=Listener
+SocketUser=root
+SocketGroup=openrdx
+SocketMode=0660
+DirectoryMode=0750
+Accept=no
+MaxConnections=8
+RemoveOnStop=true
+Service=openrdx-hardware.service
+
+[Install]
+WantedBy=sockets.target

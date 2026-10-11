@@ -1,0 +1,17 @@
+error[E0382]: use of moved value: `authorization`
+  --> tests/ui/installable_firmware_reuse.rs:28:13
+   |
+26 |     let authorization = session.authorize_firmware(image).unwrap();
+   |         ------------- move occurs because `authorization` has type `InstallableFirmwareImage`, which does not implement the `Copy` trait
+27 |     consume(authorization);
+   |             ------------- value moved here
+28 |     consume(authorization);
+   |             ^^^^^^^^^^^^^ value used here after move
+   |
+note: consider changing this parameter type in function `consume` to borrow instead if owning the value isn't necessary
+  --> tests/ui/installable_firmware_reuse.rs:9:28
+   |
+ 9 | fn consume(_authorization: InstallableFirmwareImage) {}
+   |    -------                 ^^^^^^^^^^^^^^^^^^^^^^^^ this parameter takes ownership of the value
+   |    |
+   |    in this function

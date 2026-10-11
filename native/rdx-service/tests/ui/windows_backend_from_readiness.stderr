@@ -1,0 +1,22 @@
+error[E0603]: struct `WindowsReadiness` is private
+ --> tests/ui/windows_backend_from_readiness.rs:1:54
+  |
+1 | use rdx_service::platform::windows::{WindowsBackend, WindowsReadiness};
+  |                                                      ^^^^^^^^^^^^^^^^ private struct
+  |
+note: the struct `WindowsReadiness` is defined here
+ --> src/platform/windows.rs
+  |
+  | struct WindowsReadiness {
+  | ^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0624]: associated function `from_readiness` is private
+ --> tests/ui/windows_backend_from_readiness.rs:4:35
+  |
+4 |     let _forged = WindowsBackend::from_readiness(readiness, true);
+  |                                   ^^^^^^^^^^^^^^ private associated function
+  |
+ ::: src/platform/windows.rs
+  |
+  |     fn from_readiness(readiness: WindowsReadiness, native_active: bool) -> Self {
+  |     --------------------------------------------------------------------------- private associated function defined here

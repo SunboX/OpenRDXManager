@@ -1,0 +1,307 @@
+/* SPDX-FileCopyrightText: 2026 André Fiedler
+ * SPDX-License-Identifier: AGPL-3.0-or-later */
+
+/* Both wide and restored desktop windows keep scrolling inside the shell.
+   An outer document scrollbar leaves a gutter outside the decorative frame.
+   Stacked mobile layouts and unusually short windows retain document scrolling
+   so the surrounding rails can remain reachable. */
+@media (min-width: 821px) and (min-height: 700px) {
+    html,
+    body,
+    #app {
+        height: 100%;
+        overflow: hidden;
+    }
+
+    .application-shell {
+        display: flex;
+        height: 100%;
+        min-height: 0;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    .topbar {
+        flex: 0 0 auto;
+    }
+
+    .shell-grid,
+    .application-shell > .state-workspace {
+        height: auto;
+        min-height: 0;
+        flex: 1 1 auto;
+        overflow-y: auto;
+    }
+
+    .main-workspace {
+        display: flex;
+        min-height: 0;
+        flex-direction: column;
+        padding-right: 0;
+        padding-bottom: 0;
+        overflow: hidden;
+    }
+
+    .main-workspace > :not(.area-panel) {
+        flex: 0 0 auto;
+        margin-right: 24px;
+    }
+
+    .area-panel {
+        min-height: 0;
+        flex: 1 1 auto;
+        padding-right: 24px;
+        padding-bottom: 32px;
+        overflow-y: auto;
+        overscroll-behavior-y: contain;
+        scrollbar-gutter: stable;
+    }
+}
+
+@media (max-width: 1220px) {
+    .topbar__support-button {
+        width: 38px;
+        flex: 0 0 38px;
+        padding: 0;
+        font-size: 1rem;
+    }
+
+    .topbar__support-label {
+        display: none;
+    }
+
+    .shell-grid {
+        grid-template-columns: var(--device-rail-width) minmax(0, 1fr);
+    }
+
+    .command-rail {
+        display: none;
+    }
+
+    .metric-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 820px) {
+    .topbar {
+        flex-wrap: wrap;
+    }
+
+    .topbar__path {
+        order: 4;
+        width: 100%;
+        flex-basis: 100%;
+    }
+
+    .fixture-chip {
+        margin-left: auto;
+    }
+
+    .topbar__actions {
+        max-width: min(46vw, 300px);
+        margin-left: auto;
+    }
+
+    .topbar__support-button {
+        width: 38px;
+        flex: 0 0 38px;
+        padding: 0;
+        font-size: 1rem;
+    }
+
+    .topbar__support-label {
+        display: none;
+    }
+
+    .shell-grid,
+    .shell-grid--state {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .device-rail {
+        padding: 0;
+        border-right: 0;
+        border-bottom: 1px solid var(--color-border);
+    }
+
+    .device-rail__toggle {
+        display: flex;
+        width: 100%;
+        min-height: 48px;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 16px;
+        border: 0;
+        background: rgba(7, 20, 32, 0.96);
+        text-align: left;
+    }
+
+    .device-rail__toggle span {
+        flex: 1;
+        font-family: var(--font-display);
+        font-weight: 600;
+    }
+
+    .device-rail__content {
+        display: none;
+        padding: 16px;
+    }
+
+    .device-rail[data-open='true'] .device-rail__content {
+        display: block;
+    }
+
+    .device-list {
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+
+    .main-workspace,
+    .state-workspace {
+        padding: 18px;
+    }
+
+    .command-grid,
+    .detail-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .failure-banner {
+        grid-template-columns: 38px minmax(0, 1fr);
+    }
+
+    .failure-banner__action {
+        grid-column: 1 / -1;
+        justify-items: start;
+    }
+
+    .operation-drawer {
+        width: min(430px, 100vw);
+        padding: 18px;
+    }
+}
+
+@container main-workspace (max-width: 740px) {
+    .operation-banner {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .operation-banner__lock {
+        grid-template-columns: 34px minmax(0, 1fr);
+        padding-top: 14px;
+        padding-bottom: 14px;
+        border-block-start: 1px solid rgba(255, 193, 139, 0.12);
+        border-inline-start: 0;
+    }
+}
+
+@container main-workspace (max-width: 520px) {
+    .operation-banner__activity {
+        grid-template-columns: 52px minmax(0, 1fr);
+        gap: 14px;
+        padding: 15px 16px 14px;
+    }
+
+    .operation-banner__icon {
+        width: 50px;
+        height: 50px;
+        font-size: 1.25rem;
+    }
+
+    .operation-banner__stage {
+        overflow: visible;
+        line-height: 1.35;
+        text-overflow: clip;
+        white-space: normal;
+    }
+
+    .operation-banner__lock {
+        grid-template-columns: 28px minmax(0, 1fr);
+        gap: 10px;
+        padding: 13px 16px 14px;
+    }
+
+    .operation-banner__lock > i {
+        font-size: 1.25rem;
+    }
+}
+
+@media (max-width: 560px) {
+    .topbar {
+        gap: 9px;
+        padding: 10px 12px;
+    }
+
+    .brand {
+        font-size: 0.9rem;
+    }
+
+    .fixture-chip {
+        padding: 5px 7px;
+    }
+
+    .main-workspace {
+        padding: 14px 12px 24px;
+    }
+
+    .workspace-heading {
+        display: block;
+    }
+
+    .health-state {
+        margin-top: 12px;
+        justify-items: start;
+    }
+
+    .area-tabs {
+        margin-right: -12px;
+        margin-left: -12px;
+        padding-right: 12px;
+        padding-left: 12px;
+    }
+
+    .metric-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .metric-card--capacity {
+        grid-column: auto;
+    }
+
+    .failure-banner dl {
+        display: grid;
+        gap: 4px;
+    }
+
+    .future-workspace,
+    .empty-state {
+        padding: 30px 20px;
+    }
+
+    .operation-drawer {
+        width: 100vw;
+        padding: 16px 14px 24px;
+        border-left: 0;
+    }
+
+    .confirmation-overlay {
+        padding: 12px;
+        place-items: end center;
+    }
+
+    .confirmation-dialog {
+        width: 100%;
+        padding: 18px;
+    }
+
+    .confirmation-dialog__actions,
+    .operation-result__actions {
+        display: grid;
+        grid-template-columns: 1fr;
+    }
+
+    .confirmation-dialog__actions .button,
+    .operation-result__actions .button {
+        width: 100%;
+    }
+}

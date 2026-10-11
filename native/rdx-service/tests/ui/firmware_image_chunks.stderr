@@ -1,0 +1,5 @@
+error[E0599]: no method named `chunks` found for struct `FirmwareImage` in the current scope
+ --> tests/ui/firmware_image_chunks.rs:6:19
+  |
+6 |     let _ = image.chunks();
+  |                   ^^^^^^ method not found in `FirmwareImage`
