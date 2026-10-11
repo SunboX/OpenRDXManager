@@ -418,13 +418,16 @@ fn final_path(handle: HANDLE) -> Result<PathBuf, NativeError> {
 /// Selects normalized or exact opened spelling on the same retained volume handle.
 fn handle_path(handle: HANDLE, opened: bool) -> Result<PathBuf, NativeError> {
     let mut buffer = vec![0u16; 32768];
+    // This Win32 flag wrapper has no BitOr implementation; combine its raw bits.
+    let flags = GETFINALPATHNAMEBYHANDLE_FLAGS(
+        VOLUME_NAME_GUID.0
+            | if opened {
+                FILE_NAME_OPENED.0
+            } else {
+                FILE_NAME_NORMALIZED.0
+            },
+    );
     // SAFETY: fixed bounded writable output and a retained handle.
-    let flags = VOLUME_NAME_GUID
-        | if opened {
-            FILE_NAME_OPENED
-        } else {
-            FILE_NAME_NORMALIZED
-        };
     let length = unsafe { GetFinalPathNameByHandleW(handle, &mut buffer, flags) } as usize;
     if length == 0 || length >= buffer.len() {
         return Err(NativeError::EvidenceIncomplete);
