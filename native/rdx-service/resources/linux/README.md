@@ -26,11 +26,28 @@ at accept time. The `openrdx` group is an IPC-only group: membership permits
 connection but grants no raw SG device access and does not bypass the
 service's exact peer/handshake policy or device identity registry. These files
 are packaging resources and are not installed or enabled by repository tests.
+The manager identity is the installed regular executable
+`/opt/OpenRDXManager/OpenRDXManager`. A single native `MANAGER_PATH` constant
+feeds the public endpoint contract and the authentication open. Desktop command
+symlinks do not establish this identity: the service opens the fixed binary with
+`O_NOFOLLOW` and still requires root ownership, no group/world writes, an exact
+device/inode match with the live peer executable, and the peer's IPC group
+membership. Installer tests compare that fixed path with the actual package
+layout; CI checks the installed binary's regular-file and ownership metadata
+without opening a service connection or sending device commands.
 `openrdx.conf` declares only the dedicated system group through sysusers.
 `openrdx-tmpfiles.conf` declares the root-owned runtime directory and its
 root:root mode-`0600` `openrdx-hardware.lock`. The daemon and administrator-run
 `rdxctl` take the same nonblocking kernel lock before constructing a hardware
 registry; the daemon retains it for the complete authenticated client session.
+The service retains `ProtectSystem=strict` and permits writes only to this
+precreated lock file through `ReadWritePaths`. A writable runtime directory is
+not required: systemd owns the socket and tmpfiles creates the namespace. At
+startup the daemon opens and validates the lock file; it acquires the exclusive
+kernel lock only for an authenticated client session. Installer CI starts the
+installed service and checks its live process has the exact lock inode open,
+without connecting to the socket or sending any device command. Idle retirement
+and the IPC group and peer checks remain in effect.
 The lock file is not an authorization token: its open rejects symlinks and its
 already-open inode must remain regular, root-owned, single-link, and exactly
 mode `0600`. Neither resource adds users to the group; membership remains an

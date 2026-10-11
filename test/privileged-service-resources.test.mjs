@@ -16,13 +16,29 @@ test('Linux installation metadata exposes only the fixed root-owned local endpoi
     assert.match(service, /^ExecStart=\/usr\/libexec\/openrdx-hardware --service-mode systemd-socket --protocol-version 1$/m)
     assert.match(service, /^User=root$/m)
     assert.match(service, /^StandardInput=null$/m)
+    assert.match(service, /^ProtectSystem=strict$/m)
+    // Startup opens only the precreated ownership lock for writing. Do not
+    // grant a writable runtime directory or weaken the filesystem sandbox.
+    assert.deepEqual(
+        service.split('\n').filter((line) => line.startsWith('ReadWritePaths=')),
+        ['ReadWritePaths=/run/openrdx/openrdx-hardware.lock']
+    )
     assert.doesNotMatch(service, /--service-mode stdio/)
     assert.match(socket, /^ListenStream=\/run\/openrdx\/openrdx-hardware\.sock$/m)
     assert.match(socket, /^SocketUser=root$/m)
     assert.match(socket, /^SocketGroup=openrdx$/m)
     assert.match(socket, /^SocketMode=0660$/m)
     assert.match(socket, /^MaxConnections=8$/m)
-    assert.match(sysusers, /^g\s+openrdx\s+-\s+/m)
+    // sysusers group records allow only name/ID; user-only description/home/shell
+    // fields are rejected during real installation. Do not create users or memberships.
+    const groupRecords = sysusers
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line && !line.startsWith('#'))
+    assert.deepEqual(
+        groupRecords.map((line) => line.split(/\s+/u)),
+        [['g', 'openrdx', '-']]
+    )
     assert.match(tmpfiles, /^d \/run\/openrdx 0750 root openrdx -$/m)
     assert.match(tmpfiles, /^f \/run\/openrdx\/openrdx-hardware\.lock 0600 root root -$/m)
     assert.match(policy, /<action id="org\.openrdx\.hardware\.manage">/)

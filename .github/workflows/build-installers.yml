@@ -74,6 +74,65 @@ jobs:
               shell: bash
               run: |
                   sudo apt-get install -y ./dist/installers/*.deb
+                  sudo systemctl start openrdx-hardware.service
+                  # Prove startup opened its namespace; no client session or device command is sent.
+                  sudo timeout 8s python3 - <<'PY'
+                  import os
+                  from pathlib import Path
+                  import re
+                  import stat
+                  import subprocess
+                  import time
+
+                  # Consume the owning native path contract compiled into this same build.
+                  endpoint_source = Path('native/rdx-service/linux-native/src/endpoint.rs').read_text(encoding='utf-8')
+                  manager_paths = re.findall(r'^const MANAGER_PATH: &str = "([^"]+)";$', endpoint_source, re.MULTILINE)
+                  if len(manager_paths) != 1:
+                      raise SystemExit('Linux manager identity contract is missing or ambiguous')
+                  manager = os.stat(manager_paths[0], follow_symlinks=False)
+                  if not stat.S_ISREG(manager.st_mode) or manager.st_uid != 0 or manager.st_gid != 0 or manager.st_mode & 0o022:
+                      raise SystemExit('Installed manager is not a private root-owned regular executable matching its contract')
+                  print('Installed manager regular-file identity and root ownership verified')
+
+                  lock_path = '/run/openrdx/openrdx-hardware.lock'
+                  deadline = time.monotonic() + 5
+                  verified = False
+
+                  def service_state():
+                      """Read bounded systemd process/state evidence without contacting the service."""
+                      result = subprocess.run(
+                          ['systemctl', 'show', 'openrdx-hardware.service',
+                           '--property=MainPID', '--property=ActiveState', '--property=SubState'],
+                          check=True, capture_output=True, text=True, timeout=1,
+                      )
+                      return dict(line.split('=', 1) for line in result.stdout.splitlines())
+
+                  while time.monotonic() < deadline:
+                      state = service_state()
+                      pid = state.get('MainPID', '')
+                      if state.get('ActiveState') == 'active' and state.get('SubState') == 'running' and pid.isdecimal() and int(pid) > 0:
+                          try:
+                              namespace = os.stat(lock_path, follow_symlinks=False)
+                              if not stat.S_ISREG(namespace.st_mode) or namespace.st_uid != 0 or namespace.st_gid != 0 or stat.S_IMODE(namespace.st_mode) != 0o600 or namespace.st_nlink != 1:
+                                  raise SystemExit('Installed ownership namespace metadata is invalid')
+                              if os.readlink(f'/proc/{pid}/exe') != '/usr/libexec/openrdx-hardware':
+                                  raise SystemExit('systemd MainPID is not the installed hardware service')
+                              for descriptor in os.scandir(f'/proc/{pid}/fd'):
+                                  if os.readlink(descriptor.path) == lock_path:
+                                      opened = os.stat(descriptor.path)
+                                      if (opened.st_dev, opened.st_ino) == (namespace.st_dev, namespace.st_ino) and service_state() == state:
+                                          verified = True
+                                          break
+                          except FileNotFoundError:
+                              pass  # Startup/retirement can change the process between bounded reads.
+                      if verified:
+                          break
+                      time.sleep(0.1)
+
+                  if not verified:
+                      raise SystemExit('Installed service did not initialize the exact ownership namespace while active')
+                  print('Installed service startup and ownership namespace verified; no device command sent')
+                  PY
                   xvfb-run -a npm run verify:packaged-app -- --installed
             - name: Upload installers
               uses: actions/upload-artifact@v7.0.1

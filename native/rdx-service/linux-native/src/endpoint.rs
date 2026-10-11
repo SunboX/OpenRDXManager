@@ -20,6 +20,10 @@ use std::time::Instant;
 
 use crate::NativeError;
 
+// Pin the installed regular executable, not a desktop/alternatives symlink.
+// Both portable packaging evidence and the native O_NOFOLLOW open use this value.
+const MANAGER_PATH: &str = "/opt/OpenRDXManager/OpenRDXManager";
+
 /// Portable installation contract for the systemd endpoint.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SystemdEndpointContract {
@@ -50,7 +54,7 @@ pub const fn systemd_endpoint_contract() -> SystemdEndpointContract {
         group: "openrdx",
         mode: 0o660,
         max_connections: 8,
-        manager_path: "/usr/bin/openrdxmanager",
+        manager_path: MANAGER_PATH,
         accept_timeout_ms: 10_000,
         handshake_timeout_ms: 2_000,
     }
@@ -58,8 +62,6 @@ pub const fn systemd_endpoint_contract() -> SystemdEndpointContract {
 
 #[cfg(target_os = "linux")]
 const ENDPOINT_PATH: &str = "/run/openrdx/openrdx-hardware.sock";
-#[cfg(target_os = "linux")]
-const MANAGER_PATH: &str = "/usr/bin/openrdxmanager";
 #[cfg(target_os = "linux")]
 const SYSTEMD_LISTEN_FD: libc::c_int = 3;
 #[cfg(target_os = "linux")]
@@ -425,7 +427,8 @@ fn authenticate_live_process(credentials: libc::ucred) -> Result<(), NativeError
     let expected_status = stat_fd(expected.raw())?;
     let peer_status = stat_fd(peer.raw())?;
     let group_id = configured_group_id()?;
-    if expected_status.st_uid != 0
+    if expected_status.st_mode & libc::S_IFMT != libc::S_IFREG
+        || expected_status.st_uid != 0
         || expected_status.st_mode & 0o022 != 0
         || expected_status.st_dev != peer_status.st_dev
         || expected_status.st_ino != peer_status.st_ino

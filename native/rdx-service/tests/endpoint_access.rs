@@ -138,15 +138,13 @@ fn development_stdio_cannot_authorize_production_mutation() {
 #[test]
 fn platform_endpoint_contracts_are_fixed_bounded_and_local() {
     let linux = rdx_linux_native::systemd_endpoint_contract();
+    assert_eq!(linux.manager_path, "/opt/OpenRDXManager/OpenRDXManager");
     assert_eq!(linux.socket_path, "/run/openrdx/openrdx-hardware.sock");
     assert_eq!(
         (linux.owner_uid, linux.group, linux.mode),
         (0, "openrdx", 0o660)
     );
-    assert_eq!(
-        (linux.max_connections, linux.manager_path),
-        (8, "/usr/bin/openrdxmanager")
-    );
+    assert_eq!(linux.max_connections, 8);
     assert_eq!(
         (linux.accept_timeout_ms, linux.handshake_timeout_ms),
         (10_000, 2_000)

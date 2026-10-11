@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdtemp, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { createSymlinkFixture } from './helpers/symlink-fixture.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -110,10 +110,16 @@ test('a credential symlink cannot enable the endpoint or change its target', asy
     await ownWindowsFixture(target, { privateAccess: true })
     assert.equal(await readFile(target, 'utf8'), 'a'.repeat(64))
     if (!(await createSymlinkFixture(context, target, join(directory, 'token')))) return
+    await ownWindowsFixture(join(directory, 'token'), { privateAccess: true, symbolicLink: true })
     await controller.load()
     const result = await controller.update({ enabled: true })
     assert.equal(result.status, 'error')
     assert.equal(events.length, 0)
     assert.equal(await readFile(target, 'utf8'), 'a'.repeat(64))
     assert.ok((await readdir(directory)).includes('token'))
+    const tokenPath = join(directory, 'token')
+    assert.equal((await lstat(tokenPath)).isSymbolicLink(), true)
+    await unlink(tokenPath)
+    await assert.rejects(lstat(tokenPath), { code: 'ENOENT' })
+    assert.equal(await readFile(target, 'utf8'), 'a'.repeat(64))
 })

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { posix } from 'node:path'
 import test from 'node:test'
 import { createInstallerConfiguration } from '../scripts/installer-config.mjs'
 
@@ -29,3 +31,13 @@ for (const platform of ['darwin', 'win32', 'linux']) {
         assert.throws(() => config.beforePack({ arch: hostArchitecture === 3 ? 1 : 3 }), /native-installer-architecture-mismatch/)
     })
 }
+
+test('Linux installer places the regular manager binary at the native peer identity contract path', async () => {
+    const source = await readFile(new URL('../native/rdx-service/linux-native/src/endpoint.rs', import.meta.url), 'utf8')
+    // Read the owning contract value, then compare it to the actual installer
+    // layout rather than trusting the desktop symlink or its capitalization.
+    const declarations = [...source.matchAll(/^const MANAGER_PATH: &str = "([^"]+)";$/gmu)]
+    assert.equal(declarations.length, 1)
+    const config = createInstallerConfiguration('linux')
+    assert.equal(declarations[0][1], posix.join('/opt', config.productName, config.executableName))
+})

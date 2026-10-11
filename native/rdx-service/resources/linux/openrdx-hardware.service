@@ -18,6 +18,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=false
 ProtectSystem=strict
+# Initialization opens the precreated lock read/write without acquiring session ownership.
+ReadWritePaths=/run/openrdx/openrdx-hardware.lock
 ProtectHome=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
