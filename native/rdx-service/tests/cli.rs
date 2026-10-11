@@ -101,20 +101,6 @@ fn version_comes_from_the_package() {
     assert!(stderr(&output).is_empty());
 }
 
-/// Proves dev stdio cannot claim privileged native service authority.
-#[test]
-fn eject_without_a_platform_adapter_fails_as_a_capability_rejection() {
-    let output = run(["--eject", "rdx:fixture-01"]);
-
-    assert_eq!(output.status.code(), Some(CliExit::Prerequisite.code()));
-    assert!(stdout(&output).is_empty());
-    assert_eq!(
-        stderr(&output),
-        "{\"code\":\"insufficient-permission\",\"reason\":\"privileged-service-unavailable\",\"status\":\"error\"}\n"
-    );
-    assert!(!stderr(&output).contains("rdx:fixture-01"));
-}
-
 /// Proves force alone is rejected before any device access, as required by the plan.
 #[test]
 fn force_without_eject_is_rejected_without_device_access() {
@@ -123,20 +109,6 @@ fn force_without_eject_is_rejected_without_device_access() {
     assert_eq!(output.status.code(), Some(CliExit::Usage.code()));
     assert!(stdout(&output).is_empty());
     assert!(stderr(&output).contains("--force requires --eject"));
-}
-
-/// Proves a valid forced action warns even when the capability gate rejects later.
-#[test]
-fn forced_eject_always_warns_before_a_later_capability_failure() {
-    let output = run(["--force", "--eject", "RDX:fixture-01"]);
-
-    assert_eq!(output.status.code(), Some(CliExit::Prerequisite.code()));
-    assert!(stdout(&output).is_empty());
-    assert_eq!(
-        stderr(&output),
-        "{\"code\":\"cached-data-risk\",\"level\":\"warning\",\"message\":\"forced eject can lose cached data\"}\n{\"code\":\"insufficient-permission\",\"reason\":\"privileged-service-unavailable\",\"status\":\"error\"}\n"
-    );
-    assert!(!stderr(&output).contains("RDX:fixture-01"));
 }
 
 /// Proves every ambiguous, duplicate, combined, unknown, or positional form is usage error 2.
@@ -208,24 +180,6 @@ fn target_is_opaque_ascii_and_strictly_bounded() {
             );
         }
     }
-
-    let maximum = format!("rdx:{}", "a".repeat(124));
-    let output = run(["--eject", &maximum]);
-    assert_eq!(output.status.code(), Some(CliExit::Prerequisite.code()));
-    assert!(!stderr(&output).contains(&maximum));
-}
-
-/// Proves a hostile but syntactically valid target is never repeated in diagnostics.
-#[test]
-fn diagnostics_redact_valid_targets_and_remain_bounded() {
-    let target = "rdx:secret-token-that-must-not-leak";
-    let output = run(["--eject", target, "--force"]);
-
-    assert_eq!(output.status.code(), Some(CliExit::Prerequisite.code()));
-    assert!(stdout(&output).is_empty());
-    assert!(output.stderr.len() <= 512);
-    assert!(!stderr(&output).contains(target));
-    assert!(!output.stderr.contains(&0x1b));
 }
 
 /// Proves non-UTF-8 process arguments are rejected without a panic on Unix hosts.

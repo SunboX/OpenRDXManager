@@ -13,9 +13,10 @@ const aclScript = fileURLToPath(new URL('./windows-log-acl.ps1', import.meta.url
  * Elevated runners otherwise create Administrators-owned files; production
  * storage correctly refuses those as belonging to another security principal.
  * @param {string} path - Existing isolated test file or directory.
+ * @param {{privateAccess?: boolean}} [options] - Optionally create an explicit user-only DACL for a fixture that production must leave untouched.
  * @returns {Promise<void>} Completes after ownership is set; no-op on other hosts.
  */
-export async function ownWindowsFixture(path) {
+export async function ownWindowsFixture(path, { privateAccess = false } = {}) {
     if (process.platform !== 'win32') return
-    await execute('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', ['-NoProfile', '-File', aclScript, path, 'own-as-user'], { windowsHide: true, timeout: 10_000 })
+    await execute('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', ['-NoProfile', '-File', aclScript, path, privateAccess ? 'private-as-user' : 'own-as-user'], { windowsHide: true, timeout: 10_000 })
 }

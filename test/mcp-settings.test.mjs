@@ -107,6 +107,8 @@ test('a credential symlink cannot enable the endpoint or change its target', asy
     const { controller, directory, events } = await fixture(context)
     const target = join(directory, 'external-secret')
     await writeFile(target, 'a'.repeat(64))
+    await ownWindowsFixture(target, { privateAccess: true })
+    assert.equal(await readFile(target, 'utf8'), 'a'.repeat(64))
     if (!(await createSymlinkFixture(context, target, join(directory, 'token')))) return
     await controller.load()
     const result = await controller.update({ enabled: true })

@@ -550,6 +550,96 @@ mod tests {
     use super::{CliExit, DirectOwnership, run_with_factory};
     use crate::service::{NoDeviceBackend, ServicePlatform};
 
+    /// Runs the real CLI paths with explicit empty inventory, missing privilege, and local ownership.
+    fn run_with_unprivileged_empty_backend(
+        arguments: impl IntoIterator<Item = impl Into<OsString>>,
+    ) -> (CliExit, Vec<u8>, Vec<u8>) {
+        let mut output = Vec::new();
+        let mut diagnostics = Vec::new();
+        // A backend capability rejection requires ownership to succeed first.
+        // A private local mutex exercises that ordering without host privileges.
+        let exit = run_with_factory(
+            arguments,
+            &mut output,
+            &mut diagnostics,
+            || {
+                // Declare the exact branch under test rather than deriving
+                // discovery, transport, or privilege from the current host.
+                Ok(NoDeviceBackend::from_platform_capabilities(
+                    ServicePlatform::Darwin,
+                    crate::platform::PlatformCapabilities::try_new(
+                        true, true, false, false, false, false, false, false,
+                    )
+                    .unwrap(),
+                ))
+            },
+            DirectOwnership::ProcessLocalTest(Arc::new(Mutex::new(()))),
+            Duration::from_millis(10),
+        );
+        (exit, output, diagnostics)
+    }
+
+    /// The explicit unprivileged descriptor denies eject without echoing the private target.
+    #[test]
+    fn eject_without_a_platform_adapter_fails_as_a_capability_rejection() {
+        let (exit, output, diagnostics) =
+            run_with_unprivileged_empty_backend(["--eject", "rdx:fixture-01"]);
+
+        assert_eq!(exit, CliExit::Prerequisite);
+        assert!(output.is_empty());
+        let diagnostics = std::str::from_utf8(&diagnostics).unwrap();
+        assert_eq!(
+            diagnostics,
+            "{\"code\":\"insufficient-permission\",\"reason\":\"privileged-service-unavailable\",\"status\":\"error\"}\n"
+        );
+        assert!(!diagnostics.contains("rdx:fixture-01"));
+    }
+
+    /// A forced action warns before the exact capability rejection and preserves target privacy.
+    #[test]
+    fn forced_eject_always_warns_before_a_later_capability_failure() {
+        let (exit, output, diagnostics) =
+            run_with_unprivileged_empty_backend(["--force", "--eject", "RDX:fixture-01"]);
+
+        assert_eq!(exit, CliExit::Prerequisite);
+        assert!(output.is_empty());
+        let diagnostics = std::str::from_utf8(&diagnostics).unwrap();
+        assert_eq!(
+            diagnostics,
+            "{\"code\":\"cached-data-risk\",\"level\":\"warning\",\"message\":\"forced eject can lose cached data\"}\n{\"code\":\"insufficient-permission\",\"reason\":\"privileged-service-unavailable\",\"status\":\"error\"}\n"
+        );
+        assert!(!diagnostics.contains("RDX:fixture-01"));
+    }
+
+    /// The maximum opaque target length reaches capability admission without leaking its value.
+    #[test]
+    fn maximum_length_target_is_accepted_and_redacted() {
+        let maximum = format!("rdx:{}", "a".repeat(124));
+        let (exit, _, diagnostics) =
+            run_with_unprivileged_empty_backend(["--eject", maximum.as_str()]);
+
+        assert_eq!(exit, CliExit::Prerequisite);
+        assert!(
+            !std::str::from_utf8(&diagnostics)
+                .unwrap()
+                .contains(&maximum)
+        );
+    }
+
+    /// A syntactically valid hostile target is omitted from bounded ANSI-free diagnostics.
+    #[test]
+    fn diagnostics_redact_valid_targets_and_remain_bounded() {
+        let target = "rdx:secret-token-that-must-not-leak";
+        let (exit, output, diagnostics) =
+            run_with_unprivileged_empty_backend(["--eject", target, "--force"]);
+
+        assert_eq!(exit, CliExit::Prerequisite);
+        assert!(output.is_empty());
+        assert!(diagnostics.len() <= 512);
+        assert!(!std::str::from_utf8(&diagnostics).unwrap().contains(target));
+        assert!(!diagnostics.contains(&0x1b));
+    }
+
     /// The explicit no-device backend yields one honest empty scan without host access.
     #[test]
     fn scan_without_a_platform_adapter_is_a_safe_empty_success() {

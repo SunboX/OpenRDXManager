@@ -11,9 +11,21 @@ $acl = if ($isDirectory) {
     [System.IO.File]::GetAccessControl($Target)
 }
 $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
-if ($Mode -eq 'own-as-user') {
+if ($Mode -eq 'own-as-user' -or $Mode -eq 'private-as-user') {
     # Elevated test runners default new filesystem objects to Administrators.
     # Model a desktop user's existing files without relaxing production checks.
+    if ($Mode -eq 'private-as-user') {
+        # A parent with non-inheritable private rules gives newly created test
+        # files no readable inherited ACE. Set explicit access only in setup.
+        $acl = if ($isDirectory) {
+            [System.Security.AccessControl.DirectorySecurity]::new()
+        } else {
+            [System.Security.AccessControl.FileSecurity]::new()
+        }
+        $acl.SetAccessRuleProtection($true, $false)
+        $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($user, 'FullControl', 'Allow')
+        $acl.AddAccessRule($rule)
+    }
     $acl.SetOwner($user)
     if ($isDirectory) {
         [System.IO.Directory]::SetAccessControl($Target, $acl)
