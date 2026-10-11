@@ -6,6 +6,7 @@ import { access, mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 
 import { createPlatformVerificationReport, probeNativeService, runBoundedCommand, writePlatformVerificationReport } from '../scripts/verify-native-platform.mjs'
@@ -176,6 +177,13 @@ function isProcessAlive(processId) {
     }
 }
 
+/** @param {number} processId - Positive descendant PID. @returns {Promise<boolean>} Waits for asynchronous OS reaping after tree termination. */
+async function waitForProcessExit(processId) {
+    const deadline = Date.now() + 2_000
+    while (isProcessAlive(processId) && Date.now() < deadline) await delay(20)
+    return !isProcessAlive(processId)
+}
+
 /** @returns {Promise<void>} Proves a timed-out check cannot leave its spawned command tree running. */
 async function terminatesTimedOutCommandTrees() {
     const parentSource = `
@@ -184,13 +192,16 @@ async function terminatesTimedOutCommandTrees() {
         process.stdout.write(String(child.pid) + '\\n')
         setInterval(() => {}, 1000)
     `
-    const result = await runBoundedCommand({ command: process.execPath, args: ['-e', parentSource], cwd: projectRoot, timeoutMs: 200 })
+    const result = await runBoundedCommand({ command: process.execPath, args: ['-e', parentSource], cwd: projectRoot, timeoutMs: 2_000 })
     const descendantId = Number(result.stdout.trim())
     try {
-        assert.equal(Number.isInteger(descendantId), true)
-        assert.equal(isProcessAlive(descendantId), false)
+        assert.equal(result.timedOut, true)
+        assert.equal(Number.isInteger(descendantId) && descendantId > 0, true, 'The fixture must spawn a child before its deadline')
+        // Closing the direct child's streams can precede init reaping an orphan
+        // killed in the same group. Require its disappearance within a bound.
+        assert.equal(await waitForProcessExit(descendantId), true)
     } finally {
-        if (Number.isInteger(descendantId) && isProcessAlive(descendantId)) process.kill(descendantId, 'SIGKILL')
+        if (Number.isInteger(descendantId) && descendantId > 0 && isProcessAlive(descendantId)) process.kill(descendantId, 'SIGKILL')
     }
 }
 

@@ -1,0 +1,5 @@
+# SPDX-FileCopyrightText: 2026 André Fiedler
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Keep text identical on every build host; leave binary assets unchanged.
+* text=auto eol=lf

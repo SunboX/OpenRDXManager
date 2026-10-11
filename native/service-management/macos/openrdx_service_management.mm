@@ -9,6 +9,11 @@ namespace {
 
 constexpr const char *kDaemonPlistName = "com.openrdx.hardware.plist";
 
+// The public NSString constant was introduced in the macOS 15 SDK. Its error
+// domain string also identifies SMAppService errors on our macOS 13 baseline,
+// without adding a symbol that older SDKs/runtimes cannot resolve.
+NSString * const kAppServiceErrorDomain = @"SMAppServiceErrorDomain";
+
 /** Throws a fixed JavaScript type error and returns null. */
 napi_value ThrowTypeError(napi_env env) {
     napi_throw_type_error(env, nullptr, "service-management-arguments-invalid");
@@ -62,7 +67,7 @@ const char *MapStatus(SMAppServiceStatus status) {
 
 /** Maps a registration error without returning native descriptions or paths. */
 const char *MapRegistrationError(NSError *error) {
-    if ([error.domain isEqualToString:SMAppServiceErrorDomain]) {
+    if ([error.domain isEqualToString:kAppServiceErrorDomain]) {
         switch (error.code) {
         case kSMErrorInvalidSignature:
             return "invalid-signature";
@@ -115,7 +120,7 @@ napi_value UnregisterService(napi_env env, napi_callback_info info) {
         if ([service unregisterAndReturnError:&error]) {
             return StateString(env, MapStatus(service.status));
         }
-        if ([error.domain isEqualToString:SMAppServiceErrorDomain] && error.code == kSMErrorJobNotFound) {
+        if ([error.domain isEqualToString:kAppServiceErrorDomain] && error.code == kSMErrorJobNotFound) {
             return StateString(env, "not-registered");
         }
         return StateString(env, MapRegistrationError(error));

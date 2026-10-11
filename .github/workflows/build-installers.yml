@@ -29,6 +29,7 @@ jobs:
         timeout-minutes: 60
         env:
             CSC_IDENTITY_AUTO_DISCOVERY: false
+            OPENRDX_VISUAL_QA_DIAGNOSTICS_DIRECTORY: ${{ github.workspace }}/out/visual-qa-diagnostics
         strategy:
             fail-fast: false
             matrix:
@@ -56,6 +57,8 @@ jobs:
               if: matrix.platform == 'linux'
               run: sudo chown root:root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
             - run: npm run format:check
+            - name: Build installers
+              run: npm run dist -- --${{ matrix.platform }} --${{ matrix.arch }}
             - name: Test application on macOS and Windows
               if: matrix.platform != 'linux'
               run: npm test
@@ -63,8 +66,6 @@ jobs:
               if: matrix.platform == 'linux'
               run: xvfb-run -a npm test
             - run: npm run native:test
-            - name: Build installers
-              run: npm run dist -- --${{ matrix.platform }} --${{ matrix.arch }}
             - name: Verify packaged application on macOS and Windows
               if: matrix.platform != 'linux'
               run: npm run verify:packaged-app
@@ -87,6 +88,14 @@ jobs:
                       dist/installers/*.tar.gz
                   if-no-files-found: error
                   retention-days: 14
+            - name: Upload visual failure evidence
+              if: failure()
+              uses: actions/upload-artifact@v7.0.1
+              with:
+                  name: visual-diagnostics-${{ matrix.platform }}-${{ matrix.arch }}
+                  path: out/visual-qa-diagnostics
+                  if-no-files-found: ignore
+                  retention-days: 7
 
     collect:
         name: Verify and collect all installers
