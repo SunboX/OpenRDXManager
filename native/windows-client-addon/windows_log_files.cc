@@ -50,11 +50,11 @@ bool ValidComponent(const std::wstring& part) {
             stem[3] == 0xB2 || stem[3] == 0xB3));
 }
 
-/** Queries a bounded canonical volume-GUID pathname for one already-open handle. */
-std::wstring FinalPath(HANDLE handle) {
+/** Queries a bounded volume-GUID pathname, choosing canonical or exact opened spelling. */
+std::wstring FinalPath(HANDLE handle, DWORD name_format = FILE_NAME_NORMALIZED) {
   std::vector<wchar_t> buffer(32'768);
   const DWORD length = GetFinalPathNameByHandleW(
-      handle, buffer.data(), static_cast<DWORD>(buffer.size()), VOLUME_NAME_GUID);
+      handle, buffer.data(), static_cast<DWORD>(buffer.size()), VOLUME_NAME_GUID | name_format);
   if (!length || length >= buffer.size()) IoFailure();
   return std::wstring(buffer.data(), length);
 }
@@ -202,9 +202,15 @@ Directory Root::pin(bool create) {
                                       FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
     }
     TypeProof(directory.get(), true);
-    const std::wstring actual = FinalPath(directory.get());
+    // FILE_NAME_NORMALIZED expands legitimate 8.3 names such as RUNNER~1.
+    // Compare the name actually opened against the exact requested child while
+    // the parent is pinned and this no-follow handle has passed TypeProof.
+    const std::wstring actual = FinalPath(directory.get(), FILE_NAME_OPENED);
     if (CompareStringOrdinal(actual.c_str(), -1, pinned.path.c_str(), -1, TRUE) != CSTR_EQUAL)
       throw Failure{"windows-log-path-unverified"};
+    // Continue from this same handle's canonical spelling so aliases never
+    // accumulate in later component resolution or the fixed file paths.
+    pinned.path = FinalPath(directory.get());
     if (final) verify(directory.get(), true, create);
     pinned.handles.push_back(std::move(directory));
   }

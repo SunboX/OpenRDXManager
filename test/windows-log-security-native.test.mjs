@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { link, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { link, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -21,6 +21,7 @@ const execFileAsync = promisify(execFile)
 const windows = { skip: process.platform !== 'win32', timeout: 30_000 }
 const addonPath = fileURLToPath(new URL('../out/native/windows/openrdx-windows-client.node', import.meta.url))
 const aclScript = fileURLToPath(new URL('./helpers/windows-log-acl.ps1', import.meta.url))
+const shortPathScript = fileURLToPath(new URL('./helpers/windows-short-path.ps1', import.meta.url))
 
 /** @param {object} context - Test cleanup owner. @returns {Promise<object>} Independent native logger fixture without hardware access. */
 async function fixture(context) {
@@ -59,6 +60,27 @@ test('native Windows logs create and independently verify private directory/file
         await handle.close()
     }
     await assert.rejects(handle.stat(), /handle-closed/)
+})
+
+test('native Windows private storage accepts the real Win32 short-name spelling of its pinned ancestors', windows, async (context) => {
+    const state = await fixture(context)
+    const { stdout } = await execFileAsync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', ['-NoProfile', '-File', shortPathScript, state.temporary], { windowsHide: true, timeout: 10_000 })
+    const { shortPath } = JSON.parse(stdout)
+    assert.equal(await realpath(shortPath), await realpath(state.temporary), 'the alias must identify the existing fixture')
+    const directory = join(shortPath, 'logs-André')
+    const logger = new EventLogger({ directory, platform: 'win32', windowsSecurityAdapter: new WindowsLogSecurityAdapter({ directory, addonPath }) })
+    context.after(async () => await logger.close())
+    assert.equal(await logger.writeCritical({ event: 'short-name-ancestor', messageKey: 'activity.shortName' }), true)
+    assert.equal((await logger.list()).entries[0].messageKey, 'activity.shortName')
+    assert.equal((await acl(state.directory)).private, true)
+    assert.equal((await acl(state.current)).private, true)
+    assert.match(await readFile(state.current, 'utf8'), /short-name-ancestor/u)
+    const mcp = state.addon.createMcpStorage(join(shortPath, 'MCP-André'))
+    await mcp.prepare()
+    const token = Buffer.from('a'.repeat(64) + '\n')
+    assert.deepEqual(await mcp.ensureToken(token), token)
+    assert.deepEqual(await mcp.readToken(), token)
+    assert.equal((await acl(join(state.temporary, 'MCP-André', 'token'))).private, true)
 })
 
 test('native logger persists, rotates and lists real redacted events without synthetic proofs', windows, async (context) => {

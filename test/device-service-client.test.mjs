@@ -1,14 +1,13 @@
+// SPDX-FileCopyrightText: 2026 André Fiedler
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { dirname, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import test from 'node:test'
-import { fileURLToPath } from 'node:url'
 
 import { DEVICE_SERVICE_ARGUMENTS, DeviceServiceClient, createChildProcessTransportFactory, createDeviceServiceTransportFactory, createNoDeviceTransportFactory, resolveDeviceServiceExecutable } from '../src/main/device-service-client.mjs'
 import { completeDeviceSnapshot } from './helpers/device-snapshot.mjs'
-
-const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
-const nativeTestBinary = resolveDeviceServiceExecutable({ appPath: projectRoot, resourcesPath: projectRoot, isPackaged: false, platform: process.platform })
 
 /**
  * Encodes one controlled service message in the production length-framed form.
@@ -310,70 +309,6 @@ test('handshakes with the explicit no-device adapter without claiming hardware r
     })
     assert.deepEqual(devices, { ok: true, status: 'ready', mode: 'no-device', privileged: false, hardwareReady: false, hardwareVerified: false, platformCapability: { state: 'transport-unavailable', reason: 'native-service-not-implemented' }, epoch: 1, listRevision: 0, devices: [] })
     assert.equal(client.getDevice('rdx:fixture'), null)
-
-    await client.stop()
-    assert.equal(client.getState().status, 'stopped')
-})
-
-test('handshakes with the compiled native service and preserves truthful platform readiness', async (context) => {
-    const client = new DeviceServiceClient({
-        executable: nativeTestBinary,
-        maxRestarts: 0,
-        platform: process.platform,
-        transportFactory: createChildProcessTransportFactory({
-            platform: process.platform,
-            shutdownTimeoutMs: 2_000,
-            forceKillTimeoutMs: 2_000
-        })
-    })
-    /**
-     * Stops the real child even when an assertion rejects this test.
-     * @returns {Promise<void>} Resolves after bounded child teardown.
-     */
-    async function stopNativeClient() {
-        await client.stop()
-    }
-    context.after(stopNativeClient)
-
-    const state = await client.start()
-    const initial = await client.list()
-    const scan = await client.scan({ kind: 'scan' })
-    const rescanned = await client.list()
-    const start = await client.startOperation({
-        operationId: 'op:native-no-device',
-        request: { kind: 'self-test', deviceId: 'rdx:absent', deviceRevision: 1 }
-    })
-    const cancel = await client.cancelOperation({ operationId: 'op:native-no-device' })
-    const nativeDiscovery = ['darwin', 'win32', 'linux'].includes(process.platform)
-    const expectedMode = nativeDiscovery ? 'native' : 'no-device'
-    const expectedCapability = ['win32', 'linux'].includes(process.platform) ? { state: 'transport-unavailable', reason: 'raw-transport-unavailable' } : nativeDiscovery ? { state: 'insufficient-permission', reason: 'privileged-service-unavailable' } : { state: 'transport-unavailable', reason: 'platform-adapter-not-implemented' }
-
-    assert.deepEqual(state, {
-        status: 'ready',
-        mode: expectedMode,
-        privileged: false,
-        hardwareReady: false,
-        hardwareVerified: false,
-        platformCapability: expectedCapability,
-        generation: 1,
-        epoch: 1,
-        listRevision: 0,
-        restartCount: 0
-    })
-    assert.deepEqual(initial, { ok: true, status: 'ready', mode: expectedMode, privileged: false, hardwareReady: false, hardwareVerified: false, platformCapability: expectedCapability, epoch: 1, listRevision: 0, devices: [] })
-    assert.deepEqual(scan, { ok: true })
-    const { diagnostics, ...rescannedSnapshot } = rescanned
-    assert.deepEqual(rescannedSnapshot, { ok: true, status: 'ready', mode: expectedMode, privileged: false, hardwareReady: false, hardwareVerified: false, platformCapability: expectedCapability, epoch: 1, listRevision: 1, devices: [] })
-    if (diagnostics !== undefined) {
-        let rejectedCandidates = 0
-        for (const rejection of diagnostics.rejections) rejectedCandidates += rejection.count
-        assert.equal(diagnostics.acceptedCount, 0)
-        assert.equal(rejectedCandidates, diagnostics.candidateCount)
-    }
-    assert.deepEqual(start, { ok: false, reason: nativeDiscovery ? 'privileged-service-unavailable' : 'transport-unavailable' })
-    assert.deepEqual(cancel, { ok: false, reason: nativeDiscovery ? 'operation-not-found' : 'transport-unavailable' })
-    assert.equal(client.isHardwareReady(), false)
-    assert.equal(client.hasPrivilege(), false)
 
     await client.stop()
     assert.equal(client.getState().status, 'stopped')

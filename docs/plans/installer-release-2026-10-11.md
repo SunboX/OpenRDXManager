@@ -11,7 +11,7 @@
 
 - [x] Add focused failing tests for platform resources, complete installer collection, missing/empty/stale artifacts and checksums.
 - [x] Add `scripts/installer-config.mjs`, `scripts/prepare-installer-runtime.mjs`, `scripts/release-assets.mjs`, installer resources and npm distribution commands. Verify the tests and locally package the macOS app.
-- [ ] Correct the existing visual QA failure without relaxing assertions. Run format, Node, native and Electron checks.
+- [x] Correct the existing visual QA failure without relaxing assertions. Run format, Node, native and Electron checks.
 - [x] Add `.github/workflows/build-installers.yml` with native macOS/Windows/Linux x64 and ARM64 builds, artifacts, collection and gated release publication. Validate its YAML and test its asset gate.
-- [ ] Update installation and release documentation, review the explicit Git diff, commit and push the required changes.
+- [x] Update installation and release documentation, review the explicit Git diff, commit and push the required changes.
 - [ ] Run the workflow on the exact commit. Inspect each failure, fix its cause and rerun. Verify the fourteen assets and published release metadata before reporting completion.

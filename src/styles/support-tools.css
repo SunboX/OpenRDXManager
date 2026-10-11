@@ -17,10 +17,18 @@
     width: min(1120px, calc(100vw - 48px));
     max-height: calc(100vh - 48px);
     overflow: hidden;
-    border: 1px solid var(--color-border-strong);
+    /* An inset stroke avoids Chromium's process-dependent antialiasing of a
+       colored CSS border at the rounded clip corner. Keep its layout space. */
+    border: 1px solid transparent;
     border-radius: var(--radius-large);
+    /* Keep the layered gradient inside the border so its rounded background
+       clip does not overpaint the inset stroke at the outer edge. */
     background: linear-gradient(145deg, rgba(11, 31, 46, 0.98), rgba(5, 12, 22, 0.99)), var(--color-surface);
-    box-shadow: var(--shadow-window), var(--shadow-cyan);
+    background-clip: padding-box;
+    box-shadow:
+        inset 0 0 0 1px var(--color-border-strong),
+        var(--shadow-window),
+        var(--shadow-cyan);
 }
 
 .support-panel__header {

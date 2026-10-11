@@ -6,6 +6,7 @@ import { applicationMetadata } from '../src/main/application-metadata.mjs'
 
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { app, BrowserWindow, ipcMain, nativeImage } from 'electron'
@@ -14,6 +15,7 @@ import { isTrustedApplicationSender, registerIpcHandlers } from '../src/main/ipc
 import { registerWindowMenu } from '../src/main/window-menu.mjs'
 import { WindowMenuChannel } from '../src/shared/window-menu.mjs'
 import { visualWindowOptions } from './visual-window-options.mjs'
+import { resizeVisualWindow } from './visual-window-geometry.mjs'
 import { guardVisualOutput } from './visual-output.mjs'
 import { normalizeConsoleMessage, VisualErrorTracker } from './visual-error-tracker.mjs'
 import { isVisualAnchorUnoccluded } from './visual-anchor-visibility.mjs'
@@ -231,7 +233,7 @@ async function waitForPaint(webContents) {
  * @returns {Promise<void>} Resolves after layout settles at the exact bounds.
  */
 async function setWindowSize(window, viewport) {
-    window.setBounds({ x: 40, y: 40, width: viewport.width, height: viewport.height }, false)
+    await resizeVisualWindow(window, viewport)
     const bounds = window.getBounds()
     assert.equal(bounds.width, viewport.width)
     assert.equal(bounds.height, viewport.height)
@@ -330,8 +332,7 @@ async function injectConsoleError(webContents, injectionPoint) {
 async function exerciseFixture(window, state) {
     const webContents = window.webContents
     if (state === 'status') {
-        window.focus()
-        webContents.focus()
+        await focusWindowForKeyboardTraversal(window)
         const windowFocusedAtTraversal = window.isFocused()
         await webContents.executeJavaScript(`
         /** Moves focus to a neutral browser-owned starting position. @returns {void} */
@@ -399,6 +400,26 @@ async function exerciseFixture(window, state) {
         assert.deepEqual(await webContents.executeJavaScript('globalThis.__openRdxVisualFixture.calls'), [])
     }
     return null
+}
+
+/**
+ * Acquires actual native and renderer focus before sending keyboard input.
+ * Focus requests return before macOS activates a background QA application;
+ * observing each boundary avoids injecting Tab while Chromium is unfocused.
+ * @param {BrowserWindow} window - Owned visible QA window.
+ * @returns {Promise<void>} Resolves only after OS and DOM focus agree.
+ * @throws {Error} When focus cannot be acquired within five seconds.
+ */
+async function focusWindowForKeyboardTraversal(window) {
+    const deadline = performance.now() + 5000
+    while (true) {
+        app.focus({ steal: true })
+        window.focus()
+        window.webContents.focus()
+        if (window.isFocused() && window.webContents.isFocused() && (await window.webContents.executeJavaScript('document.hasFocus()'))) return
+        if (performance.now() >= deadline) throw new Error('Visual QA could not acquire keyboard focus')
+        await delay(16)
+    }
 }
 
 /**
@@ -696,6 +717,22 @@ async function captureEntry(window, entry, errorTracker, cursor, functionalEvide
         if (!candidateImage) candidateImage = await window.webContents.capturePage()
         if (candidateImage && !candidateImage.isEmpty()) await writeFile(join(evidenceDirectory, `failed-${entry.screenshot}`), candidateImage.toPNG())
         await writeFile(join(evidenceDirectory, `failed-${entry.screenshot}.json`), JSON.stringify(inspection, null, 2))
+        if (process.env.OPENRDX_VISUAL_QA_DIAGNOSTICS_DIRECTORY) {
+            const diagnosticsDirectory = process.env.OPENRDX_VISUAL_QA_DIAGNOSTICS_DIRECTORY
+            await mkdir(diagnosticsDirectory, { recursive: true })
+            const failureGeometry = await window.webContents.executeJavaScript(`
+                /** Reads failure geometry without changing renderer state. @returns {object} Native CSS boxes and scroll capacity. */
+                (function readFailedVisualGeometry() {
+                    const card = document.querySelector('[data-feature="format"]')
+                    const panel = document.querySelector('#panel-utilities')
+                    return { card: card?.getBoundingClientRect().toJSON() ?? null, panel: panel?.getBoundingClientRect().toJSON() ?? null, scrollTop: panel?.scrollTop ?? null, scrollHeight: panel?.scrollHeight ?? null, clientHeight: panel?.clientHeight ?? null }
+                })()`)
+            const failure = { ...inspection, failureGeometry }
+            const failureName = `${process.pid}-${entry.screenshot}`
+            await writeFile(join(diagnosticsDirectory, `failed-${failureName}.json`), JSON.stringify(failure, null, 2))
+            if (candidateImage && !candidateImage.isEmpty()) await writeFile(join(diagnosticsDirectory, `failed-${failureName}`), candidateImage.toPNG())
+            console.error(`Visual QA failure evidence: ${JSON.stringify({ state: entry.state, destructivePreflightEvidence: inspection.destructivePreflightEvidence, failureGeometry })}`)
+        }
         throw new Error(`Visual QA failed at ${entry.state}/${entry.viewport.name}: ${error.message}`, { cause: error })
     }
     const image = capture.image

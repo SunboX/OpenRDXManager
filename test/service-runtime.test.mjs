@@ -11,6 +11,8 @@ import { fileURLToPath } from 'node:url'
 
 import { registerIpcHandlers } from '../src/main/ipc-controller.mjs'
 import { createApplicationServiceRuntime } from '../src/main/service-runtime.mjs'
+import { createChildProcessTransportFactory } from '../src/main/device-service-client.mjs'
+import { nativeHostReadiness } from './helpers/native-host-readiness.mjs'
 import { completeDeviceSnapshot } from './helpers/device-snapshot.mjs'
 
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -429,7 +431,7 @@ function createIpcMain() {
     }
 }
 
-test('uses the compiled unprivileged runtime through the validated Task 6 handlers', async () => {
+test('uses the compiled stdio runtime through the validated Task 6 handlers', async () => {
     const logDirectory = await mkdtemp(join(tmpdir(), 'openrdx-service-runtime-'))
     const { handlers, ipcMain } = createIpcMain()
     const publishedDeviceEvents = []
@@ -470,25 +472,25 @@ test('uses the compiled unprivileged runtime through the validated Task 6 handle
             logDirectory,
             platform: process.platform,
             resourcesPath: join(projectRoot, 'resources'),
-            services
+            services,
+            transportFactory: createChildProcessTransportFactory({ platform: process.platform, shutdownTimeoutMs: 2_000, forceKillTimeoutMs: 2_000 })
         })
         const state = await runtime.start()
         const nativeDiscovery = ['darwin', 'win32', 'linux'].includes(process.platform)
-        const expectedMode = nativeDiscovery ? 'native' : 'no-device'
-        const expectedCapability = ['win32', 'linux'].includes(process.platform) ? { state: 'transport-unavailable', reason: 'raw-transport-unavailable' } : nativeDiscovery ? { state: 'insufficient-permission', reason: 'privileged-service-unavailable' } : { state: 'transport-unavailable', reason: 'platform-adapter-not-implemented' }
+        const readiness = nativeHostReadiness(process.platform, state.privileged)
         const expectedScan = nativeDiscovery ? { ok: true } : { ok: false, reason: 'hardware-unavailable' }
 
         assert.equal(state.status, 'ready')
-        assert.equal(state.mode, expectedMode)
-        assert.equal(state.hardwareReady, false)
-        assert.deepEqual(state.platformCapability, expectedCapability)
-        assert.deepEqual(await handlers.get('openrdx:devices:list')({}, {}), { ok: true, status: 'ready', mode: expectedMode, privileged: false, hardwareReady: false, hardwareVerified: false, platformCapability: expectedCapability, epoch: 1, listRevision: 0, devices: [] })
+        assert.equal(state.mode, readiness.mode)
+        assert.equal(state.hardwareReady, readiness.hardwareReady)
+        assert.deepEqual(state.platformCapability, readiness.platformCapability)
+        assert.deepEqual(await handlers.get('openrdx:devices:list')({}, {}), { ok: true, status: 'ready', ...readiness, epoch: 1, listRevision: 0, devices: [] })
         assert.deepEqual(await handlers.get('openrdx:devices:scan')({}, { kind: 'scan' }), expectedScan)
-        assert.deepEqual(await handlers.get('openrdx:operations:start')({}, { kind: 'self-test', deviceId: 'rdx:not-present', deviceRevision: 1 }), { ok: false, reason: 'hardware-unavailable' })
+        assert.deepEqual(await handlers.get('openrdx:operations:start')({}, { kind: 'self-test', deviceId: 'rdx:not-present', deviceRevision: 1 }), { ok: false, reason: readiness.hardwareReady ? 'device-not-found' : 'hardware-unavailable' })
         const expectedDeviceEvents = [
             { type: 'service', status: 'starting' },
             { type: 'service', status: 'reconciling' },
-            { type: 'service', status: 'ready', epoch: 1, listRevision: 0, mode: expectedMode, privileged: false, hardwareReady: false, hardwareVerified: false, platformCapability: expectedCapability },
+            { type: 'service', status: 'ready', epoch: 1, listRevision: 0, ...readiness },
             { type: 'list', epoch: 1, listRevision: 0, devices: [] }
         ]
         if (nativeDiscovery) {
