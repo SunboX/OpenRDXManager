@@ -57,6 +57,10 @@ jobs:
               if: matrix.platform == 'linux'
               run: sudo chown root:root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
             - run: npm run format:check
+            - run: npm run native:test
+            - name: Verify Windows manufacturing storage security
+              if: matrix.platform == 'win'
+              run: cargo test --manifest-path native/rdx-service/windows-native/Cargo.toml --locked --lib manufacturing_storage::tests
             - name: Build installers
               run: npm run dist -- --${{ matrix.platform }} --${{ matrix.arch }}
             - name: Test application on macOS and Windows
@@ -65,7 +69,6 @@ jobs:
             - name: Test application on Linux
               if: matrix.platform == 'linux'
               run: xvfb-run -a npm test
-            - run: npm run native:test
             - name: Verify packaged application on macOS and Windows
               if: matrix.platform != 'linux'
               run: npm run verify:packaged-app

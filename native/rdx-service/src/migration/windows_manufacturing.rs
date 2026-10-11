@@ -221,6 +221,24 @@ fn unavailable<T>(_: T) -> MigrationError {
 mod tests {
     use super::*;
 
+    /// The actual temporary path may contain Windows' RUNNER~1 ancestor alias.
+    /// Durable publication and independent readback must retain the real private ACL.
+    #[test]
+    fn private_backup_round_trips_under_the_real_windows_temporary_path() {
+        let root = tempfile::tempdir().unwrap();
+        let device = DeviceId::new("rdx:synthetic-windows-backup").unwrap();
+        let bytes = [0xff; 256];
+        persist_under(root.path(), &device, &bytes).unwrap();
+        let store =
+            ManufacturingStore::open_for_test(&root.path().join("manufacturing-backups")).unwrap();
+        let names = store.names().unwrap();
+        assert_eq!(names.len(), 1);
+        let reopened = read_backup(&store, &names[0]).unwrap();
+        assert_eq!(reopened.bytes.as_ref(), &bytes);
+        assert_eq!(reopened.summary.device_id, device);
+        assert_eq!(reopened.summary.state, "erased");
+    }
+
     /// Builds a synthetic erased-record manifest without any real device data.
     fn manifest(bytes: &[u8]) -> Manifest {
         serde_json::from_value(serde_json::json!({

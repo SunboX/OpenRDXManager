@@ -37,6 +37,32 @@ impl Drop for Temporary {
     }
 }
 
+/// Real Win32 short-name spelling must not defeat retained ancestry or private readback.
+#[test]
+fn round_trips_backup_through_win32_short_name_ancestors() {
+    let temporary = Temporary::new();
+    let path = wide(&temporary.0);
+    let mut buffer = vec![0u16; 32768];
+    // SAFETY: existing disposable directory, terminated input and bounded writable output.
+    let length = unsafe { GetShortPathNameW(PCWSTR(path.as_ptr()), Some(&mut buffer)) } as usize;
+    assert!(length > 0 && length < buffer.len());
+    let short = PathBuf::from(String::from_utf16(&buffer[..length]).unwrap());
+    let store = ManufacturingStore::open_for_test(&short.join("backups")).unwrap();
+    store
+        .persist("record-1-0", &[0x42; 256], None, b"{}")
+        .unwrap();
+    drop(store);
+    let reopened = temporary.store();
+    assert_eq!(
+        reopened.read("record-1-0", BackupFile::Record).unwrap(),
+        [0x42; 256]
+    );
+    assert_eq!(
+        reopened.read("record-1-0", BackupFile::Manifest).unwrap(),
+        b"{}"
+    );
+}
+
 /// Exact record/sector/manifest bytes survive a complete independent reopen.
 #[test]
 fn persistent_bundle_round_trips_and_refuses_overwrite() {

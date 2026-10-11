@@ -153,6 +153,10 @@ impl ManufacturingStore {
             if index + 1 == parts.len() {
                 policy.verify(directory.0)?;
             }
+            // The no-follow handle has already proved its exact opened child.
+            // Continue with that same handle's normalized spelling so legitimate
+            // 8.3 aliases (such as RUNNER~1) cannot accumulate in later paths.
+            current = final_path(directory.0)?;
             ancestors.push(directory);
         }
         Ok(Self {
@@ -408,10 +412,20 @@ fn validate_type(handle: HANDLE, directory: bool) -> Result<(), NativeError> {
 
 /// Resolves the actual retained handle using a local volume GUID, not a drive alias.
 fn final_path(handle: HANDLE) -> Result<PathBuf, NativeError> {
+    handle_path(handle, false)
+}
+
+/// Selects normalized or exact opened spelling on the same retained volume handle.
+fn handle_path(handle: HANDLE, opened: bool) -> Result<PathBuf, NativeError> {
     let mut buffer = vec![0u16; 32768];
     // SAFETY: fixed bounded writable output and a retained handle.
-    let length =
-        unsafe { GetFinalPathNameByHandleW(handle, &mut buffer, VOLUME_NAME_GUID) } as usize;
+    let flags = VOLUME_NAME_GUID
+        | if opened {
+            FILE_NAME_OPENED
+        } else {
+            FILE_NAME_NORMALIZED
+        };
+    let length = unsafe { GetFinalPathNameByHandleW(handle, &mut buffer, flags) } as usize;
     if length == 0 || length >= buffer.len() {
         return Err(NativeError::EvidenceIncomplete);
     }
@@ -420,9 +434,10 @@ fn final_path(handle: HANDLE) -> Result<PathBuf, NativeError> {
     Ok(PathBuf::from(text))
 }
 
-/// Rejects a resolved target different from the path under pinned ancestry.
+/// Proves the exact requested child under pinned ancestry after no-follow type checks.
+/// Opened spelling preserves legitimate 8.3 names; normalized spelling expands them.
 fn verify_path(handle: HANDLE, expected: &Path) -> Result<(), NativeError> {
-    if !final_path(handle)?
+    if !handle_path(handle, true)?
         .as_os_str()
         .to_string_lossy()
         .eq_ignore_ascii_case(&expected.as_os_str().to_string_lossy())

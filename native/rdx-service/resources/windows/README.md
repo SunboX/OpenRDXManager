@@ -139,6 +139,16 @@ the future Task 6 physical-eject operation; dropping it releases the locks.
 Target volume mapping stays query-only; the retained target handle is upgraded
 to read-write access only for the declared lock/dismount mutation boundary.
 
+The manufacturing backup store pins every local ancestor with no-follow handles
+that deny write/delete sharing. It compares each requested child with the exact
+opened spelling from `GetFinalPathNameByHandleW(FILE_NAME_OPENED | VOLUME_NAME_GUID)`,
+then continues from the same handle's normalized volume path. This admits real
+Windows 8.3 aliases such as `RUNNER~1` without relaxing reparse rejection, file
+identity or the complete protected owner/DACL checks. Existing unsafe stores are
+rejected without repair. Disposable tests use a current-user policy and exercise
+the same durable writer and independent readback; production retains only the
+fixed privileged ProgramData store.
+
 Run these commands on a native, current 64-bit Windows CI runner with Rust
 1.85 or newer and Node selected from the repository `.nvmrc`:
 
