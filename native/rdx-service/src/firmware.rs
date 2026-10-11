@@ -27,11 +27,16 @@ use std::fmt::{Display, Formatter};
 use std::io::{self, Read};
 use std::path::Path;
 
-use rsa::pkcs1v15::{Signature, VerifyingKey};
-use rsa::signature::Verifier;
-use rsa::{BigUint, RsaPublicKey};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroize;
+
+mod signature;
+use signature::verify_signature;
+
+/// Deterministic synthetic images authenticated only by an explicit fixture key.
+/// This module is absent from normal service and installer builds.
+#[cfg(any(test, feature = "fixtures"))]
+pub mod fixtures;
 
 mod openrdx;
 pub use openrdx::OpenRdxImageMetadata;
@@ -62,17 +67,6 @@ const TUSB9261_FIRMWARE_ID: u16 = 0x9260;
 const TUSB9261_DESCRIPTOR_RECORD: u8 = 1;
 const TUSB9261_FIRMWARE_RECORD: u8 = 2;
 const RDX_CHECK_POLYNOMIAL: u32 = 0x04C1_1DB7;
-const RDX_SIGNING_EXPONENT: u32 = 65_537;
-const RDX_SIGNING_MODULUS: [u8; 128] = [
-    0xc1, 0x57, 0x05, 0x3a, 0xda, 0x43, 0x42, 0xb3, 0x55, 0x87, 0xc2, 0x82, 0x27, 0x20, 0x4b, 0xef,
-    0x0f, 0x4e, 0x15, 0x64, 0xe8, 0x47, 0x81, 0xd1, 0xa5, 0x47, 0x09, 0xeb, 0x1c, 0x12, 0x71, 0x65,
-    0x02, 0x16, 0x1c, 0x1d, 0x88, 0x72, 0xda, 0x47, 0x41, 0xd5, 0xc2, 0x05, 0xdd, 0x4e, 0x75, 0x32,
-    0x8f, 0x46, 0x08, 0x5c, 0xea, 0x6e, 0x0d, 0xcc, 0x0e, 0x9f, 0xa0, 0x66, 0x38, 0xe6, 0x33, 0x7c,
-    0x57, 0xae, 0xcf, 0xa6, 0x18, 0x1b, 0x3b, 0x32, 0x5d, 0x82, 0xec, 0xb1, 0xe5, 0x57, 0xe5, 0x23,
-    0xc7, 0x7e, 0x2a, 0xe2, 0x01, 0xa6, 0x3d, 0xca, 0xb7, 0xf4, 0x71, 0x81, 0x0f, 0x58, 0xfb, 0x3f,
-    0xfb, 0x6c, 0xc9, 0xaf, 0xfc, 0x3a, 0x02, 0xf0, 0xc5, 0xfb, 0xe4, 0xd1, 0x3c, 0xbb, 0x0f, 0x31,
-    0x73, 0xd1, 0x58, 0x27, 0x85, 0xa7, 0xe8, 0xb2, 0x65, 0x63, 0xaf, 0xc6, 0x86, 0x03, 0x80, 0x75,
-];
 
 /// Product families whose firmware containers follow distinct vendor formats.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -94,6 +88,9 @@ pub enum SignatureEvidence {
     /// Explicit OPENRDX1 marker and boot SHA-256 verified against paired release
     /// facts. This is integrity evidence, not proof of a vendor RSA signature.
     OpenRdxIntegrityVerified,
+    /// Synthetic RSA evidence for fixture transports; never vendor authentication.
+    #[cfg(any(test, feature = "fixtures"))]
+    FixtureSignatureVerified,
 }
 
 /// Four-decimal-digit firmware revision embedded in a modern TAD image.
@@ -893,25 +890,6 @@ fn validate_ti_boot_records(bytes: &[u8]) -> Result<(), FirmwareImageError> {
     } else {
         Err(FirmwareImageError::InvalidTiBootRecords)
     }
-}
-
-/// Verifies the proven RSA-1024 PKCS#1 v1.5 signature over the TI boot region.
-fn verify_signature(bytes: &[u8], boot_end: usize) -> Result<(), FirmwareImageError> {
-    let key = RsaPublicKey::new(
-        BigUint::from_bytes_be(&RDX_SIGNING_MODULUS),
-        BigUint::from(RDX_SIGNING_EXPONENT),
-    )
-    .map_err(|_| FirmwareImageError::InvalidSignature)?;
-    let verifier = VerifyingKey::<Sha256>::new(key);
-    let signature = Signature::try_from(required_range(
-        bytes,
-        SIGNATURE_START,
-        SIGNATURE_END - SIGNATURE_START,
-    )?)
-    .map_err(|_| FirmwareImageError::InvalidSignature)?;
-    verifier
-        .verify(&bytes[BOOT_REGION_START..boot_end], &signature)
-        .map_err(|_| FirmwareImageError::InvalidSignature)
 }
 
 /// Implements the exact rolling-check routine defined at drive address `0x0800A840`.

@@ -19,6 +19,7 @@ import { isTrustedApplicationSender, registerIpcHandlers, trustApplicationWindow
 import { createMacOsPrivilegedServiceController } from './main/macos-privileged-service.mjs'
 import { createApplicationServiceRuntime } from './main/service-runtime.mjs'
 import { McpHttpServer } from './main/mcp/server.mjs'
+import { resolveMcpBridgePath } from './main/mcp/bridge-path.mjs'
 import { McpSettingsController } from './main/mcp/settings-controller.mjs'
 import { McpOperationStore } from './main/mcp/operation-store.mjs'
 import { createMcpToolRegistry } from './main/mcp/tool-registry.mjs'
@@ -437,7 +438,7 @@ async function start() {
             }
         }
     })
-    mcpController = new McpSettingsController({ directory: join(app.getPath('userData'), 'mcp'), bridgePath: fileURLToPath(new URL('../scripts/mcp-stdio.mjs', import.meta.url)), copyText: clipboard.writeText.bind(clipboard), createServer: ({ token }) => new McpHttpServer({ token, tools: mcpTools }) })
+    mcpController = new McpSettingsController({ directory: join(app.getPath('userData'), 'mcp'), bridgePath: resolveMcpBridgePath(app.getAppPath()), copyText: clipboard.writeText.bind(clipboard), createServer: ({ token }) => new McpHttpServer({ token, tools: mcpTools }) })
     services.mcp = Object.freeze({ getStatus: mcpController.getStatus.bind(mcpController), update: mcpController.update.bind(mcpController), copyConfiguration: mcpController.copyConfiguration.bind(mcpController) })
     shutdownController = new ShutdownController({ app, coordinator: serviceRuntime.coordinator, runtime: { stop: stopApplicationRuntime } })
     autoScanController = new AutoScanController({ afterScan: refreshTrayDevices, scan: () => services.devices.scan({ kind: 'scan' }) })

@@ -34,6 +34,10 @@ pub(super) enum WorkerCommand {
         reply: SyncSender<Result<(), ServiceRejection>>,
     },
     CommitFirmwareRegistration(FirmwareFileToken, SyncSender<Result<(), ServiceRejection>>),
+    // This closed command exists only in library unit tests, never in released
+    // services or feature-enabled integration builds. No arbitrary image enters it.
+    #[cfg(test)]
+    InstallFixtureFirmware(FirmwareFileToken, SyncSender<Result<(), ServiceRejection>>),
     AbortFirmwareRegistration(FirmwareFileToken, SyncSender<Result<(), ServiceRejection>>),
     Prepare {
         operation_id: OperationId,

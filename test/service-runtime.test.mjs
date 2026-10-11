@@ -13,6 +13,7 @@ import { registerIpcHandlers } from '../src/main/ipc-controller.mjs'
 import { createApplicationServiceRuntime } from '../src/main/service-runtime.mjs'
 import { createChildProcessTransportFactory } from '../src/main/device-service-client.mjs'
 import { nativeHostReadiness } from './helpers/native-host-readiness.mjs'
+import { ownWindowsFixture } from './helpers/windows-fixture-owner.mjs'
 import { completeDeviceSnapshot } from './helpers/device-snapshot.mjs'
 
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -433,6 +434,7 @@ function createIpcMain() {
 
 test('uses the compiled stdio runtime through the validated Task 6 handlers', async () => {
     const logDirectory = await mkdtemp(join(tmpdir(), 'openrdx-service-runtime-'))
+    await ownWindowsFixture(logDirectory)
     const { handlers, ipcMain } = createIpcMain()
     const publishedDeviceEvents = []
     const publishedOperationEvents = []

@@ -3,8 +3,9 @@
 
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
-import { join, win32 } from 'node:path'
+import { win32 } from 'node:path'
 import { randomBytes } from 'node:crypto'
+import { resolveWindowsMcpAddonPath } from './windows-addon-path.mjs'
 
 const require = createRequire(import.meta.url)
 const applicationRoot = fileURLToPath(new URL('../../../', import.meta.url))
@@ -13,7 +14,7 @@ const applicationRoot = fileURLToPath(new URL('../../../', import.meta.url))
  * @returns {string} Absolute app-owned addon location.
  */
 function addonPath() {
-    return applicationRoot.includes('.asar') && typeof process.resourcesPath === 'string' ? join(process.resourcesPath, 'native', 'windows', 'openrdx-windows-client.node') : join(applicationRoot, 'out', 'native', 'windows', 'openrdx-windows-client.node')
+    return resolveWindowsMcpAddonPath(applicationRoot, process.resourcesPath)
 }
 
 /** Creates closed native storage authority without following a caller-provided library.

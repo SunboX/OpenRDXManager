@@ -1,6 +1,4 @@
-use std::path::PathBuf;
-
-use rdx_service::firmware::{FirmwareImage, FirmwareRevision, ProductFamily};
+use rdx_service::firmware::{FirmwareRevision, ProductFamily, fixtures};
 use rdx_service::host::{
     DeviceInterface, DeviceSession, FixtureDevice, HostOperationError, SessionDevice,
     SessionGeneration,
@@ -76,13 +74,6 @@ fn finalizer_count(fixture: &FixtureDevice) -> usize {
         .count()
 }
 
-/// Resolves the immutable signed 0283 evidence image.
-fn firmware_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("original-inputs/RDX2E__STD__F-0283.bin")
-}
-
 /// Opens a fixture and creates a fresh non-reusable authorization/context pair.
 fn authorized_operation() -> (
     FixtureDevice,
@@ -93,7 +84,9 @@ fn authorized_operation() -> (
     let fixture = FixtureDevice::new(device(7, 282, 61));
     let mut session = fixture.open();
     let authorization = session
-        .authorize_firmware(FirmwareImage::load(firmware_path(), ProductFamily::Usb3Sata3).unwrap())
+        .authorize_firmware(
+            fixtures::from_bytes(fixtures::bytes(), ProductFamily::Usb3Sata3).unwrap(),
+        )
         .unwrap();
     let context = OperationContext::for_session(
         OperationId::new("op:firmware").unwrap(),
@@ -197,7 +190,9 @@ fn firmware_authorization_rejects_an_unrelated_identical_session_without_dispatc
     let first_fixture = FixtureDevice::new(device(7, 282, 61));
     let mut first_session = first_fixture.open();
     let authorization = first_session
-        .authorize_firmware(FirmwareImage::load(firmware_path(), ProductFamily::Usb3Sata3).unwrap())
+        .authorize_firmware(
+            fixtures::from_bytes(fixtures::bytes(), ProductFamily::Usb3Sata3).unwrap(),
+        )
         .unwrap();
     let context = OperationContext::for_session(
         OperationId::new("op:firmware-unrelated").unwrap(),
@@ -225,7 +220,9 @@ fn firmware_authorization_capability_rejects_matching_context_from_an_unrelated_
     let first_fixture = FixtureDevice::new(device(7, 282, 61));
     let mut first_session = first_fixture.open();
     let authorization = first_session
-        .authorize_firmware(FirmwareImage::load(firmware_path(), ProductFamily::Usb3Sata3).unwrap())
+        .authorize_firmware(
+            fixtures::from_bytes(fixtures::bytes(), ProductFamily::Usb3Sata3).unwrap(),
+        )
         .unwrap();
     let second_fixture = FixtureDevice::new(device(7, 282, 61));
     let mut unrelated_session = second_fixture.open();

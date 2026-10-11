@@ -104,6 +104,7 @@ test('native Windows rotation never overwrites an existing backup', windows, asy
     await handle.writeFile('current')
     await handle.close()
     await writeFile(state.backup, 'keep backup')
+    await acl(state.backup, 'own-as-user')
     await assert.rejects(state.security.renameFile(state.current, state.backup))
     assert.equal(await readFile(state.backup, 'utf8'), 'keep backup')
     assert.equal(await readFile(state.current, 'utf8'), 'current')
@@ -156,6 +157,8 @@ test('native Windows logger hardens owned existing files but rejects ACL drift o
     const state = await fixture(context)
     await mkdir(state.directory)
     await writeFile(state.current, 'existing')
+    await acl(state.directory, 'own-as-user')
+    await acl(state.current, 'own-as-user')
     await acl(state.current, 'make-public')
     await assert.doesNotReject(state.security.prepareDirectory(state.directory), 'prepare existing directory')
     let handle

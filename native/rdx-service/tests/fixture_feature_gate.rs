@@ -23,7 +23,7 @@ fn fixture_manifest_escapes_windows_dependency_paths() {
     assert!(manifest.contains(r#"path = "C:\\workspace\\OpenRDXManager\\native\\rdx-service""#));
 }
 
-/// Proves deterministic adapter construction is absent from the safe default API.
+/// Proves deterministic device and signed-image fixtures are absent from the default API.
 #[test]
 fn fixture_construction_requires_the_explicit_feature() {
     let crate_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -36,7 +36,7 @@ fn fixture_construction_requires_the_explicit_feature() {
     .unwrap();
     fs::write(
         project.path().join("src/main.rs"),
-        "use rdx_service::host::FixtureDevice;\nfn main() { let _ = core::mem::size_of::<FixtureDevice>(); }\n",
+        "use rdx_service::host::FixtureDevice;\nuse rdx_service::firmware::fixtures;\nfn main() { let _ = core::mem::size_of::<FixtureDevice>(); let _ = fixtures::bytes(); }\n",
     )
     .unwrap();
 
@@ -54,5 +54,9 @@ fn fixture_construction_requires_the_explicit_feature() {
     assert!(
         stderr.contains("unresolved import `rdx_service::host::FixtureDevice`"),
         "compiler failure was not the gated fixture symbol: {stderr}"
+    );
+    assert!(
+        stderr.contains("unresolved import `rdx_service::firmware::fixtures`"),
+        "synthetic signing fixtures unexpectedly exist without the feature: {stderr}"
     );
 }

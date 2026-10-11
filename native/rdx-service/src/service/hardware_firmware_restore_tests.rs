@@ -1,16 +1,16 @@
 // SPDX-FileCopyrightText: 2026 André Fiedler
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! Vendor-image restoration through the installed OpenRDX receiver.
+//! Simulated vendor-format restoration through the installed OpenRDX receiver.
 
 use super::*;
 use crate::service::runtime_loop::drain_backend_signals;
 
-/// A vendor image still needs the installed receiver's delayed activation wait.
-/// Exercise the real registration, worker, service, and publication contracts;
-/// the only substitute is the physical transport and its reset observations.
+/// A vendor-format image still needs the receiver's delayed activation wait.
+/// Production registration rejects the fixture key before explicit test-only
+/// admission exercises worker, service, and publication with a simulated transport.
 #[test]
-fn vendor_restore_waits_for_openrdx_receiver_activation_before_readback() {
+fn simulated_vendor_restore_waits_for_openrdx_receiver_activation_before_readback() {
     for (installed, target, unknown_finalizers, succeeds) in [
         (107, 283, 0, true),
         (106, 283, 0, true),
@@ -46,11 +46,7 @@ fn vendor_restore_waits_for_openrdx_receiver_activation_before_readback() {
             },
         );
         let snapshot = backend.scan_devices().unwrap().remove(0);
-        let bytes = std::fs::read(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../original-inputs/RDX2E__STD__F-0283.bin"),
-        )
-        .unwrap();
+        let bytes = crate::firmware::fixtures::bytes();
         let token = FirmwareFileToken::new("firmware:vendor-restore").unwrap();
         backend
             .begin_firmware_registration(token.clone(), "BIN".to_owned(), bytes.len(), None)
@@ -60,7 +56,16 @@ fn vendor_restore_waits_for_openrdx_receiver_activation_before_readback() {
                 .append_firmware_registration(token.clone(), index * 4096, chunk.to_vec())
                 .unwrap();
         }
-        backend.commit_firmware_registration(token.clone()).unwrap();
+        // Synthetic signatures must remain rejected by the production vendor gate.
+        assert_eq!(
+            backend
+                .commit_firmware_registration(token.clone())
+                .unwrap_err()
+                .as_str(),
+            "firmware-image-invalid"
+        );
+        // The test-only command installs just the validated deterministic fixture.
+        install_fixture_firmware(&backend, token.clone());
         let (sender, receiver) = mpsc::sync_channel(16);
         let crashes = crate::service::crash::CrashAdmission::new();
         let sink = ServiceEventSink::new(sender, crashes.clone());

@@ -21,9 +21,9 @@
        colored CSS border at the rounded clip corner. Keep its layout space. */
     border: 1px solid transparent;
     border-radius: var(--radius-large);
-    /* Keep the layered gradient inside the border so its rounded background
-       clip does not overpaint the inset stroke at the outer edge. */
-    background: linear-gradient(145deg, rgba(11, 31, 46, 0.98), rgba(5, 12, 22, 0.99)), var(--color-surface);
+    /* A solid fill avoids process-dependent gradient quantization. Keep its
+       rounded clip inside the inset stroke and retain the blurred backdrop. */
+    background: #081622;
     background-clip: padding-box;
     box-shadow:
         inset 0 0 0 1px var(--color-border-strong),

@@ -26,9 +26,12 @@ export function createInstallerConfiguration(platform) {
         artifactName: `OpenRDXManager-\${version}-\${os}-${process.arch}.\${ext}`,
         directories: { output: 'dist/installers', buildResources: 'resources/installer' },
         asar: true,
+        // Copied MCP configurations invoke external Node, which cannot read ASAR.
+        // Keep the bridge's ordinary ESM/package/dependency tree together.
+        asarUnpack: ['scripts/mcp-stdio.mjs', 'src/main/**/*', 'package.json', 'node_modules/**/*'],
         npmRebuild: false,
         beforePack: verifyNativeArchitecture,
-        files: ['package.json', 'src/**/*', 'out/preload.cjs', 'resources/icons/**/*', 'LICENSE', 'LICENSES/**/*', 'NOTICE', 'COMMERCIAL-LICENSE.md'],
+        files: ['package.json', 'src/**/*', 'scripts/mcp-stdio.mjs', 'out/preload.cjs', 'resources/icons/**/*', 'LICENSE', 'LICENSES/**/*', 'NOTICE', 'COMMERCIAL-LICENSE.md'],
         extraResources: [
             { from: `out/native/${folder}`, to: `native/${folder}` },
             { from: `native/rdx-service/resources/${folder}`, to: `native/${folder}`, filter: ['**/*', '!README.md'] }

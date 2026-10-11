@@ -550,6 +550,31 @@ mod tests {
     use super::{CliExit, DirectOwnership, run_with_factory};
     use crate::service::{NoDeviceBackend, ServicePlatform};
 
+    /// The explicit no-device backend yields one honest empty scan without host access.
+    #[test]
+    fn scan_without_a_platform_adapter_is_a_safe_empty_success() {
+        let mut output = Vec::new();
+        let mut diagnostics = Vec::new();
+
+        // The real binary uses the host adapter even without Cargo features;
+        // injecting the no-device backend keeps this contract hardware-independent.
+        let exit = run_with_factory(
+            [OsString::from("--scan")],
+            &mut output,
+            &mut diagnostics,
+            || Ok(NoDeviceBackend::new(ServicePlatform::Darwin)),
+            DirectOwnership::Unavailable,
+            Duration::from_millis(10),
+        );
+
+        assert_eq!(exit, CliExit::Success);
+        assert_eq!(
+            output,
+            b"{\"command\":\"scan\",\"devices\":[],\"hardwareVerified\":false,\"status\":\"ok\"}\n"
+        );
+        assert!(diagnostics.is_empty());
+    }
+
     /// Ownership rejection must occur before a second registry-owning backend exists.
     #[test]
     fn rejected_ownership_prevents_backend_construction() {

@@ -21,7 +21,8 @@ terms for the Texas Instruments material. See LICENSES/LicenseRef-TI-TUSB926x.tx
 and .reuse/dep5. Original vendor firmware and vendor documentation retain the
 rights and terms supplied by their publishers.
 
-Dependencies, including Electron, Inter, Oxanium, Phosphor Icons, the MCP SDK
+Dependencies, including Electron, Inter, Oxanium, Noto Sans SC, Noto Sans JP,
+Phosphor Icons, the MCP SDK
 and Rust dependencies, retain their own licenses and notices. Their source and
 license files are supplied with the installed packages. A packaged distribution
 must include the notices required by the dependencies it ships.

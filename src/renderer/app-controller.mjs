@@ -608,6 +608,8 @@ export function mountApplication(root, options) {
             activeLanguage = state.settings.language
             onLanguageChanged(activeLanguage)
         }
+        // Keep accessibility and locale-specific glyph selection in sync with the catalog.
+        root.ownerDocument.documentElement.lang = activeLanguage
         if (typeof state.settings?.eventLogging === 'boolean' && supportModel.activity.enabled !== state.settings.eventLogging) {
             supportModel = { ...supportModel, activity: { ...supportModel.activity, enabled: state.settings.eventLogging } }
         }

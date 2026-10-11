@@ -11,6 +11,17 @@ $acl = if ($isDirectory) {
     [System.IO.File]::GetAccessControl($Target)
 }
 $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+if ($Mode -eq 'own-as-user') {
+    # Elevated test runners default new filesystem objects to Administrators.
+    # Model a desktop user's existing files without relaxing production checks.
+    $acl.SetOwner($user)
+    if ($isDirectory) {
+        [System.IO.Directory]::SetAccessControl($Target, $acl)
+    } else {
+        [System.IO.File]::SetAccessControl($Target, $acl)
+    }
+    exit
+}
 if ($Mode -eq 'make-public') {
     $everyone = [System.Security.Principal.SecurityIdentifier]::new('S-1-1-0')
     $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($everyone, 'Read', 'Allow')

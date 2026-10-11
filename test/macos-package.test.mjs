@@ -26,14 +26,19 @@ async function createSyntheticProject(projectRoot) {
     await chmod(join(electronContents, 'MacOS', 'Electron'), 0o755)
     await createFile(join(electronContents, 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleExecutable</key><string>Electron</string><key>CFBundleIdentifier</key><string>com.github.Electron</string><key>CFBundleName</key><string>Electron</string><key>CFBundleDisplayName</key><string>Electron</string><key>CFBundleIconFile</key><string>electron.icns</string><key>CFBundleShortVersionString</key><string>44.0.0</string><key>CFBundleVersion</key><string>44.0.0</string></dict></plist>`)
     await createFile(join(electronContents, 'Resources', 'default_app.asar'))
-    await createFile(join(projectRoot, 'package.json'), JSON.stringify({ name: 'openrdxmanager', productName: 'OpenRDXManager', version: '0.1.0', main: 'src/main.mjs', type: 'module', dependencies: { '@fontsource/inter': '1', '@fontsource/oxanium': '1', '@phosphor-icons/web': '1', zod: '1' } }))
+    const dependencies = ['@fontsource/inter', '@fontsource/oxanium', '@fontsource-variable/noto-sans-sc', '@fontsource-variable/noto-sans-jp', '@phosphor-icons/web', '@modelcontextprotocol/client', '@modelcontextprotocol/node', '@modelcontextprotocol/server', 'zod']
+    const dependencyPaths = [...dependencies.map((name) => `node_modules/${name}`), 'node_modules/@modelcontextprotocol/client/node_modules/sdk-transitive']
+    await createFile(join(projectRoot, 'package.json'), JSON.stringify({ name: 'openrdxmanager', productName: 'OpenRDXManager', version: '0.1.0', main: 'src/main.mjs', type: 'module', dependencies: Object.fromEntries(dependencies.map((name) => [name, '1'])) }))
+    await createFile(join(projectRoot, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3, packages: { '': {}, ...Object.fromEntries(dependencyPaths.map((name) => [name, {}])), 'node_modules/@modelcontextprotocol/client/node_modules/dev-tool': { dev: true }, 'node_modules/optional-absent': { optional: true } } }))
+    await createFile(join(projectRoot, 'scripts', 'mcp-stdio.mjs'), 'export const bridge = true\n')
     await createFile(join(projectRoot, 'src', 'main.mjs'), 'export {}\n')
     await createFile(join(projectRoot, 'resources', 'icons', 'app-icon.icns'), 'icns-fixture')
     await createFile(join(projectRoot, 'resources', 'icons', 'app-icon.ico'), 'ico-fixture')
     await createFile(join(projectRoot, 'resources', 'icons', 'app-icon.png'), 'png-fixture')
     await createFile(join(projectRoot, 'out', 'preload.cjs'), 'module.exports = {}\n')
-    for (const dependency of ['@fontsource/inter', '@fontsource/oxanium', '@phosphor-icons/web', 'zod']) {
-        await createFile(join(projectRoot, 'node_modules', dependency, 'package.json'), JSON.stringify({ name: dependency }))
+    for (const dependency of [...dependencyPaths, 'node_modules/@modelcontextprotocol/client/node_modules/dev-tool']) {
+        await createFile(join(projectRoot, dependency, 'package.json'), JSON.stringify({ name: dependency }))
+        await createFile(join(projectRoot, dependency, 'LICENSE'), 'dependency-license-fixture')
     }
     await createFile(join(projectRoot, 'out', 'native', 'macos', 'openrdx-hardware'))
     await chmod(join(projectRoot, 'out', 'native', 'macos', 'openrdx-hardware'), 0o755)
@@ -62,6 +67,10 @@ test('assembles one signed macOS helper and the fixed packaged runtime layout', 
     assert.equal((await lstat(paths.addonPath)).isFile(), true)
     assert.equal((await lstat(paths.daemonPlistPath)).isFile(), true)
     assert.equal((await lstat(join(paths.appResourcesPath, 'app', 'src', 'main.mjs'))).isFile(), true)
+    assert.equal(await readFile(join(paths.appResourcesPath, 'app', 'scripts', 'mcp-stdio.mjs'), 'utf8'), 'export const bridge = true\n')
+    assert.equal(await readFile(join(paths.appResourcesPath, 'app', 'node_modules', '@modelcontextprotocol/client', 'node_modules', 'sdk-transitive', 'LICENSE'), 'utf8'), 'dependency-license-fixture')
+    await assert.rejects(lstat(join(paths.appResourcesPath, 'app', 'node_modules', '@modelcontextprotocol/client', 'node_modules', 'dev-tool')), /ENOENT/u)
+    await assert.rejects(lstat(join(paths.appResourcesPath, 'app', 'node_modules', 'optional-absent')), /ENOENT/u)
     assert.equal((await lstat(join(paths.appResourcesPath, 'OpenRDXManager.icns'))).isFile(), true)
     assert.equal((await lstat(join(paths.appResourcesPath, 'app', 'resources', 'icons', 'app-icon.png'))).isFile(), true)
     await assert.rejects(lstat(join(paths.appResourcesPath, 'native', 'macos', 'openrdx-hardware')), /ENOENT/)

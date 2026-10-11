@@ -290,6 +290,24 @@ impl<B: PlatformBackend> HardwareWorker<B> {
                     let result = self.commit_firmware_registration(file_token);
                     let _ = reply.send(result);
                 }
+                #[cfg(test)]
+                WorkerCommand::InstallFixtureFirmware(file_token, reply) => {
+                    // The test transport receives only the deterministic fixture,
+                    // whose RSA identity is independently verified and labeled.
+                    let image = crate::firmware::fixtures::from_bytes(
+                        crate::firmware::fixtures::bytes(),
+                        ProductFamily::Usb3Sata3,
+                    )
+                    .expect("explicit fixture RSA validation");
+                    self.firmware_images.insert(
+                        file_token,
+                        RegisteredFirmwareImage {
+                            expires_at: Instant::now() + Duration::from_secs(300),
+                            image,
+                        },
+                    );
+                    let _ = reply.send(Ok(()));
+                }
                 WorkerCommand::AbortFirmwareRegistration(file_token, reply) => {
                     self.abort_firmware_registration(&file_token);
                     let _ = reply.send(Ok(()));

@@ -14,6 +14,20 @@ use mode_platform::{
 };
 use std::sync::mpsc;
 
+/// Installs only the validated deterministic fixture into the simulated worker.
+/// This unit-test command is absent from every normal and fixture-feature service binary.
+fn install_fixture_firmware(
+    backend: &HardwareServiceBackend<ModePlatform>,
+    token: FirmwareFileToken,
+) {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    backend
+        .commands
+        .send(WorkerCommand::InstallFixtureFirmware(token, sender))
+        .unwrap();
+    receiver.recv().unwrap().unwrap();
+}
+
 /// Creates one exact format request and its matching operation request.
 fn requests(token: ConfirmationToken) -> (ConfirmationRequest, OperationRequest) {
     let device_id = DeviceId::new("rdx:confirmation-test").unwrap();

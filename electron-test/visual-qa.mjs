@@ -15,13 +15,14 @@ import { isTrustedApplicationSender, registerIpcHandlers } from '../src/main/ipc
 import { registerWindowMenu } from '../src/main/window-menu.mjs'
 import { WindowMenuChannel } from '../src/shared/window-menu.mjs'
 import { visualWindowOptions } from './visual-window-options.mjs'
+import { waitForRendererVisualPaint } from './visual-paint.mjs'
 import { resizeVisualWindow } from './visual-window-geometry.mjs'
 import { guardVisualOutput } from './visual-output.mjs'
 import { normalizeConsoleMessage, VisualErrorTracker } from './visual-error-tracker.mjs'
 import { isVisualAnchorUnoccluded } from './visual-anchor-visibility.mjs'
 import { initializeIsolatedElectronProfile } from './isolated-profile.mjs'
 import { assertVisualRasterAnchorCrops, assertVisualSnapshot, collectVisualDisabledReasons, createVisualControlKey, createVisualQaMatrix, serializeVisualQaCaptureMetrics, serializeVisualQaManifest } from './visual-qa-contract.mjs'
-import { captureValidatedVisualImage, loadWithPageErrorCapture, runWithVisualErrorCursor } from './visual-runtime-capture.mjs'
+import { captureValidatedVisualImage, loadWithPageErrorCapture, persistValidatedVisualImage, runWithVisualErrorCursor } from './visual-runtime-capture.mjs'
 import { compareVisualImages, decodeVisualRasterAnchorCrops, hasMeaningfulVisualDifference, injectSingleChannelRasterNoise } from './visual-raster.mjs'
 
 initializeIsolatedElectronProfile(app, process.env.OPENRDX_ELECTRON_TEST_PROFILE)
@@ -216,13 +217,7 @@ async function waitForSelector(webContents, selector) {
  * @returns {Promise<void>} Resolves after fonts and two animation frames.
  */
 async function waitForPaint(webContents) {
-    await webContents.executeJavaScript(`
-    /** Waits for local fonts and two complete paint frames. @returns {Promise<void>} */
-    (async function waitForVisualPaint() {
-        await document.fonts.ready
-        await new Promise(requestAnimationFrame.bind(globalThis))
-        await new Promise(requestAnimationFrame.bind(globalThis))
-    })()`)
+    await webContents.executeJavaScript(`(${waitForRendererVisualPaint.toString()})()`)
 }
 
 /**
@@ -735,17 +730,21 @@ async function captureEntry(window, entry, errorTracker, cursor, functionalEvide
         }
         throw new Error(`Visual QA failed at ${entry.state}/${entry.viewport.name}: ${error.message}`, { cause: error })
     }
-    const image = capture.image
-    inspection.rasterEvidence = { ...capture.evidence, captureAttempts: capture.attempts }
     errorTracker.assertEmptySince(cursor, `${entry.state}/${entry.viewport.name} capture`)
-    await writeVisualScreenshot(join(evidenceDirectory, entry.screenshot), image, entry.screenshot === rasterNoiseInjection, async () => {
-        window.webContents.invalidate()
-        await waitForPaint(window.webContents)
-        const confirmationImage = await window.webContents.capturePage()
-        assertVisualRasterAnchorCrops(decodeVisualRasterAnchorCrops(confirmationImage, inspection.rasterAnchors, inspection.contentSize))
-        errorTracker.assertEmptySince(cursor, `${entry.state}/${entry.viewport.name} confirmation capture`)
-        return confirmationImage
-    })
+    const persisted = await persistValidatedVisualImage(
+        capture,
+        async (image) =>
+            writeVisualScreenshot(join(evidenceDirectory, entry.screenshot), image, entry.screenshot === rasterNoiseInjection, async () => {
+                window.webContents.invalidate()
+                await waitForPaint(window.webContents)
+                const confirmationImage = await window.webContents.capturePage()
+                assertVisualRasterAnchorCrops(decodeVisualRasterAnchorCrops(confirmationImage, inspection.rasterAnchors, inspection.contentSize))
+                errorTracker.assertEmptySince(cursor, `${entry.state}/${entry.viewport.name} confirmation capture`)
+                return confirmationImage
+            }),
+        (image) => assertVisualRasterAnchorCrops(decodeVisualRasterAnchorCrops(image, inspection.rasterAnchors, inspection.contentSize))
+    )
+    inspection.rasterEvidence = { ...persisted.evidence, captureAttempts: persisted.attempts }
     return { screenshot: entry.screenshot, inspection }
 }
 
@@ -775,7 +774,7 @@ function createFiducialFreeCorruptedCapture(image, viewportName) {
  * @param {Electron.NativeImage} image - Freshly captured renderer image.
  * @param {boolean} injectRasterNoise - Whether to exercise the bounded noise path.
  * @param {() => Promise<Electron.NativeImage>} confirmReplacement - Captures a second painted frame only when the first contains meaningful drift.
- * @returns {Promise<void>} Resolves after preserving or replacing evidence.
+ * @returns {Promise<Electron.NativeImage>} Exact preserved or saved screenshot for manifest evidence.
  */
 async function writeVisualScreenshot(screenshotPath, image, injectRasterNoise, confirmReplacement) {
     const trackedImage = nativeImage.createFromPath(screenshotPath)
@@ -788,11 +787,11 @@ async function writeVisualScreenshot(screenshotPath, image, injectRasterNoise, c
         }
         if (!hasMeaningfulVisualDifference(comparison.trackedRaster, freshRaster)) {
             if (injectRasterNoise) console.log(`OpenRDXManager visual QA preserved injected raster noise: ${basename(screenshotPath)}`)
-            return
+            return trackedImage
         }
         const confirmedImage = await confirmReplacement()
         const confirmedComparison = compareVisualImages(trackedImage, confirmedImage)
-        if (!confirmedComparison.meaningfulDifference) return
+        if (!confirmedComparison.meaningfulDifference) return trackedImage
         // Preserve exact before/after pixels for diagnosing drift without
         // changing the comparison decision or replacing evidence prematurely.
         const driftDirectory = process.env.OPENRDX_VISUAL_QA_DIAGNOSTICS_DIRECTORY ?? join(dirname(screenshotPath), 'raster-drift')
@@ -808,6 +807,7 @@ async function writeVisualScreenshot(screenshotPath, image, injectRasterNoise, c
         console.log(`OpenRDXManager visual QA replaced changed raster: ${basename(screenshotPath)}`)
     }
     await writeFile(screenshotPath, replacementImage.toPNG())
+    return replacementImage
 }
 
 /**

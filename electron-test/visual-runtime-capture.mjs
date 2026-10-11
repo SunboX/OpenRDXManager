@@ -57,3 +57,19 @@ export async function captureValidatedVisualImage(options) {
     }
     throw new Error(`Visual QA capture remained invalid after ${maxAttempts} attempts: ${lastError?.message ?? 'unknown raster validation failure'}`, { cause: lastError })
 }
+
+/**
+ * Revalidates the exact image selected for storage. A bounded-noise comparison
+ * may preserve the baseline or choose a confirmation frame, so fresh-frame
+ * foreground counts cannot describe the resulting artifact.
+ * @template TImage, TEvidence
+ * @param {{image: TImage, evidence: TEvidence, attempts: number}} capture - Validated fresh capture.
+ * @param {(image: TImage) => Promise<TImage>} persist - Stores and returns the selected image.
+ * @param {(image: TImage) => TEvidence} validate - Same fail-closed painted-anchor validator.
+ * @returns {Promise<{image: TImage, evidence: TEvidence, attempts: number}>} Saved image and its actual evidence.
+ * @throws {Error} For storage failure or invalid saved raster anchors.
+ */
+export async function persistValidatedVisualImage(capture, persist, validate) {
+    const image = await persist(capture.image)
+    return { ...capture, image, evidence: validate(image) }
+}

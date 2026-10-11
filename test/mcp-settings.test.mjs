@@ -8,11 +8,13 @@ import { createSymlinkFixture } from './helpers/symlink-fixture.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { McpSettingsController } from '../src/main/mcp/settings-controller.mjs'
+import { ownWindowsFixture } from './helpers/windows-fixture-owner.mjs'
 
 /** @param {object} context - Test lifecycle. @param {Function} [createServer] - Optional controlled server. @returns {Promise<object>} Isolated persisted controller and observations. */
 async function fixture(context, createServer) {
     const directory = await mkdtemp(join(tmpdir(), 'openrdx-mcp-settings-'))
     context.after(() => rm(directory, { recursive: true, force: true }))
+    await ownWindowsFixture(directory)
     const copies = []
     const events = []
     const options = {

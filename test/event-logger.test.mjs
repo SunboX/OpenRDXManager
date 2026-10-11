@@ -10,6 +10,7 @@ import test from 'node:test'
 
 import { EventLogger } from '../src/main/event-logger.mjs'
 import { WindowsLogSecurityAdapter } from '../src/main/windows-log-security-adapter.mjs'
+import { ownWindowsFixture } from './helpers/windows-fixture-owner.mjs'
 
 /** Uses the production native Windows boundary for real filesystem tests.
  * @param {object} options - Isolated logger settings.
@@ -25,7 +26,9 @@ function createHostLogger(options) {
  * @returns {Promise<string>} Absolute temporary directory.
  */
 async function createLogDirectory() {
-    return mkdtemp(join(tmpdir(), 'openrdx-event-logger-'))
+    const directory = await mkdtemp(join(tmpdir(), 'openrdx-event-logger-'))
+    await ownWindowsFixture(directory)
+    return directory
 }
 
 /**

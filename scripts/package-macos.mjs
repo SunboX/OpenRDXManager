@@ -10,10 +10,10 @@ import { fileURLToPath } from 'node:url'
 
 import { buildMacOsServiceManagementAddon } from './build-macos-service-management.mjs'
 import { buildNativeService } from './build-native-service.mjs'
+import { collectProductionDependencyPaths } from './production-dependencies.mjs'
 
 const execFileAsync = promisify(execFile)
 const defaultProjectRoot = fileURLToPath(new URL('..', import.meta.url))
-const runtimeDependencies = Object.freeze(['@fontsource/inter', '@fontsource/oxanium', '@phosphor-icons/web', 'zod'])
 
 /**
  * Resolves one caller-selected valid code-signing identity and its certificate team.
@@ -159,7 +159,9 @@ export async function packageMacOsApplication(options) {
     const sourceDaemonPlistPath = join(paths.projectRoot, 'native', 'rdx-service', 'resources', 'macos', 'com.openrdx.hardware.plist')
     const sourceIconDirectory = join(paths.projectRoot, 'resources', 'icons')
     const sourceMacOsIconPath = join(sourceIconDirectory, 'app-icon.icns')
-    await Promise.all([verifyDirectory(sourceAppPath), verifyDirectory(join(paths.projectRoot, 'src')), verifyDirectory(sourceIconDirectory), verifyRegularFile(sourceMacOsIconPath), verifyRegularFile(join(sourceIconDirectory, 'app-icon.ico')), verifyRegularFile(join(sourceIconDirectory, 'app-icon.png')), verifyRegularFile(packageMetadataPath), verifyRegularFile(join(paths.projectRoot, 'out', 'preload.cjs')), verifyRegularFile(sourceHelperPath), verifyRegularFile(sourceAddonPath), verifyRegularFile(sourceDaemonPlistPath), ...runtimeDependencies.map((dependency) => verifyDirectory(join(paths.projectRoot, 'node_modules', dependency)))])
+    const sourceBridgePath = join(paths.projectRoot, 'scripts', 'mcp-stdio.mjs')
+    const productionDependencies = await collectProductionDependencyPaths(paths.projectRoot)
+    await Promise.all([verifyDirectory(sourceAppPath), verifyDirectory(join(paths.projectRoot, 'src')), verifyDirectory(sourceIconDirectory), verifyRegularFile(sourceMacOsIconPath), verifyRegularFile(join(sourceIconDirectory, 'app-icon.ico')), verifyRegularFile(join(sourceIconDirectory, 'app-icon.png')), verifyRegularFile(packageMetadataPath), verifyRegularFile(join(paths.projectRoot, 'out', 'preload.cjs')), verifyRegularFile(sourceHelperPath), verifyRegularFile(sourceAddonPath), verifyRegularFile(sourceDaemonPlistPath), verifyRegularFile(sourceBridgePath)])
 
     const packageMetadata = JSON.parse(await readFile(packageMetadataPath, 'utf8'))
     if (packageMetadata.name !== 'openrdxmanager' || packageMetadata.productName !== 'OpenRDXManager' || typeof packageMetadata.version !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(packageMetadata.version)) {
@@ -190,8 +192,13 @@ export async function packageMacOsApplication(options) {
         await copyWithDitto(execute, sourceIconDirectory, join(temporaryResourcesPath, 'app', 'resources', 'icons'))
         await copyWithDitto(execute, sourceMacOsIconPath, join(temporaryResourcesPath, 'OpenRDXManager.icns'))
         await copyWithDitto(execute, join(paths.projectRoot, 'out', 'preload.cjs'), join(temporaryResourcesPath, 'app', 'out', 'preload.cjs'))
-        for (const dependency of runtimeDependencies) {
-            await copyWithDitto(execute, join(paths.projectRoot, 'node_modules', dependency), join(temporaryResourcesPath, 'app', 'node_modules', dependency))
+        await copyWithDitto(execute, sourceBridgePath, join(temporaryResourcesPath, 'app', 'scripts', 'mcp-stdio.mjs'))
+        for (const dependency of productionDependencies) {
+            const destination = join(temporaryResourcesPath, 'app', dependency)
+            await copyWithDitto(execute, join(paths.projectRoot, dependency), destination)
+            // Copy nested packages only from their own production lock entries;
+            // an ancestor directory can otherwise smuggle dev-only descendants.
+            await rm(join(destination, 'node_modules'), { recursive: true, force: true })
         }
         const temporaryHelperPath = join(temporaryContentsPath, 'Library', 'LaunchServices', 'openrdx-hardware')
         const temporaryAddonPath = join(temporaryResourcesPath, 'native', 'macos', 'openrdx-service-management.node')

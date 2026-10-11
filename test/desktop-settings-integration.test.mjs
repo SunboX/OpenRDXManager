@@ -127,6 +127,7 @@ test('persists desktop settings without a renderer Auto Scan scheduler', async (
     }
     const controller = mountApplication(dom.window.document.querySelector('#app'), { deviceController, onLanguageChanged: (language) => languages.push(language), store, supportApi })
     const document = dom.window.document
+    assert.equal(document.documentElement.lang, 'en')
     document.querySelector('[data-setting="auto-scan"]').click()
     await new Promise((resolve) => setImmediate(resolve))
     const language = document.querySelector('[data-setting="language"]')
@@ -139,6 +140,7 @@ test('persists desktop settings without a renderer Auto Scan scheduler', async (
     await new Promise((resolve) => setImmediate(resolve))
     assert.deepEqual(calls, [{ autoScan: false }, { language: 'de' }, { updateChecks: false }, { lastSafeView: 'utilities' }])
     assert.deepEqual(languages, ['de'])
+    assert.equal(document.documentElement.lang, 'de')
     assert.equal(
         calls.some((call) => Object.hasOwn(call, 'rendererScheduler')),
         false

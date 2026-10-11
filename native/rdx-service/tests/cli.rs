@@ -101,19 +101,6 @@ fn version_comes_from_the_package() {
     assert!(stderr(&output).is_empty());
 }
 
-/// Proves the hardware-absent Phase 2 scan is an honest deterministic success.
-#[test]
-fn scan_without_a_platform_adapter_is_a_safe_empty_success() {
-    let output = run(["--scan"]);
-
-    assert_eq!(output.status.code(), Some(CliExit::Success.code()));
-    assert_eq!(
-        stdout(&output),
-        "{\"command\":\"scan\",\"devices\":[],\"hardwareVerified\":false,\"status\":\"ok\"}\n"
-    );
-    assert!(stderr(&output).is_empty());
-}
-
 /// Proves dev stdio cannot claim privileged native service authority.
 #[test]
 fn eject_without_a_platform_adapter_fails_as_a_capability_rejection() {

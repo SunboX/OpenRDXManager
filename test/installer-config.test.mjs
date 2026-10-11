@@ -14,6 +14,11 @@ for (const platform of ['darwin', 'win32', 'linux']) {
         assert.equal(config.extraResources[0].to, `native/${folder}`)
         assert.ok(config.files.includes('src/**/*'))
         assert.ok(config.files.includes('out/preload.cjs'))
+        assert.ok(config.files.includes('scripts/mcp-stdio.mjs'), 'Copied configuration must name a shipped bridge')
+        assert.equal(config.asar, true)
+        for (const bridgeInput of ['scripts/mcp-stdio.mjs', 'src/main/**/*', 'package.json', 'node_modules/**/*']) {
+            assert.ok(config.asarUnpack?.includes(bridgeInput), `External Node requires ordinary files for ${bridgeInput}`)
+        }
         assert.ok(!config.files.some((entry) => /analysis|original-inputs|test\//.test(entry)))
         assert.ok(config.mac.extraFiles.some((entry) => entry.to === 'Library/LaunchServices/openrdx-hardware'))
         assert.equal(config.nsis.perMachine, true)

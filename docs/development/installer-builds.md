@@ -17,6 +17,10 @@ Use `--win` or `--linux` on their native hosts and select the host's architectur
 
 Application code, production dependencies, preload, icons and license texts enter the app package. Native helpers remain outside ASAR at the fixed existing resource paths. Vendor inputs, local analysis, tests and build caches are excluded. Linux DEB maintainer scripts install the existing exact systemd, udev and polkit resources; they preserve explicit user membership decisions.
 
+Chinese and Japanese font fallbacks are bundled locally under their OFL license, so portable packages do not require system CJK fonts. The copied MCP client configuration resolves an unpacked Node bridge, its main-process modules and production dependencies; external Node clients cannot read Electron's ASAR archive directly.
+
+Firmware tests use deterministic synthetic containers and a separate fixture RSA identity. The production loader retains its pinned vendor key and rejects those signatures even in fixture-enabled test builds. Native tests require no files from ignored vendor-input or analysis directories.
+
 ## Publication gate
 
 Branch and pull-request builds upload artifacts without publishing. The collection job requires all fourteen installer filenames for the manifest version, checks regular nonempty files, rejects stale versions and generates `SHA256SUMS.txt`. A separate publication job runs only for version tags or manual dispatch with `publish_release=true`. It rechecks the collection, creates a draft with all assets and publishes only after that complete upload succeeds. An existing release is never silently overwritten.

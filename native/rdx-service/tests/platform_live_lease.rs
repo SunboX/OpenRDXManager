@@ -41,6 +41,7 @@ struct SwapState {
     windows_layout: bool,
     host_override: Option<HostVolumeFacts>,
     format_calls: usize,
+    #[cfg(target_os = "linux")]
     unmount_fails: bool,
 }
 
@@ -96,6 +97,7 @@ impl SwapBackend {
                 windows_layout: false,
                 host_override: None,
                 format_calls: 0,
+                #[cfg(target_os = "linux")]
                 unmount_fails: false,
             })),
         }

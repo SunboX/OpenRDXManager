@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use rdx_service::firmware::{
     FirmwareImage, FirmwareImageError, FirmwareRevision, InstallableFirmwareImage,
-    MAX_FIRMWARE_IMAGE_SIZE, ProductFamily, SignatureEvidence,
+    MAX_FIRMWARE_IMAGE_SIZE, ProductFamily, SignatureEvidence, fixtures,
 };
 use rdx_service::host::{
     DeviceInterface, FirmwareAuthorizationError, FixtureDevice, SessionDevice, SessionGeneration,
@@ -18,16 +18,14 @@ const METADATA_CHECK_OFFSET: usize = 0x188;
 const BOOT_REGION_OFFSET: usize = 0x18C;
 const RDX_CHECK_POLYNOMIAL: u32 = 0x04C1_1DB7;
 
-/// Resolves the immutable vendor firmware without copying it into a test fixture.
-fn firmware_0283_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("original-inputs/RDX2E__STD__F-0283.bin")
+/// Owns deterministic synthetic bytes until this loader call finishes.
+fn firmware_0283_path() -> TemporaryFirmware {
+    temporary_firmware("synthetic-0283.bin", &fixtures::bytes())
 }
 
-/// Reads the immutable evidence into test memory for ephemeral negative mutations.
+/// Returns synthetic signed bytes without any vendor or ignored research file.
 fn firmware_0283_bytes() -> Vec<u8> {
-    fs::read(firmware_0283_path()).expect("immutable firmware evidence")
+    fixtures::bytes()
 }
 
 /// Authorizes one image through fresh identity-bound fixture evidence.
@@ -95,22 +93,17 @@ fn rewrite_boot_check(bytes: &mut [u8]) {
     bytes[trailer_offset..].copy_from_slice(&check.to_be_bytes());
 }
 
-/// Anchors parsing and transfer boundaries to the exact analyzed 0283 evidence.
+/// Anchors parser and transfer boundaries to a deterministic signed test container.
 #[test]
-fn firmware_0283_has_verified_identity_sixteen_chunks_and_exact_tail() {
-    let image = FirmwareImage::load(firmware_0283_path(), ProductFamily::Usb3Sata3)
-        .expect("analyzed 0283 image");
+fn synthetic_firmware_has_explicit_fixture_identity_sixteen_chunks_and_exact_tail() {
+    let image = fixtures::load(firmware_0283_path().path, ProductFamily::Usb3Sata3)
+        .expect("synthetic 0283 image with explicit fixture RSA evidence");
 
     assert_eq!(image.len(), 62_110);
     assert_eq!(image.revision().get(), 283);
-    assert_eq!(image.signature_evidence(), SignatureEvidence::Verified);
     assert_eq!(
-        image.sha256(),
-        [
-            0x73, 0xd5, 0x28, 0x80, 0x1a, 0xef, 0xc0, 0x32, 0xd3, 0xa5, 0x36, 0x37, 0xb0, 0x35,
-            0xf6, 0x5d, 0x72, 0x80, 0x91, 0x51, 0xb2, 0xf1, 0x27, 0xc6, 0xb2, 0x05, 0x0e, 0x9b,
-            0xac, 0xc7, 0x6f, 0x3b,
-        ]
+        image.signature_evidence(),
+        SignatureEvidence::FixtureSignatureVerified
     );
     let installable = authorize_image(image, 278).expect("0283 is authorized from signed-era 0278");
     let chunks = installable.chunks().collect::<Vec<_>>();
@@ -130,11 +123,20 @@ fn firmware_0283_has_verified_identity_sixteen_chunks_and_exact_tail() {
     );
 }
 
+/// Enabling fixture transports cannot admit a test signature through production loading.
+#[test]
+fn production_loader_rejects_the_fixture_rsa_identity() {
+    assert!(matches!(
+        FirmwareImage::load(firmware_0283_path().path, ProductFamily::Usb3Sata3),
+        Err(FirmwareImageError::InvalidSignature)
+    ));
+}
+
 /// Rejects the legacy product path before exposing modern firmware chunks.
 #[test]
 fn rejects_wrong_expected_product_family() {
     assert!(matches!(
-        FirmwareImage::load(firmware_0283_path(), ProductFamily::Usb2Sata1),
+        fixtures::load(firmware_0283_path().path, ProductFamily::Usb2Sata1),
         Err(FirmwareImageError::UnsupportedProductFamily(
             ProductFamily::Usb2Sata1
         ))
@@ -144,10 +146,10 @@ fn rejects_wrong_expected_product_family() {
 /// Rejects an extension that belongs to the separate legacy update protocol.
 #[test]
 fn rejects_wrong_extension_before_opening_the_path() {
-    let legacy_path = firmware_0283_path().with_extension("bip");
+    let legacy_path = firmware_0283_path().path.with_extension("bip");
 
     assert!(matches!(
-        FirmwareImage::load(legacy_path, ProductFamily::Usb3Sata3),
+        fixtures::load(legacy_path, ProductFamily::Usb3Sata3),
         Err(FirmwareImageError::UnsupportedExtension)
     ));
 }
@@ -157,7 +159,7 @@ fn rejects_wrong_extension_before_opening_the_path() {
 fn accepts_uppercase_bin_extension() {
     let firmware = temporary_firmware("future.BIN", &firmware_0283_bytes());
 
-    assert!(FirmwareImage::load(&firmware.path, ProductFamily::Usb3Sata3).is_ok());
+    assert!(fixtures::load(&firmware.path, ProductFamily::Usb3Sata3).is_ok());
 }
 
 /// Rejects sparse oversize inputs from handle metadata before allocating or reading them.
@@ -170,7 +172,7 @@ fn rejects_file_beyond_the_24_bit_transport_boundary() {
         .expect("oversize sparse length");
 
     assert!(matches!(
-        FirmwareImage::load(path, ProductFamily::Usb3Sata3),
+        fixtures::load(path, ProductFamily::Usb3Sata3),
         Err(FirmwareImageError::FileTooLarge {
             maximum: MAX_FIRMWARE_IMAGE_SIZE,
             actual
@@ -186,11 +188,11 @@ fn rejects_short_and_one_byte_truncated_images() {
     let truncated = temporary_firmware("truncated.bin", &bytes[..bytes.len() - 1]);
 
     assert!(matches!(
-        FirmwareImage::load(short.path, ProductFamily::Usb3Sata3),
+        fixtures::load(short.path, ProductFamily::Usb3Sata3),
         Err(FirmwareImageError::FileTooSmall { .. })
     ));
     assert!(matches!(
-        FirmwareImage::load(truncated.path, ProductFamily::Usb3Sata3),
+        fixtures::load(truncated.path, ProductFamily::Usb3Sata3),
         Err(FirmwareImageError::InvalidHeaderLength)
     ));
 }
@@ -207,11 +209,11 @@ fn rejects_header_and_record_boundary_mutations() {
     let record = temporary_firmware("bad-record.bin", &record_bytes);
 
     assert!(matches!(
-        FirmwareImage::load(header.path, ProductFamily::Usb3Sata3),
+        fixtures::load(header.path, ProductFamily::Usb3Sata3),
         Err(FirmwareImageError::InvalidHeaderLength)
     ));
     assert!(matches!(
-        FirmwareImage::load(record.path, ProductFamily::Usb3Sata3),
+        fixtures::load(record.path, ProductFamily::Usb3Sata3),
         Err(FirmwareImageError::InvalidFirmwareRecord)
     ));
 }
@@ -225,7 +227,7 @@ fn rejects_zero_and_excessive_record_counts() {
         let firmware = temporary_firmware(name, &bytes);
 
         assert!(matches!(
-            FirmwareImage::load(firmware.path, ProductFamily::Usb3Sata3),
+            fixtures::load(firmware.path, ProductFamily::Usb3Sata3),
             Err(FirmwareImageError::InvalidRecordCount(actual)) if actual == count
         ));
     }
@@ -240,7 +242,7 @@ fn rejects_embedded_wrong_family_marker() {
     let firmware = temporary_firmware("wrong-product.bin", &bytes);
 
     assert!(matches!(
-        FirmwareImage::load(firmware.path, ProductFamily::Usb3Sata3),
+        fixtures::load(firmware.path, ProductFamily::Usb3Sata3),
         Err(FirmwareImageError::ProductMismatch)
     ));
 }
@@ -257,11 +259,11 @@ fn rejects_metadata_and_boot_rolling_check_mutations() {
     let boot = temporary_firmware("bad-boot-check.bin", &boot_bytes);
 
     assert!(matches!(
-        FirmwareImage::load(metadata.path, ProductFamily::Usb3Sata3),
+        fixtures::load(metadata.path, ProductFamily::Usb3Sata3),
         Err(FirmwareImageError::RollingCheckMismatch { region: "metadata" })
     ));
     assert!(matches!(
-        FirmwareImage::load(boot.path, ProductFamily::Usb3Sata3),
+        fixtures::load(boot.path, ProductFamily::Usb3Sata3),
         Err(FirmwareImageError::RollingCheckMismatch { region: "boot" })
     ));
 }
@@ -275,7 +277,7 @@ fn rejects_ti_record_checksum_mutation_independently_of_outer_check() {
     let firmware = temporary_firmware("bad-ti-check.bin", &bytes);
 
     assert!(matches!(
-        FirmwareImage::load(firmware.path, ProductFamily::Usb3Sata3),
+        fixtures::load(firmware.path, ProductFamily::Usb3Sata3),
         Err(FirmwareImageError::InvalidTiBootRecords)
     ));
 }
@@ -289,7 +291,7 @@ fn rejects_signature_mutation_independently_of_metadata_check() {
     let firmware = temporary_firmware("bad-signature.bin", &bytes);
 
     assert!(matches!(
-        FirmwareImage::load(firmware.path, ProductFamily::Usb3Sata3),
+        fixtures::load(firmware.path, ProductFamily::Usb3Sata3),
         Err(FirmwareImageError::InvalidSignature)
     ));
 }
@@ -303,12 +305,12 @@ fn accepts_future_matching_metadata_with_the_same_valid_signed_boot_region() {
     rewrite_metadata_check(&mut bytes);
     let firmware = temporary_firmware("future-0284.bin", &bytes);
 
-    let image = FirmwareImage::load(firmware.path, ProductFamily::Usb3Sata3)
+    let image = fixtures::load(firmware.path, ProductFamily::Usb3Sata3)
         .expect("structurally valid future metadata");
     assert_eq!(image.revision().get(), 284);
     assert_ne!(
         image.sha256(),
-        FirmwareImage::load(firmware_0283_path(), ProductFamily::Usb3Sata3)
+        fixtures::load(firmware_0283_path().path, ProductFamily::Usb3Sata3)
             .unwrap()
             .sha256()
     );
@@ -322,11 +324,14 @@ fn signed_downgrade_policy_blocks_pre_0278_but_not_signed_to_signed_rollback() {
     bytes[0x60..0x64].copy_from_slice(b"0277");
     rewrite_metadata_check(&mut bytes);
     let firmware = temporary_firmware("repaired-0277.bin", &bytes);
-    let candidate = FirmwareImage::load(firmware.path, ProductFamily::Usb3Sata3)
+    let candidate = fixtures::load(firmware.path, ProductFamily::Usb3Sata3)
         .expect("metadata is structural and outside the verified boot-region signature");
 
     assert_eq!(candidate.revision().get(), 277);
-    assert_eq!(candidate.signature_evidence(), SignatureEvidence::Verified);
+    assert_eq!(
+        candidate.signature_evidence(),
+        SignatureEvidence::FixtureSignatureVerified
+    );
     assert!(matches!(
         authorize_image(candidate, 278),
         Err(FirmwareAuthorizationError::Image(
@@ -337,7 +342,7 @@ fn signed_downgrade_policy_blocks_pre_0278_but_not_signed_to_signed_rollback() {
         ))
     ));
 
-    let image = FirmwareImage::load(firmware_0283_path(), ProductFamily::Usb3Sata3).unwrap();
+    let image = fixtures::load(firmware_0283_path().path, ProductFamily::Usb3Sata3).unwrap();
     assert!(authorize_image(image, 300).is_ok());
 }
 
@@ -352,7 +357,7 @@ fn modern_loader_does_not_treat_pre_0278_metadata_as_an_unsigned_bypass() {
     let firmware = temporary_firmware("unsigned-0277.bin", &bytes);
 
     assert!(matches!(
-        FirmwareImage::load(firmware.path, ProductFamily::Usb3Sata3),
+        fixtures::load(firmware.path, ProductFamily::Usb3Sata3),
         Err(FirmwareImageError::InvalidSignature)
     ));
 }
@@ -361,7 +366,7 @@ fn modern_loader_does_not_treat_pre_0278_metadata_as_an_unsigned_bypass() {
 #[test]
 fn loaded_image_does_not_reopen_a_changed_source_path() {
     let firmware = temporary_firmware("snapshot.bin", &firmware_0283_bytes());
-    let image = FirmwareImage::load(&firmware.path, ProductFamily::Usb3Sata3).unwrap();
+    let image = fixtures::load(&firmware.path, ProductFamily::Usb3Sata3).unwrap();
     fs::write(&firmware.path, vec![0_u8; 32]).expect("replace temporary source after load");
     let installable = authorize_image(image, 283).expect("same-revision authorization");
 
@@ -378,7 +383,7 @@ fn rejects_non_regular_file_handles() {
     fs::create_dir(&path).expect("temporary directory named like firmware");
 
     assert!(matches!(
-        FirmwareImage::load(path, ProductFamily::Usb3Sata3),
+        fixtures::load(path, ProductFamily::Usb3Sata3),
         Err(FirmwareImageError::NotARegularFile)
     ));
 }

@@ -108,8 +108,8 @@ fn validate_openrdx(
     Ok((revision, expected_revision))
 }
 
-/// Builds a deterministic format fixture from immutable vendor evidence without
-/// modifying the evidence or claiming that the resulting image is an OpenRDX build.
+/// Builds paired metadata from the checked-in public OpenRDX image without
+/// requiring private research inputs or changing production validation.
 #[cfg(test)]
 pub(crate) fn test_image() -> (Vec<u8>, OpenRdxImageMetadata) {
     test_image_for_release("1.07")
@@ -118,12 +118,13 @@ pub(crate) fn test_image() -> (Vec<u8>, OpenRdxImageMetadata) {
 /// Supplies synthetic release metadata for worker revision-readback tests.
 #[cfg(test)]
 pub(crate) fn test_image_for_release(release_version: &str) -> (Vec<u8>, OpenRdxImageMetadata) {
-    let mut bytes = std::fs::read(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../original-inputs/RDX2E__STD__F-0283.bin"),
-    )
-    .unwrap();
+    let mut bytes = include_bytes!("../../../../test/fixtures/OpenRDX-v1-07.bin").to_vec();
     let boot_end = bytes.len() - 4;
+    // Keep the real pinned envelope while making this explicit synthetic
+    // update fixture distinct from allowlisted first-install migration images.
+    fixtures::fill_boot_region(&mut bytes[BOOT_REGION_START..boot_end]);
+    let boot_check = rdx_rolling_check(&bytes[BOOT_REGION_START..boot_end], 0);
+    bytes[boot_end..].copy_from_slice(&boot_check.to_be_bytes());
     let boot_digest: [u8; 32] = Sha256::digest(&bytes[BOOT_REGION_START..boot_end]).into();
     bytes[SIGNATURE_START..SIGNATURE_END].fill(0);
     bytes[SIGNATURE_START..SIGNATURE_START + 8].copy_from_slice(b"OPENRDX1");

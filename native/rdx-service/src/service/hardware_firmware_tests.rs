@@ -220,9 +220,10 @@ fn production_openrdx_update_checks_receiver_and_release_readback() {
     }
 }
 
-/// A complete registered image is consumed once and dispatched as exact mode-4/mode-5 commands.
+/// The production gate rejects a synthetic signature before test-only admission
+/// dispatches its immutable image once as exact mode-4/mode-5 commands.
 #[test]
-fn production_backend_registers_and_dispatches_modern_firmware() {
+fn synthetic_signature_is_rejected_before_explicit_simulated_firmware_dispatch() {
     let state = Arc::new(Mutex::new(ModePlatformState {
         drive_mode: 1,
         firmware_finalize_unknown: 1,
@@ -255,12 +256,7 @@ fn production_backend_registers_and_dispatches_modern_firmware() {
         snapshot.capabilities[&OperationKind::FirmwareUpdate].state,
         crate::model::CapabilityState::Available
     );
-    let bytes = std::fs::read(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join("original-inputs/RDX2E__STD__F-0283.bin"),
-    )
-    .unwrap();
+    let bytes = crate::firmware::fixtures::bytes();
     let token = FirmwareFileToken::new("firmware:hardware-update").unwrap();
     backend
         .begin_firmware_registration(token.clone(), "BIN".to_owned(), bytes.len(), None)
@@ -270,8 +266,16 @@ fn production_backend_registers_and_dispatches_modern_firmware() {
             .append_firmware_registration(token.clone(), index * 4_096, chunk.to_vec())
             .unwrap();
     }
-    backend.commit_firmware_registration(token.clone()).unwrap();
-
+    // Synthetic signatures must remain rejected by the production vendor gate.
+    assert_eq!(
+        backend
+            .commit_firmware_registration(token.clone())
+            .unwrap_err()
+            .as_str(),
+        "firmware-image-invalid"
+    );
+    // The test-only command installs just the validated deterministic fixture.
+    install_fixture_firmware(&backend, token.clone());
     let (sender, receiver) = mpsc::sync_channel(16);
     let crashes = crate::service::crash::CrashAdmission::new();
     let operation_id = OperationId::new("op:firmware-production").unwrap();
