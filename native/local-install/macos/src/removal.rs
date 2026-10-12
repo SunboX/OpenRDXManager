@@ -43,8 +43,8 @@ pub fn revoke_owned_enrollment(
     current_valid: bool,
 ) -> Result<(), String> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    let held = current.metadata().map_err(|error| error.to_string())?;
-    let named = std::fs::symlink_metadata(current_path).map_err(|error| error.to_string())?;
+    let held = current.metadata().map_err(|error| format!("cannot inspect retained revocation record: {error}"))?;
+    let named = std::fs::symlink_metadata(current_path).map_err(|error| format!("cannot inspect revocation record namespace: {error}"))?;
     if !held.is_file()
         || held.nlink() != 1
         || held.mode() & 0o7022 != 0
@@ -58,11 +58,11 @@ pub fn revoke_owned_enrollment(
         // Change only the retained inode, then durably replace older history.
         current
             .set_permissions(std::fs::Permissions::from_mode(0o600))
-            .and_then(|()| current.sync_all())
-            .map_err(|error| error.to_string())?;
-        std::fs::rename(current_path, history_path).map_err(|error| error.to_string())?;
+            .map_err(|error| format!("cannot make retained enrollment history private: {error}"))?;
+        current.sync_all().map_err(|error| format!("cannot sync retained enrollment history: {error}"))?;
+        std::fs::rename(current_path, history_path).map_err(|error| format!("cannot archive current enrollment history: {error}"))?;
         let archived =
-            std::fs::symlink_metadata(history_path).map_err(|error| error.to_string())?;
+            std::fs::symlink_metadata(history_path).map_err(|error| format!("cannot inspect archived enrollment history: {error}"))?;
         if !archived.is_file()
             || archived.nlink() != 1
             || archived.mode() & 0o7777 != 0o600
@@ -75,7 +75,7 @@ pub fn revoke_owned_enrollment(
         }
     } else {
         // The caller already proved strict protected history; do not overwrite it.
-        std::fs::remove_file(current_path).map_err(|error| error.to_string())?;
+        std::fs::remove_file(current_path).map_err(|error| format!("cannot revoke malformed current enrollment: {error}"))?;
     }
     std::fs::File::open(
         current_path
@@ -83,7 +83,7 @@ pub fn revoke_owned_enrollment(
             .ok_or("ownership record has no parent")?,
     )
     .and_then(|directory| directory.sync_all())
-    .map_err(|error| error.to_string())
+    .map_err(|error| format!("cannot sync revoked enrollment directory: {error}"))
 }
 
 #[cfg(test)]

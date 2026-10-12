@@ -23,6 +23,7 @@ const INSTALL_LOCK: &str = "/private/var/run/openrdx-local-install.lock";
 const SUPERVISOR: &str = "/private/var/run/openrdx-local-install.sock";
 const LABEL: &str = "system/com.openrdx.hardware";
 const MAX_TRANSACTION: Duration = Duration::from_secs(600);
+const MAX_PREPARATION_ERROR_BYTES: usize = 1024;
 
 /// Own one validated kernel flock; releasing the handle releases this exact lease.
 struct Lease(File);
@@ -214,6 +215,11 @@ pub(super) fn prepare() -> Result<(), String> {
     if pid == 0 {
         drop(parent);
         let result = supervise(listener, &mut child, setup, hardware, loaded);
+        if let Err(error) = &result {
+            // Only the retained fork socket carries diagnostics. Installer's
+            // inherited streams stay detached and cannot hold its pipes open.
+            let _ = write_preparation_failure(&mut child, error);
+        }
         // No child stack unwinding or parent stdout flushing after fork.
         unsafe { libc::_exit(if result.is_ok() { 0 } else { 1 }) };
     }
@@ -222,14 +228,45 @@ pub(super) fn prepare() -> Result<(), String> {
     drop(listener);
     drop(setup);
     drop(hardware);
+    read_preparation_result(&mut parent)
+}
+
+/// Await one private fork-channel response under the parent's existing timeout.
+/// Any malformed or incomplete response refuses privileged payload replacement.
+fn read_preparation_result(parent: &mut UnixStream) -> Result<(), String> {
     let mut result = [0];
     parent
         .read_exact(&mut result)
         .map_err(|_| "setup supervisor did not quiesce service; replacement is refused")?;
-    if result != [b'Y'] {
+    if result == [b'Y'] {
+        return Ok(());
+    }
+    if result != [b'N'] {
         return Err("setup supervisor refused quiescence; replacement is refused".into());
     }
-    Ok(())
+    let mut length = [0_u8; 2];
+    parent.read_exact(&mut length).map_err(|_| "setup supervisor failure detail is incomplete; replacement is refused")?;
+    let length = usize::from(u16::from_be_bytes(length));
+    if length == 0 || length > MAX_PREPARATION_ERROR_BYTES {
+        return Err("setup supervisor failure detail exceeds its bound; replacement is refused".into());
+    }
+    let mut bytes = vec![0; length];
+    parent.read_exact(&mut bytes).map_err(|_| "setup supervisor failure detail is incomplete; replacement is refused")?;
+    let detail = String::from_utf8(bytes).map_err(|_| "setup supervisor failure detail is not UTF-8; replacement is refused")?;
+    Err(format!("setup supervisor refused quiescence: {detail}; replacement is refused"))
+}
+
+/// Send at most 1,024 UTF-8 bytes over the private fork channel, never Installer stdio.
+/// Retains character boundaries and emits a fixed N/u16-length frame; write failure
+/// cannot authorize payload replacement and the child exits immediately afterward.
+fn write_preparation_failure(child: &mut UnixStream, error: &str) -> Result<(), String> {
+    let mut length = error.len().min(MAX_PREPARATION_ERROR_BYTES);
+    while !error.is_char_boundary(length) {
+        length -= 1;
+    }
+    child.write_all(b"N").map_err(|error| error.to_string())?;
+    child.write_all(&(length as u16).to_be_bytes()).map_err(|error| error.to_string())?;
+    child.write_all(&error.as_bytes()[..length]).map_err(|error| error.to_string())
 }
 
 /// Detach, stop only a verified idle generation, revoke it, and await a root commit.
@@ -241,23 +278,23 @@ fn supervise(
     loaded: bool,
 ) -> Result<(), String> {
     if unsafe { libc::setsid() } < 0 {
-        return Err("cannot detach setup supervisor".into());
+        return Err(format!("cannot detach setup supervisor: {}", std::io::Error::last_os_error()));
     }
     let null = File::options()
         .read(true)
         .write(true)
         .open("/dev/null")
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| format!("cannot open supervisor null streams: {error}"))?;
     for descriptor in [0, 1, 2] {
         if unsafe { libc::dup2(null.as_raw_fd(), descriptor) } < 0 {
-            return Err("cannot detach setup streams".into());
+            return Err(format!("cannot detach setup stream {descriptor}: {}", std::io::Error::last_os_error()));
         }
     }
-    hardware.recheck(HARDWARE_LOCK)?;
-    setup.recheck(INSTALL_LOCK)?;
-    quiesce(loaded)?;
-    revoke_enrollment()?;
-    ready.write_all(b"Y").map_err(|error| error.to_string())?;
+    hardware.recheck(HARDWARE_LOCK).map_err(|error| format!("supervisor hardware lease recheck failed: {error}"))?;
+    setup.recheck(INSTALL_LOCK).map_err(|error| format!("supervisor setup lease recheck failed: {error}"))?;
+    quiesce(loaded).map_err(|error| format!("supervisor service quiescence failed: {error}"))?;
+    revoke_enrollment().map_err(|error| format!("supervisor enrollment revocation failed: {error}"))?;
+    ready.write_all(b"Y").map_err(|error| format!("supervisor readiness confirmation failed: {error}"))?;
     let deadline = Instant::now() + MAX_TRANSACTION;
     while Instant::now() < deadline {
         match listener.accept() {
@@ -265,11 +302,7 @@ fn supervise(
                 if !root_peer(&channel)? {
                     continue;
                 }
-                channel
-                    .set_read_timeout(Some(Duration::from_secs(120)))
-                    .map_err(|error| error.to_string())?;
-                let mut message = [0];
-                if channel.read_exact(&mut message).is_err() || message != [b'C'] {
+                if !read_commit_message(&mut channel)? {
                     continue;
                 }
                 let result =
@@ -300,6 +333,22 @@ fn supervise(
     }
     clear_socket()?;
     Err("installer transaction expired; service remains stopped".into())
+}
+
+/// Await only the fixed commit byte under the existing verification timeout.
+/// Missing, malformed or failed reads never authorize enrollment registration.
+fn read_commit_message(channel: &mut UnixStream) -> Result<bool, String> {
+    // Darwin's accepted stream inherits O_NONBLOCK from the polling listener.
+    // Wait for the already authenticated root client's full runtime verification
+    // before reading C; an immediate WouldBlock would close its live transaction.
+    channel
+        .set_nonblocking(false)
+        .map_err(|error| error.to_string())?;
+    channel
+        .set_read_timeout(Some(Duration::from_secs(120)))
+        .map_err(|error| error.to_string())?;
+    let mut message = [0];
+    Ok(channel.read_exact(&mut message).is_ok() && message == [b'C'])
 }
 
 /// Prove kernel peer credentials on the retained transaction socket, never a pathname alone.
@@ -400,14 +449,14 @@ fn revoke_enrollment() -> Result<(), String> {
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
         .open(ENROLLMENT)
-        .map_err(|error| error.to_string())?;
-    rdx_local_trust::verify_protected_descriptor(&historical).map_err(|error| error.to_string())?;
+        .map_err(|error| format!("cannot retain current enrollment for revocation: {error}"))?;
+    rdx_local_trust::verify_protected_descriptor(&historical).map_err(|error| format!("current enrollment protection check failed: {error}"))?;
     let current_valid = rdx_local_trust::verify_enrollment(Path::new(ENROLLMENT), "macos").is_ok();
     if !current_valid {
         // Malformed current metadata is never runtime authority. Valid historical
         // policy must survive so an administrator can retry owned cleanup.
         rdx_local_trust::read_protected_inventory(Path::new(PREVIOUS), "macos")
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| format!("replacement historical enrollment check failed: {error}"))?;
     }
     openrdx_macos_local_install::removal::revoke_owned_enrollment(
         &historical,
@@ -417,7 +466,105 @@ fn revoke_enrollment() -> Result<(), String> {
     )?;
     if current_valid {
         rdx_local_trust::verify_protected_descriptor(&historical)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| format!("archived enrollment protection check failed: {error}"))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Darwin accepts inherit nonblocking mode; commit follows content verification.
+    #[test]
+    fn accepted_transaction_waits_for_commit_after_client_verification() {
+        let directory = tempfile::tempdir().unwrap();
+        let listener = UnixListener::bind(directory.path().join("transaction.sock")).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let mut client = UnixStream::connect(directory.path().join("transaction.sock")).unwrap();
+        let (mut accepted, _) = listener.accept().unwrap();
+        let flags = unsafe { libc::fcntl(accepted.as_raw_fd(), libc::F_GETFL) };
+        assert!(flags >= 0);
+        assert_ne!(flags & libc::O_NONBLOCK, 0, "Darwin accepted socket must reproduce inherited nonblocking mode");
+        let writer = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            client.write_all(b"C").unwrap();
+        });
+        let admitted = read_commit_message(&mut accepted).unwrap();
+        writer.join().unwrap();
+        assert!(admitted, "commit was dropped before client verification completed");
+    }
+
+    /// Blocking the retained peer still rejects EOF and every non-commit byte.
+    #[test]
+    fn transaction_commit_read_refuses_closed_or_invalid_client() {
+        for bytes in [b"".as_slice(), b"N", b"Y"] {
+            let (mut supervisor, mut client) = UnixStream::pair().unwrap();
+            supervisor.set_nonblocking(true).unwrap();
+            client.write_all(bytes).unwrap();
+            if bytes.is_empty() {
+                drop(client);
+                assert!(!matches!(read_commit_message(&mut supervisor), Ok(true)));
+            } else {
+                assert!(!read_commit_message(&mut supervisor).unwrap());
+            }
+        }
+    }
+
+    /// The private fork socket must preserve the root supervisor's failure cause.
+    #[test]
+    fn preparation_response_preserves_bounded_supervisor_failure() {
+        let (mut parent, mut child) = UnixStream::pair().unwrap();
+        let detail = "daemon ownership changed before quiescence";
+        child.write_all(b"N").unwrap();
+        child.write_all(&(detail.len() as u16).to_be_bytes()).unwrap();
+        child.write_all(detail.as_bytes()).unwrap();
+        drop(child);
+        let error = read_preparation_result(&mut parent).unwrap_err();
+        assert!(error.contains(detail), "{error}");
+    }
+
+    /// The existing single-byte success response requires no EOF or extra frame.
+    #[test]
+    fn preparation_response_keeps_existing_single_byte_success() {
+        let (mut parent, mut child) = UnixStream::pair().unwrap();
+        parent.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
+        child.write_all(b"Y").unwrap();
+        read_preparation_result(&mut parent).unwrap();
+    }
+
+    /// Sender truncation preserves UTF-8 and the exact bounded wire length.
+    #[test]
+    fn preparation_failure_frame_truncates_at_utf8_boundary() {
+        let (mut parent, mut child) = UnixStream::pair().unwrap();
+        let detail = format!("{}üextra", "x".repeat(1023));
+        write_preparation_failure(&mut child, &detail).unwrap();
+        drop(child);
+        let mut bytes = Vec::new();
+        parent.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes[0], b'N');
+        let length = usize::from(u16::from_be_bytes([bytes[1], bytes[2]]));
+        assert_eq!(length, 1023);
+        assert_eq!(bytes.len(), length + 3);
+        assert_eq!(String::from_utf8(bytes[3..].to_vec()).unwrap(), "x".repeat(1023));
+    }
+
+    /// Oversized, malformed, incomplete and unknown frames never admit replacement.
+    #[test]
+    fn preparation_response_refuses_invalid_failure_frames() {
+        for bytes in [
+            vec![b'N', 4, 1],
+            vec![b'N', 0, 1, 0xff],
+            vec![b'N', 0, 3, b'x'],
+            vec![b'N', 0, 0],
+            vec![b'Z'],
+            vec![],
+        ] {
+            let (mut parent, mut child) = UnixStream::pair().unwrap();
+            child.write_all(&bytes).unwrap();
+            drop(child);
+            let error = read_preparation_result(&mut parent).unwrap_err();
+            assert!(error.contains("replacement is refused"), "{error}");
+        }
+    }
 }

@@ -133,7 +133,10 @@ fn recheck_directory(node: &SourceNode) -> Result<(), String> {
             metadata.mode(),
             node.immediate,
         ) {
-            return Err("package source directory is foreign, writable or an alias".into());
+            return Err(format!(
+                "package source directory is foreign, writable or an alias: {} (uid={}, gid={}, mode={:#o}, immediate={})",
+                node.path.display(), metadata.uid(), metadata.gid(), metadata.mode(), node.immediate
+            ));
         }
         if metadata.dev() != node.original.dev()
             || metadata.ino() != node.original.ino()
@@ -237,7 +240,11 @@ mod tests {
             return;
         }
         let directory = tempfile::tempdir_in("/private/tmp").unwrap();
-        assert!(retain_source_directories(directory.path()).is_err());
+        let error = retain_source_directories(directory.path()).err().unwrap();
+        assert!(error.contains(&directory.path().display().to_string()));
+        assert!(error.contains("uid="));
+        assert!(error.contains("gid="));
+        assert!(error.contains("mode="));
     }
 
     /// Fixed sibling symlinks are rejected by openat itself before reading any target.

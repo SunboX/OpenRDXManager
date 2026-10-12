@@ -160,16 +160,21 @@ pub(crate) fn pin_interrupted_tree(
 
 #[cfg(test)]
 mod tests {
-    use super::super::windows::{create_protected_directory, protect, verify_owned_objects};
+    use super::super::windows::{
+        create_protected_directory, protect, test_administrator_sid, verify_owned_objects,
+    };
     use super::*;
     use sha2::{Digest, Sha256};
     use std::path::PathBuf;
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     /// Uses disposable paths only; production bootstrap has no path arguments.
     fn fixture() -> PathBuf {
-        let parent = std::env::var_os("OPENRDX_TEST_UNTRUSTED_TEMP_PARENT")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(r"C:\Windows\Temp"));
+        // Positive trust fixtures use the same protected ancestors as installation.
+        // Hosted runners can grant ordinary principals mutation of Windows Temp.
+        fixture_at(Path::new(LOCAL_RUNTIME_ROOT).parent().unwrap())
+    }
+    /// Creates a canonical child without normalizing its parent or any ancestor.
+    fn fixture_at(parent: &Path) -> PathBuf {
         let root = parent.join(format!(
             "openrdx-bootstrap-{}-{}",
             std::process::id(),
@@ -182,7 +187,7 @@ mod tests {
     fn source(root: &std::path::Path) -> PathBuf {
         let exe = root.join("openrdx-local-install.exe");
         std::fs::write(&exe, b"incoming-provisioner").unwrap();
-        protect(&exe, "S-1-5-18").unwrap();
+        protect(&exe, &test_administrator_sid()).unwrap();
         let bytes = serde_json::to_vec(&rdx_local_trust::RuntimeInventory {
             schema_version: 1,
             platform: "windows".into(),
@@ -198,7 +203,7 @@ mod tests {
         .unwrap();
         let manifest = root.join("pending-runtime.json");
         std::fs::write(&manifest, bytes).unwrap();
-        protect(&manifest, "S-1-5-18").unwrap();
+        protect(&manifest, &test_administrator_sid()).unwrap();
         exe
     }
     /// A canonical incoming child beneath ordinary-user-writable temp is not authority.
@@ -214,15 +219,25 @@ mod tests {
             SetFileSecurityW,
         };
         use windows::core::PCWSTR;
+        let user_temp = std::env::var_os("OPENRDX_TEST_UNTRUSTED_TEMP_PARENT")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        // SYSTEM's default Temp is machine-owned; ordinary administrators use
+        // a user profile Temp whose ancestor must never authorize bootstrap.
+        if test_administrator_sid() != "S-1-5-18"
+            || std::env::var_os("OPENRDX_TEST_UNTRUSTED_TEMP_PARENT").is_some()
+        {
+            let untrusted = fixture_at(&user_temp);
+            let untrusted_exe = source(&untrusted);
+            assert!(incoming_source(&untrusted_exe).is_err());
+            std::fs::remove_dir_all(untrusted).unwrap();
+        }
         let root = fixture();
         let incoming = root.join("incoming");
         create_protected_directory(&incoming).unwrap();
         let exe = source(&incoming);
-        // An explicit test-only parent lets the VM prove rejection of the real
-        // interactive user-owned Temp before adding any synthetic broad ACE.
-        if std::env::var_os("OPENRDX_TEST_UNTRUSTED_TEMP_PARENT").is_some() {
-            assert!(incoming_source(&exe).is_err());
-        }
+        // The canonical source is accepted before broadening only its disposable parent.
+        drop(incoming_source(&exe).unwrap());
         let sddl: Vec<u16> = "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;BU)"
             .encode_utf16()
             .chain([0])

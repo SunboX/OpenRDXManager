@@ -714,6 +714,32 @@ pub(crate) fn service_sid_enabled(process_id: u32) -> Result<bool, NativeError> 
     Ok(false)
 }
 
+/// Reads the fixture creator's actual principal without assuming tests run as SYSTEM.
+#[cfg(test)]
+pub(super) fn test_administrator_sid() -> String {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    let mut token = HANDLE::default();
+    unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }.unwrap();
+    let mut storage = vec![0usize; 512];
+    let mut returned = 0;
+    let result = unsafe {
+        GetTokenInformation(
+            token,
+            TokenUser,
+            Some(storage.as_mut_ptr().cast()),
+            (storage.len() * size_of::<usize>()) as u32,
+            &mut returned,
+        )
+    };
+    let _ = unsafe { CloseHandle(token) };
+    result.unwrap();
+    assert!(returned as usize <= storage.len() * size_of::<usize>());
+    assert!(returned as usize >= size_of::<TOKEN_USER>());
+    let user = unsafe { &*storage.as_ptr().cast::<TOKEN_USER>() };
+    sid_text(user.User.Sid).unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -742,7 +768,7 @@ mod tests {
         let root = fixture();
         let path = root.join("runtime-file");
         std::fs::write(&path, b"approved").unwrap();
-        protect(&path, "S-1-5-18").unwrap();
+        protect(&path, &test_administrator_sid()).unwrap();
         let file = open(&path, false).unwrap();
         validate_runtime_acl(&evidence(&file).unwrap()).unwrap();
         assert!(std::fs::rename(&path, root.join("replacement")).is_err());
@@ -756,7 +782,7 @@ mod tests {
         let root = fixture();
         let path = root.join("runtime-file");
         std::fs::write(&path, b"approved").unwrap();
-        protect(&path, "S-1-5-18").unwrap();
+        protect(&path, &test_administrator_sid()).unwrap();
         std::fs::hard_link(&path, root.join("alias")).unwrap();
         assert!(open(&path, false).is_err());
         std::fs::remove_dir_all(root).unwrap();
@@ -804,10 +830,10 @@ mod tests {
         let fixture = fixture();
         let runtime = fixture.join("runtime");
         std::fs::create_dir(&runtime).unwrap();
-        protect(&runtime, "S-1-5-18").unwrap();
+        protect(&runtime, &test_administrator_sid()).unwrap();
         let path = runtime.join("component");
         std::fs::write(&path, b"corrupted").unwrap();
-        protect(&path, "S-1-5-18").unwrap();
+        protect(&path, &test_administrator_sid()).unwrap();
         let inventory = RuntimeInventory {
             schema_version: 1,
             platform: "windows".into(),
@@ -822,7 +848,7 @@ mod tests {
         };
         let history = fixture.join("history.json");
         std::fs::write(&history, serde_json::to_vec(&inventory).unwrap()).unwrap();
-        protect(&history, "S-1-5-18").unwrap();
+        protect(&history, &test_administrator_sid()).unwrap();
         assert!(verify_runtime(&runtime, &inventory).is_err());
         drop(verify_owned_objects(&runtime, &history, vec![]).unwrap());
         std::fs::hard_link(&path, runtime.join("alias")).unwrap();
@@ -840,10 +866,10 @@ mod tests {
     #[test]
     fn failed_atomic_policy_publication_has_no_stale_retry_blocker() {
         let root = fixture();
-        protect(&root, "S-1-5-18").unwrap();
+        protect(&root, &test_administrator_sid()).unwrap();
         let destination = root.join("runtime.json");
         std::fs::create_dir(&destination).unwrap();
-        protect(&destination, "S-1-5-18").unwrap();
+        protect(&destination, &test_administrator_sid()).unwrap();
         assert!(write_policy_at(&root, b"policy", "runtime").is_err());
         assert!(!root.join("runtime.new").exists());
         std::fs::remove_dir(&destination).unwrap();

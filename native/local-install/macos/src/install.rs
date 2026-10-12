@@ -235,9 +235,11 @@ pub(super) fn commit() -> Result<(), String> {
         .open(PENDING)
         .map_err(|error| error.to_string())?;
     rdx_local_trust::verify_protected_descriptor(&candidate).map_err(|error| error.to_string())?;
-    let verified = verify_pending().is_ok();
+    let verification = verify_pending();
+    let verified = verification.is_ok();
     if !openrdx_macos_local_install::commit_allowed(true, verified) {
-        return Err("pending generation failed complete protection/content/code verification; access remains disabled".into());
+        let cause = verification.err().unwrap_or_else(|| "transaction was not prepared".into());
+        return Err(format!("pending generation failed complete protection/content/code verification: {cause}; access remains disabled"));
     }
     assert_candidate_namespace(&candidate, PENDING)?;
     openrdx_macos_local_install::make_verified_enrollment_readable(&candidate, verified)?;

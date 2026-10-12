@@ -30,7 +30,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
-sudo /usr/sbin/installer -pkg "$package" -target /
+# Include package-script diagnostics in the job, rather than reporting only
+# Installer's generic failure. This runs on the disposable native CI host.
+install_package() {
+    if sudo /usr/sbin/installer -verboseR -dumplog -pkg "$package" -target /; then
+        return 0
+    fi
+    sudo /usr/bin/tail -n 200 /var/log/install.log
+    return 1
+}
+
+install_package
 sudo "$cli" verify
 npm run verify:packaged-app -- --installed --require-service
 
@@ -60,7 +70,7 @@ fi
 
 # An elevated reinstall must replace a damaged, still administrator-owned
 # generation, then enroll the new complete bytes and restore authentication.
-sudo /usr/sbin/installer -pkg "$package" -target /
+install_package
 restoration_required=false
 sudo "$cli" verify
 npm run verify:packaged-app -- --installed --require-service

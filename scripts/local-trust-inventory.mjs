@@ -62,6 +62,26 @@ async function verifyLink(root, path, target) {
     if (!inside(root, canonical)) throw new Error('runtime-inventory-unsafe-link')
 }
 
+/**
+ * Reads the pathname's device and inode through comparable platform metadata.
+ * @param {string} path - Runtime pathname already checked with lstat.
+ * @param {import('node:fs').BigIntStats} current - Non-following pathname metadata.
+ * @returns {Promise<import('node:fs').BigIntStats>} Path identity, with a real Windows volume ID.
+ * @throws {Error} If the pathname cannot be reopened or inspected.
+ */
+async function pathnameIdentity(path, current) {
+    if (process.platform !== 'win32') return current
+    // Windows libuv's fast pathname stat can omit the volume serial (dev = 0),
+    // while fstat reports it. Reopen the pathname to preserve device AND inode
+    // checks using the same handle-based metadata; lstat still rejects links.
+    const handle = await open(path, constants.O_RDONLY)
+    try {
+        return await handle.stat({ bigint: true })
+    } finally {
+        await handle.close()
+    }
+}
+
 /** @param {string} path - Actual runtime file. @returns {Promise<{size: number, sha256: string}>} Stable regular-file content identity. */
 async function fileDigest(path) {
     const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
@@ -79,7 +99,10 @@ async function fileDigest(path) {
         }
         const after = await handle.stat({ bigint: true })
         const current = await lstat(path, { bigint: true })
-        if (before.dev !== current.dev || before.ino !== current.ino || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || BigInt(bytes) !== before.size) throw new Error('runtime-inventory-file-changed')
+        if (!current.isFile() || current.nlink !== 1n) throw new Error('runtime-inventory-unsafe-file')
+        const identity = await pathnameIdentity(path, current)
+        const stable = [after, identity].every((info) => info.isFile() && info.nlink === 1n && before.dev === info.dev && before.ino === info.ino && before.size === info.size && before.mtimeNs === info.mtimeNs && before.ctimeNs === info.ctimeNs)
+        if (!stable || before.ino !== current.ino || BigInt(bytes) !== before.size) throw new Error('runtime-inventory-file-changed')
         return { size: bytes, sha256: hash.digest('hex') }
     } finally {
         await handle.close()
