@@ -39,3 +39,14 @@ License: LicenseRef-License-Texts
 Comment: Standard legal texts are reproduced verbatim and retain their own notices.
  Project-authored LicenseRef notices record existing rights boundaries; they do
  not add a license grant or relicense the referenced third-party material.
+
+Files: resources/installer/windows-installer.nsi
+ resources/installer/windows-install-files.nsh
+ resources/installer/windows-install-section.nsh
+ resources/installer/windows-process-control.nsh
+ resources/installer/windows-uninstaller.nsh
+Copyright: 2015 Loopline Systems
+ 2026 André Fiedler
+License: MIT
+Comment: Derived from the pinned electron-builder 26.17.0 installer templates.
+ Original notices remain in each source and LICENSES/MIT.txt.

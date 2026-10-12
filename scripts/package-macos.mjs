@@ -2,17 +2,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { execFile } from 'node:child_process'
-import { randomUUID, X509Certificate } from 'node:crypto'
-import { chmod, lstat, mkdir, readFile, rename, rm } from 'node:fs/promises'
+import { createHash, randomUUID, X509Certificate } from 'node:crypto'
+import { chmod, lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
+import { flipFuses, FuseVersion, FuseV1Options } from '@electron/fuses'
 
+import { buildMacOsClientAddon } from './build-macos-client-addon.mjs'
 import { buildMacOsServiceManagementAddon } from './build-macos-service-management.mjs'
 import { buildNativeService } from './build-native-service.mjs'
 import { collectProductionDependencyPaths } from './production-dependencies.mjs'
 
 const execFileAsync = promisify(execFile)
+const require = createRequire(import.meta.url)
+const { createPackageWithOptions, getRawHeader } = require('@electron/asar')
+const plist = require('plist')
 const defaultProjectRoot = fileURLToPath(new URL('..', import.meta.url))
 
 /**
@@ -90,7 +96,8 @@ export function getMacOsPackagePaths(options) {
         appResourcesPath,
         helperPath: join(appContentsPath, 'Library', 'LaunchServices', 'openrdx-hardware'),
         daemonPlistPath: join(appContentsPath, 'Library', 'LaunchDaemons', 'com.openrdx.hardware.plist'),
-        addonPath: join(appResourcesPath, 'native', 'macos', 'openrdx-service-management.node')
+        addonPath: join(appResourcesPath, 'native', 'macos', 'openrdx-service-management.node'),
+        clientAddonPath: join(appResourcesPath, 'native', 'macos', 'openrdx-macos-client.node')
     })
 }
 
@@ -141,6 +148,23 @@ async function setPlistString(execute, plistPath, key, value) {
 }
 
 /**
+ * Pack immutable application input and seal its ASAR header in the app plist.
+ * MCP's external Node entrypoint retains its ordinary unpacked dependency tree.
+ * @param {string} resourcesPath - Controlled temporary bundle resources.
+ * @param {string} plistPath - Controlled app property list.
+ * @returns {Promise<void>} Removes loose startup input after archive creation.
+ */
+async function sealApplicationArchive(resourcesPath, plistPath) {
+    const source = join(resourcesPath, 'app')
+    const archive = join(resourcesPath, 'app.asar')
+    await createPackageWithOptions(source, archive, { unpack: '**/package.json', unpackDir: '{scripts,src/main,node_modules}' })
+    const info = plist.parse(await readFile(plistPath, 'utf8'))
+    info.ElectronAsarIntegrity = { 'Resources/app.asar': { algorithm: 'SHA256', hash: createHash('sha256').update(getRawHeader(archive).headerString).digest('hex') } }
+    await writeFile(plistPath, plist.build(info))
+    await rm(source, { force: true, recursive: true })
+}
+
+/**
  * Assembles and locally signs the fixed macOS application bundle.
  * @param {{projectRoot?: string, outputRoot: string, signingIdentity: string, execFileImpl?: Function}} options - Controlled package inputs.
  * @returns {Promise<{appPath: string}>} Published application path.
@@ -156,12 +180,13 @@ export async function packageMacOsApplication(options) {
     const sourceAppPath = join(paths.projectRoot, 'node_modules', 'electron', 'dist', 'Electron.app')
     const sourceHelperPath = join(paths.projectRoot, 'out', 'native', 'macos', 'openrdx-hardware')
     const sourceAddonPath = join(paths.projectRoot, 'out', 'native', 'macos', 'openrdx-service-management.node')
+    const sourceClientAddonPath = join(paths.projectRoot, 'out', 'native', 'macos', 'openrdx-macos-client.node')
     const sourceDaemonPlistPath = join(paths.projectRoot, 'native', 'rdx-service', 'resources', 'macos', 'com.openrdx.hardware.plist')
     const sourceIconDirectory = join(paths.projectRoot, 'resources', 'icons')
     const sourceMacOsIconPath = join(sourceIconDirectory, 'app-icon.icns')
     const sourceBridgePath = join(paths.projectRoot, 'scripts', 'mcp-stdio.mjs')
     const productionDependencies = await collectProductionDependencyPaths(paths.projectRoot)
-    await Promise.all([verifyDirectory(sourceAppPath), verifyDirectory(join(paths.projectRoot, 'src')), verifyDirectory(sourceIconDirectory), verifyRegularFile(sourceMacOsIconPath), verifyRegularFile(join(sourceIconDirectory, 'app-icon.ico')), verifyRegularFile(join(sourceIconDirectory, 'app-icon.png')), verifyRegularFile(packageMetadataPath), verifyRegularFile(join(paths.projectRoot, 'out', 'preload.cjs')), verifyRegularFile(sourceHelperPath), verifyRegularFile(sourceAddonPath), verifyRegularFile(sourceDaemonPlistPath), verifyRegularFile(sourceBridgePath)])
+    await Promise.all([verifyDirectory(sourceAppPath), verifyDirectory(join(paths.projectRoot, 'src')), verifyDirectory(sourceIconDirectory), verifyRegularFile(sourceMacOsIconPath), verifyRegularFile(join(sourceIconDirectory, 'app-icon.ico')), verifyRegularFile(join(sourceIconDirectory, 'app-icon.png')), verifyRegularFile(packageMetadataPath), verifyRegularFile(join(paths.projectRoot, 'out', 'preload.cjs')), verifyRegularFile(sourceHelperPath), verifyRegularFile(sourceAddonPath), verifyRegularFile(sourceClientAddonPath), verifyRegularFile(sourceDaemonPlistPath), verifyRegularFile(sourceBridgePath)])
 
     const packageMetadata = JSON.parse(await readFile(packageMetadataPath, 'utf8'))
     if (packageMetadata.name !== 'openrdxmanager' || packageMetadata.productName !== 'OpenRDXManager' || typeof packageMetadata.version !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(packageMetadata.version)) {
@@ -202,16 +227,32 @@ export async function packageMacOsApplication(options) {
         }
         const temporaryHelperPath = join(temporaryContentsPath, 'Library', 'LaunchServices', 'openrdx-hardware')
         const temporaryAddonPath = join(temporaryResourcesPath, 'native', 'macos', 'openrdx-service-management.node')
+        const temporaryClientAddonPath = join(temporaryResourcesPath, 'native', 'macos', 'openrdx-macos-client.node')
         await copyWithDitto(execute, sourceHelperPath, temporaryHelperPath)
         await copyWithDitto(execute, sourceAddonPath, temporaryAddonPath)
+        await copyWithDitto(execute, sourceClientAddonPath, temporaryClientAddonPath)
         await copyWithDitto(execute, sourceDaemonPlistPath, join(temporaryContentsPath, 'Library', 'LaunchDaemons', 'com.openrdx.hardware.plist'))
         await chmod(temporaryHelperPath, 0o755)
 
-        const sign = (target, deep = false) => execute('/usr/bin/codesign', ['--force', ...(deep ? ['--deep'] : []), '--sign', options.signingIdentity, '--timestamp=none', target], { maxBuffer: 16 * 1024 * 1024 })
-        await sign(temporaryHelperPath)
+        await sealApplicationArchive(temporaryResourcesPath, plistPath)
+        // These five fuses close alternate startup/code-injection modes; native
+        // admission separately verifies actual sealed framework bytes.
+        await flipFuses(temporaryAppPath, {
+            version: FuseVersion.V1,
+            [FuseV1Options.RunAsNode]: false,
+            [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
+            [FuseV1Options.EnableNodeCliInspectArguments]: false,
+            [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
+            [FuseV1Options.OnlyLoadAppFromAsar]: true
+        })
+
+        const sign = (target, deep = false, identifier) => execute('/usr/bin/codesign', ['--force', ...(deep ? ['--deep'] : []), ...(identifier ? ['--identifier', identifier] : []), '--sign', options.signingIdentity, '--timestamp=none', target], { maxBuffer: 16 * 1024 * 1024 })
+        await sign(temporaryHelperPath, false, 'com.openrdx.hardware')
         await sign(temporaryAddonPath)
+        await sign(temporaryClientAddonPath)
         await sign(temporaryAppPath, true)
         await execute('/usr/bin/codesign', ['--verify', '--deep', '--strict', '--verbose=2', temporaryAppPath], { maxBuffer: 16 * 1024 * 1024 })
+        await execute('/usr/bin/codesign', ['--verify', '--strict', '-R', 'identifier "com.openrdx.hardware"', temporaryHelperPath], { maxBuffer: 16 * 1024 * 1024 })
 
         await rm(paths.appPath, { force: true, recursive: true })
         await rename(temporaryAppPath, paths.appPath)
@@ -232,8 +273,9 @@ async function main() {
     const signingIdentity = parseSigningIdentity(process.argv.slice(2))
     const identity = await resolveMacOsSigningIdentity(signingIdentity)
     await execFileAsync(process.execPath, [join(defaultProjectRoot, 'scripts', 'build-preload.mjs')], { cwd: defaultProjectRoot, env: process.env, maxBuffer: 16 * 1024 * 1024 })
-    await buildNativeService({ environment: { ...process.env, OPENRDX_MANAGER_TEAM_ID: identity.teamId }, platform: 'darwin', projectRoot: defaultProjectRoot })
+    await buildNativeService({ environment: { ...process.env, OPENRDX_MANAGER_TEAM_ID: identity.teamId, OPENRDX_MACOS_TEAM_ID: identity.teamId }, platform: 'darwin', projectRoot: defaultProjectRoot })
     await buildMacOsServiceManagementAddon({ outputPath: join(defaultProjectRoot, 'out', 'native', 'macos', 'openrdx-service-management.node'), projectRoot: defaultProjectRoot })
+    await buildMacOsClientAddon({ root: defaultProjectRoot, environment: { ...process.env, OPENRDX_MANAGER_TEAM_ID: identity.teamId, OPENRDX_MACOS_TEAM_ID: identity.teamId } })
     const outputRoot = join(defaultProjectRoot, 'dist', 'macos')
     const result = await packageMacOsApplication({ outputRoot, projectRoot: defaultProjectRoot, signingIdentity: identity.hash })
     process.stdout.write(`${result.appPath}\n`)

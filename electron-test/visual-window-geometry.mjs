@@ -4,6 +4,19 @@
 const titlebarInsetsByWindow = new WeakMap()
 
 /**
+ * Waits for the renderer viewport before asking Cocoa to publish overlay layout.
+ * @param {{width: number, height: number}} expected - Exact native content size.
+ * @returns {Promise<void>} Resolves on matching bounds or fails after five seconds.
+ */
+export async function waitForRendererViewport(expected) {
+    const deadline = performance.now() + 5000
+    while (innerWidth !== expected.width || innerHeight !== expected.height) {
+        if (performance.now() >= deadline) throw new Error('Timed out waiting for resized renderer viewport')
+        await new Promise(requestAnimationFrame.bind(globalThis))
+    }
+}
+
+/**
  * Waits for the native overlay and its CSS title to match the resized content
  * viewport. Electron can deliver the viewport resize before overlay geometry.
  * This function is serialized into the isolated renderer and uses only DOM APIs.
@@ -33,9 +46,10 @@ export async function waitForRendererWindowGeometry(expected) {
  * overlay after a resize cannot be mistaken for the target geometry.
  * @param {Electron.BrowserWindow} window - Owned secure visual QA window.
  * @param {{width: number, height: number}} viewport - Supported outer bounds.
+ * @param {string} [platform=process.platform] - Native QA host; injected in unit fixtures.
  * @returns {Promise<void>} Resolves after the native overlay and DOM title agree.
  */
-export async function resizeVisualWindow(window, viewport) {
+export async function resizeVisualWindow(window, viewport, platform = process.platform) {
     if (!titlebarInsetsByWindow.has(window)) {
         const initial = await window.webContents.executeJavaScript(`
             /** Reads the initial native control reservation. @returns {object|null} Insets for the visible overlay. */
@@ -50,5 +64,15 @@ export async function resizeVisualWindow(window, viewport) {
     window.setBounds({ x: 40, y: 40, width: viewport.width, height: viewport.height }, false)
     const content = window.getContentBounds()
     const expected = { width: content.width, height: content.height, titlebarInsets: titlebarInsetsByWindow.get(window) }
+    await window.webContents.executeJavaScript(`(${waitForRendererViewport.toString()})(${JSON.stringify(expected)})`)
+    if (platform === 'darwin' && expected.titlebarInsets !== null) {
+        // Electron 44's Cocoa resize notification can precede content-view size
+        // propagation. Reaffirming the existing visibility explicitly publishes
+        // native overlay layout after the viewport settles, without changing
+        // controls. Final API/CSS assertions below remain exact.
+        // A measured visible overlay already establishes visible controls;
+        // Electron exposes a setter but no public visibility getter.
+        window.setWindowButtonVisibility(true)
+    }
     await window.webContents.executeJavaScript(`(${waitForRendererWindowGeometry.toString()})(${JSON.stringify(expected)})`)
 }

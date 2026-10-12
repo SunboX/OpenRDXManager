@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: 2026 André Fiedler -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.openrdx.hardware</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Library/PrivilegedHelperTools/openrdx-hardware</string>
+    <string>--service-mode</string><string>launchd-socket</string>
+    <string>--protocol-version</string><string>1</string>
+  </array>
+  <key>UserName</key><string>root</string>
+  <key>GroupName</key><string>staff</string>
+  <key>Sockets</key>
+  <dict><key>Listener</key><dict>
+    <key>SockPathName</key><string>/var/run/openrdx-hardware.sock</string>
+    <key>SockPathMode</key><integer>432</integer>
+    <key>SockPathOwner</key><integer>0</integer>
+    <key>SockPathGroup</key><integer>20</integer>
+  </dict></dict>
+  <key>RunAtLoad</key><false/>
+  <key>KeepAlive</key><false/>
+  <key>ProcessType</key><string>Background</string>
+  <key>SoftResourceLimits</key><dict><key>NumberOfFiles</key><integer>8192</integer></dict>
+</dict>
+</plist>

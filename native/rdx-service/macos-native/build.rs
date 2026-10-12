@@ -41,6 +41,8 @@ fn main() {
         "rdx_usb_rom_inventory.m",
         "rdx_iokit_system_format.m",
         "rdx_endpoint.c",
+        "rdx_endpoint_identity.c",
+        "rdx_endpoint_identity.h",
     ] {
         println!("cargo:rerun-if-changed={}", bridge.join(file).display());
     }
@@ -67,6 +69,7 @@ fn main() {
         .file(bridge.join("rdx_migration_usb.c"))
         .file(bridge.join("rdx_usb_bot.c"))
         .file(bridge.join("rdx_endpoint.c"))
+        .file(bridge.join("rdx_endpoint_identity.c"))
         .std("c17")
         .warnings(true)
         .extra_warnings(true)
@@ -96,6 +99,7 @@ fn main() {
     }
     objc.compile("rdx_macos_usb_host");
 
+    println!("cargo:rustc-link-lib=bsm");
     for framework in [
         "CoreFoundation",
         "Foundation",

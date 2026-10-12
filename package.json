@@ -1,7 +1,7 @@
 {
     "name": "openrdxmanager",
     "productName": "OpenRDXManager",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Manage OpenRDX docks, cartridges and firmware from your desktop.",
     "private": true,
     "type": "module",
@@ -19,7 +19,7 @@
         "package:macos": "node scripts/package-macos.mjs",
         "start": "node scripts/run-development.mjs",
         "pretest": "npm run build:preload && npm run build:native-service",
-        "test": "node --test test/*.test.mjs test/integration/*.test.mjs",
+        "test": "node --test --test-concurrency=1 test/*.test.mjs test/integration/*.test.mjs",
         "pretest:compact": "npm run build:preload",
         "test:compact": "electron electron-test",
         "pretest:visual": "npm run build:preload",
@@ -55,11 +55,14 @@
         "verify:packaged-app": "node scripts/verify-packaged-app.mjs"
     },
     "devDependencies": {
+        "@electron/asar": "3.4.1",
+        "@electron/fuses": "1.8.0",
         "electron": "^44.0.0",
         "electron-builder": "26.17.0",
         "esbuild": "^0.28.2",
         "jsdom": "^27.0.1",
         "node-gyp": "^12.1.0",
+        "plist": "3.1.0",
         "prettier": "3.9.6",
         "rcedit": "5.0.2"
     },

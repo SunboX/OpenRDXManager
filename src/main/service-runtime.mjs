@@ -85,6 +85,7 @@ export function createApplicationServiceRuntime(options) {
     }
 
     const windowsClientAddonPath = options.platform === 'win32' ? join(options.isPackaged ? options.resourcesPath : options.appPath, options.isPackaged ? 'native' : 'out/native', 'windows', 'openrdx-windows-client.node') : undefined
+    const macosClientAddonPath = options.platform === 'darwin' ? join(options.isPackaged ? options.resourcesPath : options.appPath, options.isPackaged ? 'native' : 'out/native', 'macos', 'openrdx-macos-client.node') : undefined
     const windowsSecurityAdapter = options.windowsSecurityAdapter !== undefined ? options.windowsSecurityAdapter : options.platform === 'win32' ? new WindowsLogSecurityAdapter({ directory: options.logDirectory, addonPath: windowsClientAddonPath }) : undefined
     const logger = new EventLogger({ ...options.eventLoggerOptions, directory: options.logDirectory, onFailure: handleLoggerFailure, platform: options.platform, windowsSecurityAdapter })
     const sptiEnabled = options.sptiDiagnostics === true && options.isPackaged === false && options.platform === 'win32'
@@ -98,7 +99,7 @@ export function createApplicationServiceRuntime(options) {
     })
     // Tests may inject an explicit fake. Packaged production connects only to
     // the privileged endpoint; a missing endpoint never falls back to a child.
-    const transportFactory = typeof options.transportFactory === 'function' ? options.transportFactory : createDeviceServiceTransportFactory({ elevateDevelopmentService: options.elevateDevelopmentService, isPackaged: options.isPackaged, platform: options.platform, windowsClientAddonPath, sptiDiagnostics: sptiEnabled, onSptiDiagnostic: sptiLog?.record.bind(sptiLog) })
+    const transportFactory = typeof options.transportFactory === 'function' ? options.transportFactory : createDeviceServiceTransportFactory({ elevateDevelopmentService: options.elevateDevelopmentService, isPackaged: options.isPackaged, platform: options.platform, windowsClientAddonPath, macosClientAddonPath, sptiDiagnostics: sptiEnabled, onSptiDiagnostic: sptiLog?.record.bind(sptiLog) })
     client = new DeviceServiceClient({ executable, logger, platform: options.platform, transportFactory })
 
     /**

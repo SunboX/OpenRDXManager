@@ -93,7 +93,9 @@ async function testPackageMetadata() {
     assert.equal(packageJson.scripts.prestart, undefined)
     assert.equal(packageJson.scripts.presmoke, undefined)
     assert.equal(packageJson.scripts.start, 'node scripts/run-development.mjs')
-    assert.equal(packageJson.scripts.test, 'node --test test/*.test.mjs test/integration/*.test.mjs')
+    // Real Electron screenshot suites share desktop resources; serialize files
+    // while preserving explicit concurrency inside individual test suites.
+    assert.equal(packageJson.scripts.test, 'node --test --test-concurrency=1 test/*.test.mjs test/integration/*.test.mjs')
     assert.equal(packageJson.scripts.smoke, 'node scripts/run-development.mjs --smoke-test')
     assert.equal(packageJson.scripts['test:visual'], 'electron electron-test/visual-qa.mjs')
     assert.match(packageJson.devDependencies.electron, /^\^?\d+\.\d+\.\d+$/)

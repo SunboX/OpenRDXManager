@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 André Fiedler
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #![deny(unsafe_op_in_unsafe_fn)]
 #![deny(missing_docs)]
 
@@ -22,11 +25,25 @@ const MAX_U24: u32 = 0x00FF_FFFF;
 #[cfg(any(windows, test))]
 const MAX_ADAPTER_ALIGNMENT_MASK: usize = 0x000F_FFFF;
 
+mod device_access;
+#[cfg(any(windows, test))]
+mod scsi_request;
+pub use device_access::{rdx_permission_identity, safe_device_acl_repair, safe_device_acl_restore};
 mod drive_letter_policy;
 mod endpoint;
 #[cfg(any(windows, test))]
 mod filesystem_facts;
 mod host;
+mod installer;
+mod local_trust;
+pub use installer::{
+    LocalInstallAction, LocalInstallCommand, apply_local_install, parse_local_install_arguments,
+};
+pub use local_trust::{
+    RuntimeAce, RuntimeAclEvidence, openrdx_local_trust_close, openrdx_local_trust_open,
+    openrdx_local_trust_service_sid, validate_interrupted_runtime_acl, validate_runtime_acl,
+    verify_installed_local_trust,
+};
 /// Fixed, ACL-verified Windows manufacturing backup storage.
 #[cfg(windows)]
 pub mod manufacturing_storage;
@@ -951,48 +968,6 @@ fn bounded_returned_length(
         return Err(NativeError::EnumerationFailed);
     }
     Ok(returned)
-}
-
-#[cfg(any(windows, test))]
-impl ScsiRequest {
-    /// Copies a trusted parent request after independently enforcing FFI bounds.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`NativeError::InvalidRequest`] before FFI for any empty or
-    /// oversized CDB, transfer, sense buffer, timeout, or inconsistent data phase.
-    fn new(
-        cdb: &[u8],
-        direction: DataDirection,
-        data: Vec<u8>,
-        timeout_seconds: u32,
-        sense_capacity: usize,
-    ) -> Result<Self, NativeError> {
-        let direction_is_consistent = match direction {
-            DataDirection::None => data.is_empty(),
-            DataDirection::FromDevice | DataDirection::ToDevice => !data.is_empty(),
-        };
-        if cdb.is_empty()
-            || cdb.len() > MAX_CDB_LENGTH
-            || data.len() > MAX_TRANSFER_LENGTH
-            || !(1..=MAX_TIMEOUT_SECONDS).contains(&timeout_seconds)
-            || sense_capacity > MAX_SENSE_LENGTH
-            || !direction_is_consistent
-        {
-            return Err(NativeError::InvalidRequest);
-        }
-
-        let mut copied_cdb = [0_u8; MAX_CDB_LENGTH];
-        copied_cdb[..cdb.len()].copy_from_slice(cdb);
-        Ok(Self {
-            cdb: copied_cdb,
-            cdb_length: cdb.len() as u8,
-            direction,
-            data,
-            timeout_seconds,
-            sense_capacity: sense_capacity as u8,
-        })
-    }
 }
 
 #[cfg(test)]

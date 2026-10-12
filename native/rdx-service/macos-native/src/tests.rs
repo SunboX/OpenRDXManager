@@ -171,5 +171,9 @@ fn mounted_filesystem_discriminants_include_ntfs() {
         mounted_filesystem_from_native(2),
         Some(MountedFilesystem::Ntfs)
     );
-    assert_eq!(mounted_filesystem_from_native(3), None);
+    assert_eq!(
+        mounted_filesystem_from_native(3),
+        Some(MountedFilesystem::MacOs(3))
+    );
+    assert_eq!(mounted_filesystem_from_native(u32::MAX), None);
 }

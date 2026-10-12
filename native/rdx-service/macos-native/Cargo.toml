@@ -23,5 +23,6 @@ cc = "1.2"
 tempfile = "3.23.0"
 
 [dependencies]
+rdx-local-trust = { path = "../local-trust" }
 unicode-normalization = "0.1.25"
 zeroize = "1.9.0"

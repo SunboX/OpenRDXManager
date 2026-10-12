@@ -21,9 +21,12 @@ test('builds a zero-argument ServiceManagement addon with closed status output',
 
     assert.equal(await buildMacOsServiceManagementAddon({ outputPath, projectRoot }), outputPath)
     const addon = require(outputPath)
-    const methods = ['openApprovalSettings', 'registerService', 'status', 'unregisterService']
+    const methods = ['installationMode', 'openApprovalSettings', 'registerService', 'status', 'unregisterService']
     for (const method of methods) assert.equal(typeof addon[method], 'function')
-    assert.ok(['not-registered', 'enabled', 'requires-approval', 'not-found'].includes(addon.status()))
+    assert.equal(addon.installationMode(), 'local')
+    assert.equal(addon.registerService(), 'installer-required')
+    assert.equal(addon.unregisterService(), 'installer-required')
+    assert.equal(addon.status(), 'installer-required')
 
     for (const method of methods) {
         assert.throws(() => addon[method]('unexpected'), TypeError)

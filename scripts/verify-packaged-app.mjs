@@ -7,10 +7,48 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
+import { FuseV1Options, FuseVersion, getCurrentFuseWire } from '@electron/fuses'
 import { resolveMcpBridgePath } from '../src/main/mcp/bridge-path.mjs'
 import { resolveWindowsMcpAddonPath } from '../src/main/mcp/windows-addon-path.mjs'
 
 const execute = promisify(execFile)
+
+/**
+ * Selects the exact installer-owned path or native build output.
+ * @param {{platform?: string, arch?: string, installed?: boolean}} [options] - Verification host and installation state.
+ * @returns {string} Native executable path matching the service identity contract.
+ * @throws {Error} For an unsupported platform or architecture.
+ */
+export function resolvePackagedExecutable({ platform = process.platform, arch = process.arch, installed = false } = {}) {
+    if (!['arm64', 'x64'].includes(arch)) throw new Error('unsupported-packaged-architecture')
+    const directory = resolve('dist/installers')
+    const executable = installed
+        ? { darwin: '/Applications/OpenRDXManager.app/Contents/MacOS/OpenRDXManager', win32: 'C:\\Program Files\\OpenRDXManager\\OpenRDXManager.exe', linux: '/opt/OpenRDXManager/OpenRDXManager' }[platform]
+        : {
+              darwin: join(directory, arch === 'arm64' ? 'mac-arm64' : 'mac', 'OpenRDXManager.app', 'Contents/MacOS/OpenRDXManager'),
+              win32: join(directory, arch === 'arm64' ? 'win-arm64-unpacked' : 'win-unpacked', 'OpenRDXManager.exe'),
+              linux: join(directory, arch === 'arm64' ? 'linux-arm64-unpacked' : 'linux-unpacked', 'OpenRDXManager')
+          }[platform]
+    if (!executable) throw new Error('unsupported-packaged-platform')
+    return executable
+}
+
+/**
+ * Reads the shipped Electron binary rather than trusting build configuration.
+ * @param {string} executable - Final packaged/installed Electron executable.
+ * @returns {Promise<void>} Resolves only for disabled startup bypasses and enabled ASAR integrity.
+ * @throws {Error} For absent, unsupported or unsafe fuse states.
+ */
+export async function verifyPackagedElectronFuses(executable) {
+    const wire = await getCurrentFuseWire(executable)
+    if (wire.version !== FuseVersion.V1) throw new Error('packaged-electron-fuse-version-invalid')
+    for (const option of [FuseV1Options.RunAsNode, FuseV1Options.EnableNodeOptionsEnvironmentVariable, FuseV1Options.EnableNodeCliInspectArguments]) {
+        if (wire[option] !== 48) throw new Error(`packaged-electron-fuse-invalid: ${FuseV1Options[option]}`)
+    }
+    for (const option of [FuseV1Options.EnableEmbeddedAsarIntegrityValidation, FuseV1Options.OnlyLoadAppFromAsar]) {
+        if (wire[option] !== 49) throw new Error(`packaged-electron-fuse-invalid: ${FuseV1Options[option]}`)
+    }
+}
 
 /**
  * Imports the shipped MCP bridge through ordinary Node, proving ASAR unpacking
@@ -50,31 +88,28 @@ console.log('OpenRDXManager packaged MCP bridge passed: external-node=true')
 }
 
 /**
- * Launches the actual packaged app against an isolated profile, with no service installation.
+ * Launches the actual packaged app against an isolated profile. This verifier
+ * never installs services; --installed --require-service demands an already
+ * enrolled installation and its authenticated privileged native handshake.
  * Runtime success proves renderer mounting and bounded unavailable/ready service reporting,
  * not physical hardware operation or operating-system signing trust.
  * @returns {Promise<void>} Resolves only after the packaged smoke marker is observed.
  * @throws {Error} For launch failure, timeout or missing smoke evidence.
  */
 async function verifyPackagedApplication() {
-    const arm = process.arch === 'arm64'
-    const directory = resolve('dist/installers')
-    const executable =
-        process.platform === 'linux' && process.argv.includes('--installed')
-            ? '/opt/OpenRDXManager/OpenRDXManager'
-            : {
-                  darwin: join(directory, arm ? 'mac-arm64' : 'mac', 'OpenRDXManager.app', 'Contents/MacOS/OpenRDXManager'),
-                  win32: join(directory, arm ? 'win-arm64-unpacked' : 'win-unpacked', 'OpenRDXManager.exe'),
-                  linux: join(directory, arm ? 'linux-arm64-unpacked' : 'linux-unpacked', 'OpenRDXManager')
-              }[process.platform]
-    if (!executable) throw new Error('unsupported-packaged-platform')
+    const installed = process.argv.includes('--installed')
+    const requireService = process.argv.includes('--require-service')
+    if (requireService && !installed) throw new Error('service-acceptance-requires-installed-runtime')
+    const executable = resolvePackagedExecutable({ installed })
+    if (process.platform !== 'linux') await verifyPackagedElectronFuses(executable)
     const profile = await mkdtemp(join(tmpdir(), 'openrdx-packaged-smoke-'))
     const environment = { ...process.env }
     delete environment.ELECTRON_RUN_AS_NODE
     try {
-        const result = await execute(executable, ['--smoke-test', `--user-data-dir=${profile}`], { env: environment, timeout: 60_000, maxBuffer: 8 * 1024 * 1024, windowsHide: true })
+        const result = await execute(executable, [requireService ? '--service-auth-test' : '--smoke-test', `--user-data-dir=${profile}`], { env: environment, timeout: 60_000, maxBuffer: 8 * 1024 * 1024, windowsHide: true })
         const output = `${result.stdout}${result.stderr}`
         if (!output.includes('OpenRDXManager smoke test passed: renderer=mounted')) throw new Error(`packaged-smoke-marker-missing: ${output}`)
+        if (requireService && !output.includes(`OpenRDXManager installed service authentication passed: platform=${process.platform}`)) throw new Error(`installed-service-authentication-marker-missing: ${output}`)
         console.log(output.trim())
         const resources = process.platform === 'darwin' ? join(dirname(dirname(executable)), 'Resources') : join(dirname(executable), 'resources')
         console.log(await verifyPackagedMcpBridge(resources))

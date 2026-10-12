@@ -200,6 +200,7 @@ export function mountApplication(root, options) {
             'utility-operation': utilityController?.isAvailable() === true,
             'retry-operation': intentAdapter.isAvailable(RendererIntentType.RETRY_OPERATION) === true,
             'retry-service': intentAdapter.isAvailable(RendererIntentType.RETRY_SERVICE) === true,
+            'hardware-service-check': typeof supportApi?.service?.getSetup === 'function',
             'hardware-service-register': typeof supportApi?.service?.register === 'function',
             'hardware-service-approval': typeof supportApi?.service?.openApprovalSettings === 'function',
             'open-support': typeof supportApi?.support?.generateSummary === 'function' || intentAdapter.isAvailable(RendererIntentType.OPEN_SUPPORT) === true,
@@ -760,10 +761,11 @@ export function mountApplication(root, options) {
             return
         }
 
-        const hardwareSetupAction = target.closest('[data-action="register-hardware-service"], [data-action="open-hardware-approval"]')
+        const hardwareSetupAction = target.closest('[data-action="register-hardware-service"], [data-action="open-hardware-approval"], [data-action="check-hardware-setup"]')
         if (hardwareSetupAction !== null && !hardwareSetupAction.disabled) {
             hardwareSetupAction.disabled = true
-            if (hardwareSetupAction.dataset.action === 'register-hardware-service') void registerPrivilegedService()
+            if (hardwareSetupAction.dataset.action === 'check-hardware-setup') void refreshPrivilegedServiceSetup()
+            else if (hardwareSetupAction.dataset.action === 'register-hardware-service') void registerPrivilegedService()
             else void openPrivilegedServiceApproval()
             return
         }

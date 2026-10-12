@@ -170,7 +170,7 @@ mod native {
     /// Initializes the closed volume-attribute request; all other groups stay empty.
     fn attributes(bits: u32) -> libc::attrlist {
         libc::attrlist {
-            bitmapcount: libc::ATTR_BIT_MAP_COUNT as u16,
+            bitmapcount: libc::ATTR_BIT_MAP_COUNT,
             reserved: 0,
             commonattr: 0,
             volattr: libc::ATTR_VOL_INFO | bits,
@@ -197,7 +197,7 @@ mod native {
         {
             return Err(last_error());
         }
-        let index = libc::VOL_CAPABILITIES_INTERFACES as usize;
+        let index = libc::VOL_CAPABILITIES_INTERFACES;
         if capabilities[0] != 36
             || capabilities[1 + index] & capabilities[5 + index] & libc::VOL_CAP_INT_VOL_RENAME == 0
         {

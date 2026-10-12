@@ -11,6 +11,7 @@ import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 
 import { resolveDeviceServiceExecutable } from '../src/main/device-service-transport.mjs'
+import { validateSigningBuildEnvironment } from './signing-build-policy.mjs'
 
 const execFileAsync = promisify(execFile)
 const defaultProjectRoot = fileURLToPath(new URL('..', import.meta.url))
@@ -865,8 +866,7 @@ function validateBuildOptions(options) {
     const platform = options.platform ?? process.platform
     const projectRoot = options.projectRoot ?? defaultProjectRoot
     if (environment === null || typeof environment !== 'object') throw new TypeError('native-service-build-environment-invalid')
-    const signingTeam = environment.OPENRDX_MANAGER_TEAM_ID
-    if (signingTeam !== undefined && (typeof signingTeam !== 'string' || !/^[A-Z0-9]{10}$/u.test(signingTeam))) throw new TypeError('native-service-signing-team-invalid')
+    validateSigningBuildEnvironment(environment)
     if (typeof projectRoot !== 'string' || !isAbsolute(projectRoot)) throw new TypeError('native-service-project-root-invalid')
     if (options.testRuntimeRoot !== undefined && (typeof options.testRuntimeRoot !== 'string' || !isAbsolute(options.testRuntimeRoot))) throw new TypeError('native-service-runtime-path-invalid')
     return { environment, platform, projectRoot, ...(options.testRuntimeRoot === undefined ? {} : { testRuntimeRoot: options.testRuntimeRoot }) }

@@ -44,7 +44,7 @@ export async function buildMacOsServiceManagementAddon(options) {
     const temporaryPath = join(outputDirectory, `.openrdx-service-management-${randomUUID()}.node`)
     const execFileImpl = options.execFileImpl ?? execFileAsync
     try {
-        await execFileImpl('/usr/bin/xcrun', ['--sdk', 'macosx', 'clang++', '-std=c++20', '-fobjc-arc', '-mmacosx-version-min=13.0', '-Werror=unguarded-availability-new', '-bundle', '-undefined', 'dynamic_lookup', '-I', nodeIncludePath, '-framework', 'Foundation', '-framework', 'ServiceManagement', sourcePath, '-o', temporaryPath], { maxBuffer: 16 * 1024 * 1024 })
+        await execFileImpl('/usr/bin/xcrun', ['--sdk', 'macosx', 'clang++', '-std=c++20', '-fobjc-arc', '-mmacosx-version-min=13.0', '-Werror=unguarded-availability-new', '-bundle', '-undefined', 'dynamic_lookup', '-I', nodeIncludePath, '-framework', 'Foundation', '-framework', 'ServiceManagement', '-framework', 'Security', sourcePath, '-o', temporaryPath], { maxBuffer: 16 * 1024 * 1024 })
         await rename(temporaryPath, outputPath)
         return outputPath
     } finally {

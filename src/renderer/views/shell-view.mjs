@@ -69,7 +69,7 @@ export function isDiscoveryAvailable(service) {
  */
 function renderServiceStatus(state, t, setup) {
     const { service, provenance, devices } = state
-    const setupRequired = provenance === 'service' && ['not-registered', 'not-found', 'invalid-signature', 'registration-failed'].includes(setup?.state)
+    const setupRequired = provenance === 'service' && ['not-registered', 'not-found', 'invalid-signature', 'registration-failed', 'installer-required', 'repair-required'].includes(setup?.state)
     const approvalRequired = provenance === 'service' && setup?.state === 'requires-approval'
     const unavailable = service.status === 'unavailable'
     const pending = ['starting', 'restarting', 'recovering', 'reconciling'].includes(service.status)
@@ -94,6 +94,11 @@ function renderServiceStatus(state, t, setup) {
  * @returns {string} Actionable setup card without native paths or errors.
  */
 function renderPrivilegedServiceSetup(setup, availability, t) {
+    if (['installer-required', 'repair-required'].includes(setup.state)) {
+        const repair = setup.state === 'repair-required'
+        const checkAttributes = availability['hardware-service-check'] === true ? '' : ' disabled'
+        return `<main class="state-workspace" id="main-content" aria-labelledby="empty-state-title"><section class="empty-state empty-state--warning" data-hardware-setup="${escapeHtml(setup.state)}"><span class="state-icon"><i class="ph-duotone ph-shield-check" aria-hidden="true"></i></span><span class="eyebrow">${t('service.hardwareSetup')}</span><h1 id="empty-state-title" data-focus-fallback="primary-state" data-focus-key="state:hardware-setup" tabindex="-1">${t(repair ? 'service.repairRequiredTitle' : 'service.installerRequiredTitle')}</h1><p>${t(repair ? 'service.macosRepairDescription' : 'service.macosInstallerDescription')}</p><button class="button button--primary" type="button" data-action="check-hardware-setup"${checkAttributes}><i class="ph ph-arrow-clockwise" aria-hidden="true"></i><span>${t('service.checkApproval')}</span></button></section></main>`
+    }
     const approval = setup.state === 'requires-approval'
     const registerAvailable = availability['hardware-service-register'] === true
     const approvalAvailable = availability['hardware-service-approval'] === true
@@ -106,9 +111,9 @@ function renderPrivilegedServiceSetup(setup, availability, t) {
 }
 
 /** @param {object} service - Ready but hardware-blocked service. @param {(key: string) => string} t - Translator. @param {string} [failure=''] - Trusted operation failure markup. @returns {string} Exact permission recovery card. */
-function renderHardwareAccessUnavailable(service, t, failure = '') {
+function renderHardwareAccessUnavailable(service, t, failure = '', platform) {
     const reason = service.platformCapability?.reason ?? 'hardware-unavailable'
-    return `<main class="state-workspace" id="main-content" aria-labelledby="empty-state-title">${failure}<section class="empty-state empty-state--error"><span class="state-icon"><i class="ph-duotone ph-plugs-connected" aria-hidden="true"></i></span><span class="eyebrow">${t('service.boundary')}</span><h1 id="empty-state-title" data-focus-fallback="primary-state" data-focus-key="state:hardware-unavailable" tabindex="-1">${t('service.hardwareUnavailable')}</h1><p>${t('service.permissionDescription')}</p><code id="hardware-access-unavailable-reason">${escapeHtml(reason)}</code><button class="button button--primary" type="button" data-action="scan-devices" data-intent="scan" aria-describedby="hardware-access-unavailable-reason" title="${t('capability.hardwareUnavailable')}" disabled><i class="ph ph-magnifying-glass" aria-hidden="true"></i><span>${t('devices.scan')}</span></button></section></main>`
+    return `<main class="state-workspace" id="main-content" aria-labelledby="empty-state-title">${failure}<section class="empty-state empty-state--error"><span class="state-icon"><i class="ph-duotone ph-plugs-connected" aria-hidden="true"></i></span><span class="eyebrow">${t('service.boundary')}</span><h1 id="empty-state-title" data-focus-fallback="primary-state" data-focus-key="state:hardware-unavailable" tabindex="-1">${t('service.hardwareUnavailable')}</h1><p>${t('service.permissionDescription')}</p>${platform === 'win32' ? `<p>${t('service.windowsRepairDescription')}</p>` : ''}<code id="hardware-access-unavailable-reason">${escapeHtml(reason)}</code><button class="button button--primary" type="button" data-action="scan-devices" data-intent="scan" aria-describedby="hardware-access-unavailable-reason" title="${t('capability.hardwareUnavailable')}" disabled><i class="ph ph-magnifying-glass" aria-hidden="true"></i><span>${t('devices.scan')}</span></button></section></main>`
 }
 
 /** @param {object} discovery - Current aggregate discovery outcome. @returns {boolean} True for one or more safely classified mounted candidates. */
@@ -555,7 +560,7 @@ function renderDeviceSelectionState(devices, t, failure = '') {
  * @param {(key: string, params?: object) => string} t - Active bounded message translator.
  * @returns {string} Service recovery main content.
  */
-function renderServiceUnavailable(service, availability, t) {
+function renderServiceUnavailable(service, availability, t, platform) {
     const retryAvailable = availability['retry-service'] === true
     const supportAvailable = availability['open-support'] === true
     const retryReasonId = getIntentUnavailableReasonId('retry-service', 'state')
@@ -563,7 +568,7 @@ function renderServiceUnavailable(service, availability, t) {
     const retryAttributes = retryAvailable ? '' : ` disabled aria-describedby="${retryReasonId}" title="${getIntentUnavailableMessage('retry-service', t)}"`
     const supportAttributes = supportAvailable ? '' : ` disabled aria-describedby="${supportReasonId}" title="${getIntentUnavailableMessage('open-support', t)}"`
     return `<main class="state-workspace" id="main-content" aria-labelledby="service-error-title">
-        <section class="empty-state empty-state--error" role="alert" data-intent-group="service-state-actions"><span class="state-icon"><i class="ph-duotone ph-plugs-connected" aria-hidden="true"></i></span><span class="eyebrow">${t('service.boundary')}</span><h1 id="service-error-title" data-focus-fallback="primary-state" data-focus-key="state:service-heading" tabindex="-1">${t('service.hardwareUnavailable')}</h1><p>${t('service.description')}</p><code>${escapeHtml(service.reason ?? 'service-unavailable')}</code><button class="button button--primary" type="button" data-action="retry-service" data-intent="retry-service" data-focus-key="service:retry"${retryAttributes}><i class="ph ph-arrow-clockwise" aria-hidden="true"></i><span>${t('service.retry')}</span></button>${renderIntentUnavailableReason('retry-service', 'state', retryAvailable, t)}<button class="text-link" type="button" data-action="open-support" data-intent="open-support" data-focus-key="service:support"${supportAttributes}><i class="ph ph-lifebuoy" aria-hidden="true"></i>${t('service.supportGuidance')}</button>${renderIntentUnavailableReason('open-support', 'service', supportAvailable, t)}</section>
+        <section class="empty-state empty-state--error" role="alert" data-intent-group="service-state-actions"><span class="state-icon"><i class="ph-duotone ph-plugs-connected" aria-hidden="true"></i></span><span class="eyebrow">${t('service.boundary')}</span><h1 id="service-error-title" data-focus-fallback="primary-state" data-focus-key="state:service-heading" tabindex="-1">${t('service.hardwareUnavailable')}</h1><p>${t('service.description')}</p>${platform === 'win32' ? `<p>${t('service.windowsRepairDescription')}</p>` : ''}<code>${escapeHtml(service.reason ?? 'service-unavailable')}</code><button class="button button--primary" type="button" data-action="retry-service" data-intent="retry-service" data-focus-key="service:retry"${retryAttributes}><i class="ph ph-arrow-clockwise" aria-hidden="true"></i><span>${t('service.retry')}</span></button>${renderIntentUnavailableReason('retry-service', 'state', retryAvailable, t)}<button class="text-link" type="button" data-action="open-support" data-intent="open-support" data-focus-key="service:support"${supportAttributes}><i class="ph ph-lifebuoy" aria-hidden="true"></i>${t('service.supportGuidance')}</button>${renderIntentUnavailableReason('open-support', 'service', supportAvailable, t)}</section>
     </main>`
 }
 
@@ -641,7 +646,7 @@ export function renderShell(state, options = {}) {
     }
 
     if (state.service.status === 'unavailable') {
-        return `<div class="application-shell"${inert}><header class="topbar">${brand}<div class="topbar__path"><span>${t('topbar.devices')}</span><i class="ph ph-caret-right" aria-hidden="true"></i><strong>${t('topbar.serviceRecovery')}</strong></div>${renderServiceStatus(state, t, privilegedSetup)}${renderTopbarActions(intentAvailability, t)}</header><div class="shell-grid shell-grid--state">${renderDeviceRail(state, null, { deviceRailOpen, hardwareAvailable: discoveryAvailable, locked, scanBusy, scanIntentAvailable: intentAvailability.scan === true, translator: t })}${renderServiceUnavailable(state.service, intentAvailability, t)}</div></div>${supportOverlay}`
+        return `<div class="application-shell"${inert}><header class="topbar">${brand}<div class="topbar__path"><span>${t('topbar.devices')}</span><i class="ph ph-caret-right" aria-hidden="true"></i><strong>${t('topbar.serviceRecovery')}</strong></div>${renderServiceStatus(state, t, privilegedSetup)}${renderTopbarActions(intentAvailability, t)}</header><div class="shell-grid shell-grid--state">${renderDeviceRail(state, null, { deviceRailOpen, hardwareAvailable: discoveryAvailable, locked, scanBusy, scanIntentAvailable: intentAvailability.scan === true, translator: t })}${renderServiceUnavailable(state.service, intentAvailability, t, options.platform)}</div></div>${supportOverlay}`
     }
 
     if (['starting', 'restarting', 'recovering', 'reconciling'].includes(state.service.status)) {
@@ -652,7 +657,7 @@ export function renderShell(state, options = {}) {
         // A firmware reset may remove the target from discovery. Keep its
         // terminal evidence visible without allowing a retry on another unit.
         const failure = renderOperationFailure(state.lastOperation, false, t)
-        const noDeviceContent = locked || recoveryCard !== '' ? `<main class="main-workspace" id="main-content">${renderOperationStatus(state.activeOperation, t, options.firmwareContinuation)}${failure}${recoveryCard}</main>` : !discoveryAvailable ? renderHardwareAccessUnavailable(state.service, t, failure) : state.devices.length > 0 ? renderDeviceSelectionState(state.devices, t, failure) : hasMountedCandidate(state.discovery) ? renderMountedCandidateState(intentAvailability, scanBusy, t, failure) : renderNoDeviceState(state.discovery, intentAvailability, discoveryAvailable, scanBusy, t, failure)
+        const noDeviceContent = locked || recoveryCard !== '' ? `<main class="main-workspace" id="main-content">${renderOperationStatus(state.activeOperation, t, options.firmwareContinuation)}${failure}${recoveryCard}</main>` : !discoveryAvailable ? renderHardwareAccessUnavailable(state.service, t, failure, options.platform) : state.devices.length > 0 ? renderDeviceSelectionState(state.devices, t, failure) : hasMountedCandidate(state.discovery) ? renderMountedCandidateState(intentAvailability, scanBusy, t, failure) : renderNoDeviceState(state.discovery, intentAvailability, discoveryAvailable, scanBusy, t, failure)
         return `<div class="application-shell"${inert}><header class="topbar">${brand}<div class="topbar__path"><span>${t('topbar.devices')}</span><i class="ph ph-caret-right" aria-hidden="true"></i><strong>${t('topbar.discovery')}</strong></div>${renderServiceStatus(state, t, privilegedSetup)}${renderTopbarActions(intentAvailability, t)}</header><div class="shell-grid shell-grid--state">${renderDeviceRail(state, null, { deviceRailOpen, hardwareAvailable: discoveryAvailable, locked, scanBusy, scanIntentAvailable: intentAvailability.scan === true, translator: t })}${noDeviceContent}</div></div>${supportOverlay}`
     }
 

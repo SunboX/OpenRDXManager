@@ -211,6 +211,8 @@ pub struct ManagerEndpointConnection {
     #[cfg(windows)]
     handle: HANDLE,
     #[cfg(windows)]
+    trust: std::sync::Arc<crate::local_trust::windows::RuntimeLease>,
+    #[cfg(windows)]
     read_deadline: Option<Instant>,
     session_id: u32,
 }
@@ -354,6 +356,7 @@ impl NamedPipeManagerEndpointListener {
         #[cfg(windows)]
         {
             let pending = self.pending.as_ref().ok_or(NativeError::Cancelled)?;
+            let trust = std::sync::Arc::new(crate::local_trust::verify_runtime_lease()?);
             accept_native(pending, &self.authority, &stop_requested)?;
             if stop_requested() {
                 self.ownership.stop();
@@ -366,6 +369,7 @@ impl NamedPipeManagerEndpointListener {
             debug_assert!(self.ownership.authority_retained());
             Ok(ManagerEndpointConnection {
                 handle: connected.into_raw(),
+                trust,
                 read_deadline: None,
                 session_id: self.authority.session_id,
             })
@@ -447,6 +451,7 @@ impl ManagerEndpointConnection {
             .map_err(|_| NativeError::Other)?;
             Ok(Self {
                 handle: duplicate,
+                trust: self.trust.clone(),
                 read_deadline: self.read_deadline,
                 session_id: self.session_id,
             })

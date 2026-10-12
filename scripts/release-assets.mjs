@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 /** @param {string} version - Manifest release version. @returns {string[]} Complete six-platform installer inventory. @throws {TypeError} For unsafe version input. */
 export function expectedInstallerNames(version) {
     if (!/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/u.test(version)) throw new TypeError('invalid-release-version')
-    return ['mac', 'win', 'linux'].flatMap((platform) => ['x64', 'arm64'].flatMap((architecture) => ({ mac: ['dmg', 'zip'], win: ['exe', 'zip'], linux: ['AppImage', 'deb', 'tar.gz'] })[platform].map((extension) => `OpenRDXManager-${version}-${platform}-${architecture}.${extension}`)))
+    return ['mac', 'win', 'linux'].flatMap((platform) => ['x64', 'arm64'].flatMap((architecture) => ({ mac: ['dmg', 'pkg', 'zip'], win: ['exe', 'zip'], linux: ['AppImage', 'deb', 'tar.gz'] })[platform].map((extension) => `OpenRDXManager-${version}-${platform}-${architecture}.${extension}`)))
 }
 
 /**
@@ -25,7 +25,7 @@ export async function verifyReleaseAssets({ directory, version }) {
     const missing = installers.filter((name) => !actual.includes(name))
     if (missing.length) throw new Error(`missing-installers: ${missing.join(', ')}`)
     for (const name of actual) {
-        if (/\.(?:exe|dmg|zip|deb|AppImage|tar\.gz)$/u.test(name) && !installers.includes(name)) throw new Error(`unexpected-installer: ${name}`)
+        if (/\.(?:exe|dmg|pkg|zip|deb|AppImage|tar\.gz)$/u.test(name) && !installers.includes(name)) throw new Error(`unexpected-installer: ${name}`)
     }
     const checksums = []
     for (const name of installers) {

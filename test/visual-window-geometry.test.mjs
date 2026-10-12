@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { runInNewContext } from 'node:vm'
 import { test } from 'node:test'
 
-import { waitForRendererWindowGeometry } from '../electron-test/visual-window-geometry.mjs'
+import { resizeVisualWindow, waitForRendererWindowGeometry } from '../electron-test/visual-window-geometry.mjs'
 
 /**
  * Runs the renderer wait against delayed native overlay/CSS updates.
@@ -50,4 +50,29 @@ test('right-side native controls retain their measured reserved area', async () 
 test('a native overlay that never reaches the target size fails explicitly', async () => {
     const stale = { width: 1440, overlay: { x: 78, width: 946 }, title: { left: 78, width: 946 } }
     await assert.rejects(settleGeometry([stale], { width: 1440, height: 900, titlebarInsets: { left: 78, right: 0 } }), /Timed out waiting for native window geometry/u)
+})
+
+test('macOS QA refreshes native overlay layout after viewport resize without changing control visibility', async () => {
+    const calls = []
+    const window = {
+        webContents: {
+            async executeJavaScript(code) {
+                if (code.includes('readNativeTitlebarInsets')) return { left: 78, right: 0 }
+                if (code.includes('waitForRendererViewport')) calls.push('viewport')
+                else if (code.includes('waitForRendererWindowGeometry')) calls.push('strict-geometry')
+            }
+        },
+        setBounds() {
+            calls.push('resize')
+        },
+        getContentBounds() {
+            return { width: 1024, height: 768 }
+        },
+        setWindowButtonVisibility(visible) {
+            assert.equal(visible, true)
+            calls.push('native-layout')
+        }
+    }
+    await resizeVisualWindow(window, { width: 1024, height: 768 }, 'darwin')
+    assert.deepEqual(calls, ['resize', 'viewport', 'native-layout', 'strict-geometry'])
 })

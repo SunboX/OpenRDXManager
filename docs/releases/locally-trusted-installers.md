@@ -1,0 +1,16 @@
+<!-- SPDX-FileCopyrightText: 2026 André Fiedler -->
+<!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
+
+Windows and macOS installers now include an administrator-approved local installation mode for the hardware service. A public signing certificate is not required for this mode. The app and service still authenticate each other, and editing installed application files disables device access until an administrator runs the installer again.
+
+Choose the package matching your operating system and processor:
+
+- **macOS:** PKG, also supplied inside the DMG, for Apple silicon (ARM64) or Intel (x64). Run the installer and open the installed app from Applications. The ZIP is a portable app without hardware-service setup.
+- **Windows:** EXE installer for ARM64 or x64. Connect the RDX dock during setup. The ZIP is a portable app without hardware-service setup.
+- **Linux:** DEB, AppImage or TAR.GZ for ARM64 or x64. The DEB supplies the system service; an administrator must add the intended desktop user to the `openrdx` group and the user must sign out/in.
+
+Unsigned-download warnings may remain. Approve only an installer from a source you trust. Local installation does not add a certificate authority to the computer. `SHA256SUMS.txt` lists all installer checksums.
+
+Finish active device operations and close Manager before updating, repairing or removing it. On Windows, a newly attached or recreated device instance may require another installer run with the dock connected. Device access remains subject to supported dock identity, firmware, drivers and cartridge state; software authentication checks do not establish physical hardware compatibility.
+
+See the [installation guide](https://github.com/SunboX/OpenRDXManager/blob/main/docs/installation.md) and [migration guide](https://github.com/SunboX/OpenRDXManager/blob/main/docs/migration.md). Software is AGPL-3.0-or-later; documentation and owned media are CC-BY-SA-4.0.

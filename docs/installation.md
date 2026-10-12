@@ -9,18 +9,36 @@ OpenRDXManager runs on macOS, Windows and Linux. Opening its window and obtainin
 
 Download the matching package from [GitHub Releases](https://github.com/SunboX/OpenRDXManager/releases/latest). Choose ARM64 for Apple silicon or an ARM Windows/Linux computer, and x64 for Intel/AMD computers.
 
-- **macOS:** Open the DMG and move OpenRDXManager to Applications, or extract the ZIP. The first release uses an ad-hoc signature and is not notarized. Its privileged hardware service remains unavailable without a trusted Apple-signed Manager.
-- **Windows:** Run the installer EXE, or extract the portable ZIP. The first release is unsigned. Its privileged service requires a trusted signed Manager; the portable package does not install a Windows service.
+- **macOS:** Run the OpenRDXManager PKG installer, supplied separately and inside the DMG, and approve the administrator prompt. It installs the app in `/Applications/OpenRDXManager.app` and its hardware service. Open that installed app from Applications. The ZIP is portable; copying that app does not install or authorize the hardware service.
+- **Windows:** Connect the RDX dock, run the installer EXE and approve the administrator prompt. The installer uses a fixed machine-wide location and configures the hardware service for the connected supported dock. Open the installed app. The ZIP is portable and does not install or authorize the hardware service.
 - **Linux:** Install the DEB with your package manager, or use the AppImage/TAR.GZ for a portable app. The DEB installs the native systemd socket and device policy. An administrator must explicitly add the intended desktop user to the `openrdx` group (`sudo usermod -aG openrdx "$USER"`); sign out and back in afterward. Portable packages do not install the system service.
 
-Unsigned packages may show operating-system trust warnings. Read the release notes before installation; a successful launch does not override these service-access limits.
+These Windows and macOS installers use administrator-approved local trust and do not require a purchased public signing certificate. They do not add a certificate authority to your computer. Unsigned downloads may still show operating-system warnings: approve only the installer you chose from a trusted source. Read the release notes for the selected version; older packages may not include this installation mode. A successful app launch does not prove service or device access.
 
 1. Connect the RDX dock and launch OpenRDXManager.
-2. Follow any service setup or approval action shown by the application.
+2. Follow the service setup guidance shown by the application. macOS local installation guidance refers to the PKG installer; a separately signed distribution may use the macOS Login Items approval flow.
 3. Check the service status, then select the dock in the device rail. Use **Scan for RDX devices** if it has not appeared.
 4. Check the selected dock's identity and cartridge status before starting an operation.
 
 Available actions depend on the operating system, service privileges, dock firmware and inserted media. An unavailable action includes a reason; a visible application window alone does not establish hardware access.
+
+## Repair and update
+
+Use the installer again to update an installed app. Replacing or editing its files manually can disable hardware access; the app will show installation or repair guidance. Close OpenRDXManager after all device operations have finished before running an update or repair. Keep backups and user settings outside the installation folder.
+
+- **macOS:** If the app asks for installation, run the PKG and open the installed copy from Applications. If it asks for repair, close the app and run the PKG again. Use **Check again** after setup, or reopen the installed app.
+- **Windows:** Run the EXE installer again with the RDX dock connected. A newly attached or recreated device instance may require another setup run. If setup cannot identify a supported dock or establish its access, follow the reported retry guidance; do not run the app as administrator to bypass it.
+
+Installer completion, service readiness and physical device readiness are separate results. A dock appears only after the running service verifies it. An unsupported or inaccessible dock remains unavailable even when installation succeeds.
+
+## Moving from an older installation
+
+An older installation may not have the local trust records required by these installers. Setup deliberately refuses to replace an installation or service it cannot identify as its own.
+
+- **Windows:** If setup reports an existing unverified installation, uninstall the older Manager using its original uninstaller, then run the new EXE. Preserve your backups and user settings outside the installation folder.
+- **macOS:** If an older Manager registered its helper through Login Items, use that original app's service controls to unregister it before running the PKG. Close the older app afterward. Do not remove another application's service or change system-folder permissions to work around a refusal.
+
+After migration, open the new installed app and check its service status before managing a dock.
 
 ## Run from source
 

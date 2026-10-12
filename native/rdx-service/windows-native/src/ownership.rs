@@ -93,6 +93,13 @@ pub fn try_acquire_hardware_ownership() -> Result<HardwareOwnershipGuard, Native
     }
 }
 
+/// Acquires an existing namespace for setup; only kernel-confirmed absence is safe.
+#[cfg(windows)]
+pub(crate) fn try_acquire_installer_quiescence()
+-> Result<Option<HardwareOwnershipGuard>, NativeError> {
+    windows_impl::try_acquire_optional()
+}
+
 /// Returns whether this exact Windows process has a fully elevated token.
 ///
 /// This query does not grant access. Direct mutation additionally requires a
@@ -249,22 +256,30 @@ mod windows_impl {
 
     /// Opens the service-created mutex and acquires it with a zero timeout.
     pub(super) fn try_acquire() -> Result<HardwareOwnershipGuard, NativeError> {
+        try_acquire_optional()?.ok_or(NativeError::AccessDenied)
+    }
+    /// Allows an absent namespace only for setup after ordinary-user START is revoked.
+    pub(super) fn try_acquire_optional() -> Result<Option<HardwareOwnershipGuard>, NativeError> {
         let name = wide(OWNERSHIP_NAME);
         // SAFETY: the fixed name is NUL-terminated and no inheritance is requested.
-        let handle = unsafe {
+        let result = unsafe {
             OpenMutexW(
                 SYNCHRONIZATION_ACCESS_RIGHTS(CLIENT_ACCESS_MASK),
                 false,
                 PCWSTR(name.as_ptr()),
             )
-        }
-        .map_err(|_| NativeError::AccessDenied)?;
+        };
+        let handle = match result {
+            Ok(handle) => handle,
+            Err(error) if error.code().0 as u32 & 0xffff == 2 => return Ok(None),
+            Err(_) => return Err(NativeError::AccessDenied),
+        };
         // SAFETY: handle is a live mutex and zero makes the wait nonblocking.
         match unsafe { WaitForSingleObject(handle, 0) } {
-            WAIT_OBJECT_0 | WAIT_ABANDONED => Ok(HardwareOwnershipGuard {
+            WAIT_OBJECT_0 | WAIT_ABANDONED => Ok(Some(HardwareOwnershipGuard {
                 handle,
                 _thread_affinity: std::marker::PhantomData,
-            }),
+            })),
             WAIT_TIMEOUT => {
                 // SAFETY: acquisition failed, so only the handle is owned.
                 let _ = unsafe { windows::Win32::Foundation::CloseHandle(handle) };

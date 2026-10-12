@@ -3,10 +3,11 @@
 
 //! Process-global macOS hardware mutation ownership.
 
-use std::fs::{File, OpenOptions};
-use std::os::fd::AsRawFd;
+use std::ffi::CString;
+use std::fs::{self, File, OpenOptions};
+use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::NativeError;
 
@@ -31,12 +32,12 @@ pub struct HardwareOwnershipContract {
 /// Retained namespace file proving the service initialized the fixed boundary.
 #[derive(Debug)]
 pub struct HardwareOwnershipNamespace {
-    _file: File,
+    _namespace: RetainedOwnershipFile,
 }
 
 /// One process-global exclusive hardware execution lease.
 #[derive(Debug)]
-pub struct HardwareOwnershipGuard(File);
+pub struct HardwareOwnershipGuard(RetainedOwnershipFile);
 
 /// Exact file target and authority expected by the ownership implementation.
 struct HardwareOwnershipTarget {
@@ -66,7 +67,7 @@ impl Drop for HardwareOwnershipGuard {
     /// Releases only this owned file-description lock.
     fn drop(&mut self) {
         // SAFETY: the guard owns a live descriptor until this drop completes.
-        let _ = unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
+        let _ = unsafe { libc::flock(self.0.file.as_raw_fd(), libc::LOCK_UN) };
     }
 }
 
@@ -103,37 +104,128 @@ pub fn try_acquire_hardware_ownership() -> Result<HardwareOwnershipGuard, Native
     try_acquire_hardware_ownership_at(&HardwareOwnershipTarget::production())
 }
 
-/// Opens and validates one exact ownership file.
-fn open_validated(target: &HardwareOwnershipTarget) -> Result<File, NativeError> {
-    let file = OpenOptions::new()
+/// Holds both the no-follow parent and the exact namespace inode.
+#[derive(Debug)]
+struct RetainedOwnershipFile {
+    file: File,
+    parent: File,
+    parent_path: PathBuf,
+    file_path: PathBuf,
+    owner_uid: u32,
+    production: bool,
+}
+
+impl RetainedOwnershipFile {
+    /// Re-prove retained descriptors and named inodes before/after lock admission.
+    fn recheck(&self) -> Result<(), NativeError> {
+        validate_file(&self.file, self.owner_uid)?;
+        if self.production {
+            rdx_local_trust::verify_protected_descriptor(&self.file)
+                .map_err(|_| NativeError::EvidenceIncomplete)?;
+            // SAFETY: fixed C policy checks only canonical root-owned ancestors.
+            if !unsafe { crate::ffi::rdx_macos_run_directory_is_protected() } {
+                return Err(NativeError::EvidenceIncomplete);
+            }
+        }
+        rdx_local_trust::verify_descriptor_acl(&self.parent)
+            .map_err(|_| NativeError::EvidenceIncomplete)?;
+        let parent = self
+            .parent
+            .metadata()
+            .map_err(|_| NativeError::EvidenceIncomplete)?;
+        let named_parent =
+            fs::symlink_metadata(&self.parent_path).map_err(|_| NativeError::EvidenceIncomplete)?;
+        let named_file =
+            fs::symlink_metadata(&self.file_path).map_err(|_| NativeError::EvidenceIncomplete)?;
+        let file = self
+            .file
+            .metadata()
+            .map_err(|_| NativeError::EvidenceIncomplete)?;
+        if !parent.is_dir()
+            || parent.uid() != self.owner_uid
+            || (!self.production && parent.mode() & 0o022 != 0)
+            || parent.dev() != named_parent.dev()
+            || parent.ino() != named_parent.ino()
+            || file.dev() != named_file.dev()
+            || file.ino() != named_file.ino()
+        {
+            return Err(NativeError::EvidenceIncomplete);
+        }
+        Ok(())
+    }
+}
+
+/// Opens the fixed root run namespace relative to a retained no-follow parent.
+fn open_validated(target: &HardwareOwnershipTarget) -> Result<RetainedOwnershipFile, NativeError> {
+    let production = target.path == Path::new(OWNERSHIP_PATH) && target.owner_uid == 0;
+    let parent_path = if production {
+        PathBuf::from("/private/var/run")
+    } else {
+        target
+            .path
+            .parent()
+            .ok_or(NativeError::InvalidRequest)?
+            .to_owned()
+    };
+    if production && !unsafe { crate::ffi::rdx_macos_run_directory_is_protected() } {
+        return Err(NativeError::EvidenceIncomplete);
+    }
+    let parent = OpenOptions::new()
         .read(true)
-        .write(true)
-        .create(true)
-        .mode(OWNERSHIP_MODE)
-        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-        .open(&target.path)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_DIRECTORY)
+        .open(&parent_path)
         .map_err(map_open_error)?;
-    validate_file(&file, target.owner_uid)?;
-    Ok(file)
+    let name = target.path.file_name().ok_or(NativeError::InvalidRequest)?;
+    let filename =
+        CString::new(name.as_encoded_bytes()).map_err(|_| NativeError::InvalidRequest)?;
+    // SAFETY: the parent remains owned; openat never follows the final component
+    // and successful return transfers exactly one descriptor to this function.
+    let descriptor = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            filename.as_ptr(),
+            libc::O_RDWR | libc::O_CREAT | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
+            OWNERSHIP_MODE,
+        )
+    };
+    if descriptor < 0 {
+        return Err(map_open_error(std::io::Error::last_os_error()));
+    }
+    // SAFETY: this unique successful descriptor is adopted exactly once.
+    let file = unsafe { File::from_raw_fd(descriptor) };
+    let retained = RetainedOwnershipFile {
+        file,
+        parent,
+        file_path: parent_path.join(name),
+        parent_path,
+        owner_uid: target.owner_uid,
+        production,
+    };
+    retained.recheck()?;
+    Ok(retained)
 }
 
 /// Retains one validated namespace file without taking its mutation lock.
 fn initialize_hardware_ownership_namespace_at(
     target: &HardwareOwnershipTarget,
 ) -> Result<HardwareOwnershipNamespace, NativeError> {
-    open_validated(target).map(|file| HardwareOwnershipNamespace { _file: file })
+    open_validated(target).map(|retained| HardwareOwnershipNamespace {
+        _namespace: retained,
+    })
 }
 
 /// Locks one validated namespace file using the kernel process boundary.
 fn try_acquire_hardware_ownership_at(
     target: &HardwareOwnershipTarget,
 ) -> Result<HardwareOwnershipGuard, NativeError> {
-    let file = open_validated(target)?;
+    let retained = open_validated(target)?;
     // SAFETY: the file is a validated live regular-file descriptor.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+    if unsafe { libc::flock(retained.file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         return Err(map_lock_error());
     }
-    Ok(HardwareOwnershipGuard(file))
+    // Dropping the retained file releases a newly acquired lock on rejection.
+    retained.recheck()?;
+    Ok(HardwareOwnershipGuard(retained))
 }
 
 /// Verifies the already-open inode rather than trusting pathname metadata.
@@ -148,6 +240,7 @@ fn validate_file(file: &File, owner_uid: u32) -> Result<(), NativeError> {
     {
         return Err(NativeError::EvidenceIncomplete);
     }
+    rdx_local_trust::verify_descriptor_acl(file).map_err(|_| NativeError::EvidenceIncomplete)?;
     Ok(())
 }
 
@@ -230,6 +323,68 @@ mod tests {
                 Err(NativeError::EvidenceIncomplete)
             ));
         }
+    }
+
+    /// A real extended write grant invalidates otherwise private ordinary inode evidence.
+    #[test]
+    fn ownership_namespace_rejects_extended_write_acl() {
+        let directory = tempdir().unwrap();
+        let target = HardwareOwnershipTarget::for_test(directory.path().join("owner.lock"));
+        assert!(initialize_hardware_ownership_namespace_at(&target).is_ok());
+        let identity = std::process::Command::new("/usr/bin/id")
+            .args(["-un"])
+            .output()
+            .unwrap();
+        assert!(identity.status.success());
+        let username = String::from_utf8(identity.stdout).unwrap();
+        let permission = format!("user:{} allow write", username.trim());
+        let status = std::process::Command::new("/bin/chmod")
+            .args(["+a", &permission])
+            .arg(&target.path)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert!(matches!(
+            initialize_hardware_ownership_namespace_at(&target),
+            Err(NativeError::EvidenceIncomplete)
+        ));
+        assert!(matches!(
+            try_acquire_hardware_ownership_at(&target),
+            Err(NativeError::EvidenceIncomplete)
+        ));
+    }
+
+    /// A second private inode at the same filename cannot replace a retained lease.
+    #[test]
+    fn ownership_namespace_rechecks_exact_named_file_inode() {
+        let directory = tempdir().unwrap();
+        let target = HardwareOwnershipTarget::for_test(directory.path().join("owner.lock"));
+        let retained = super::open_validated(&target).unwrap();
+        fs::rename(&target.path, directory.path().join("old.lock")).unwrap();
+        fs::write(&target.path, b"").unwrap();
+        fs::set_permissions(&target.path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(matches!(
+            retained.recheck(),
+            Err(NativeError::EvidenceIncomplete)
+        ));
+    }
+
+    /// Replacing the parent cannot redirect the independently retained descriptor.
+    #[test]
+    fn ownership_namespace_rechecks_exact_named_parent_inode() {
+        let directory = tempdir().unwrap();
+        let parent = directory.path().join("run");
+        fs::create_dir(&parent).unwrap();
+        let target = HardwareOwnershipTarget::for_test(parent.join("owner.lock"));
+        let retained = super::open_validated(&target).unwrap();
+        fs::rename(&parent, directory.path().join("old-run")).unwrap();
+        fs::create_dir(&parent).unwrap();
+        fs::write(&target.path, b"").unwrap();
+        fs::set_permissions(&target.path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(matches!(
+            retained.recheck(),
+            Err(NativeError::EvidenceIncomplete)
+        ));
     }
 
     /// The installed macOS namespace is fixed, root-owned, and private.

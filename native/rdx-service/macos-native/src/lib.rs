@@ -1,7 +1,6 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 // SPDX-FileCopyrightText: 2026 André Fiedler
 // SPDX-License-Identifier: AGPL-3.0-or-later
-
 #![deny(missing_docs)]
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
@@ -22,6 +21,7 @@ mod counters;
 mod endpoint;
 mod ffi;
 mod host;
+pub mod local_trust;
 mod manufacturing_contract;
 mod migration_usb;
 mod outcomes;
@@ -65,6 +65,7 @@ pub use counters::{ResourceCounters, resource_counters};
 pub use endpoint::{
     LaunchdEndpointContract, LaunchdManagerEndpointListener, ManagerEndpointConnection,
     accept_launchd_manager_endpoint, activate_launchd_manager_endpoint, launchd_endpoint_contract,
+    local_manager_requirement, manager_requirement_is_pinned,
 };
 pub use migration_usb::observe_migration_usb;
 pub use outcomes::{FileTestOutcome, HostOperationOutcome, MountedFilesystem};

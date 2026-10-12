@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import assert from 'node:assert/strict'
-import { EventEmitter } from 'node:events'
+import { EventEmitter, once } from 'node:events'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
 
@@ -165,7 +165,7 @@ test('resolves native executables by platform without renderer-relative paths', 
     assert.throws(() => resolveDeviceServiceExecutable({ ...packaged, isPackaged: 'yes', platform: 'darwin' }), /service-resource-root-invalid/)
 })
 
-test('packaged production selects the privileged endpoint without spawning a child fallback', () => {
+test('packaged production selects the authenticated privileged endpoint without spawning a child fallback', async () => {
     const endpointConnections = []
     let spawnCount = 0
 
@@ -181,6 +181,7 @@ test('packaged production selects the privileged endpoint without spawning a chi
         socket.end = () => queueMicrotask(() => socket.emit('close'))
         socket.setNoDelay = () => {}
         socket.write = () => true
+        socket.serverIdentityVerified = () => true
         queueMicrotask(() => socket.emit('connect'))
         return socket
     }
@@ -203,8 +204,10 @@ test('packaged production selects the privileged endpoint without spawning a chi
     })
 
     assert.equal(transport.supportsGracefulShutdown, true)
+    await once(transport, 'ready')
     assert.deepEqual(endpointConnections, [{ path: '/var/run/openrdx-hardware.sock' }])
     assert.equal(spawnCount, 0)
+    assert.deepEqual(await transport.close(), { confirmed: true })
 })
 
 test('rejects unbounded timeout and restart configuration', () => {

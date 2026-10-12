@@ -4,6 +4,7 @@
 import { EventEmitter } from 'node:events'
 import { connect as connectSocket } from 'node:net'
 
+import { createMacOsNativeEndpointConnector } from './macos-native-endpoint.mjs'
 import { createWindowsNativeEndpointConnector } from './windows-native-endpoint.mjs'
 
 const ENDPOINTS = Object.freeze({
@@ -26,7 +27,7 @@ class PrivilegedEndpointTransport extends EventEmitter {
     #terminalCloseObserved = false
     #teardownTimeoutMs
     #timers
-    #verifyWindowsServerIdentity
+    #verifyServerIdentity
 
     /**
      * Owns one already-created local endpoint socket and bounded lifecycle.
@@ -42,24 +43,28 @@ class PrivilegedEndpointTransport extends EventEmitter {
         this.#maxBufferedBytes = bounds.maxBufferedBytes
         this.#teardownTimeoutMs = bounds.teardownTimeoutMs
         this.#timers = bounds.timers
-        this.#identityVerified = bounds.platform !== 'win32'
-        this.#verifyWindowsServerIdentity = bounds.verifyWindowsServerIdentity
-        if (bounds.platform === 'win32') socket.pause?.()
+        this.#identityVerified = bounds.platform === 'linux'
+        this.#verifyServerIdentity = bounds.platform === 'darwin' ? (socket) => socket.serverIdentityVerified?.() === true : bounds.verifyWindowsServerIdentity
+        if (bounds.platform !== 'linux') socket.pause?.()
 
         /** @param {Buffer} chunk - Native framed response bytes. @returns {void} Forwards the bytes without interpretation. */
         const handleData = (chunk) => {
+            if (this.#closed || this.#failed) return
             if (!this.#identityVerified) {
                 this.#signalFailure({ reason: 'service-identity-unverified' })
                 return
             }
             this.emit('data', chunk)
         }
-        /** @returns {Promise<void>} Verifies Windows server authority before admitting protocol bytes. */
+        /** @returns {Promise<void>} Verifies native server authority before admitting protocol bytes. */
         const handleConnect = async () => {
-            if (bounds.platform === 'win32') {
+            if (this.#closed || this.#failed || socket.destroyed === true) return
+            if (bounds.platform !== 'linux') {
                 let verified = false
                 try {
-                    verified = (await this.#verifyWindowsServerIdentity?.(socket)) === true
+                    // macOS native connect already proves the retained socket;
+                    // preserve ordering when the addon delivers immediate data.
+                    verified = bounds.platform === 'darwin' ? this.#verifyServerIdentity(socket) === true : (await this.#verifyServerIdentity?.(socket)) === true
                 } catch {
                     verified = false
                 }
@@ -118,8 +123,8 @@ class PrivilegedEndpointTransport extends EventEmitter {
         try {
             const accepted = this.#socket.write(frame)
             // Node Unix sockets use false for accepted backpressure. The direct
-            // Windows addon has no queue and uses false only for a failed write.
-            if (!this.#identityVerified || (accepted === false && this.#verifyWindowsServerIdentity !== undefined)) {
+            // native addon has no queue and uses false only for a failed write.
+            if (!this.#identityVerified || (accepted === false && this.#verifyServerIdentity !== undefined)) {
                 this.#signalFailure()
                 return { ok: false, reason: 'service-unavailable' }
             }
@@ -197,19 +202,20 @@ export function resolvePrivilegedServiceEndpoint(platform) {
 
 /**
  * Creates a production-only fixed local endpoint transport factory.
- * @param {{platform?: 'darwin'|'win32'|'linux', connectEndpoint?: Function, connectTimeoutMs?: number, teardownTimeoutMs?: number, maxBufferedBytes?: number, timers?: {setTimeout: Function, clearTimeout: Function}, verifyWindowsServerIdentity?: Function, windowsClientAddonPath?: string}} [options] - Main-owned connection dependencies, identity verifier, and bounds.
+ * @param {{platform?: 'darwin'|'win32'|'linux', connectEndpoint?: Function, connectTimeoutMs?: number, teardownTimeoutMs?: number, maxBufferedBytes?: number, timers?: {setTimeout: Function, clearTimeout: Function}, verifyWindowsServerIdentity?: Function, windowsClientAddonPath?: string, macosClientAddonPath?: string}} [options] - Main-owned connection dependencies, identity verifier, and bounds.
  * @returns {(launch: {command: string, args: readonly string[]}) => PrivilegedEndpointTransport} Endpoint-only factory.
  * @throws {TypeError|RangeError} For invalid bounds or platform.
  */
 export function createPrivilegedEndpointTransportFactory(options = {}) {
     const platform = options.platform ?? process.platform
     const nativeWindowsConnector = platform === 'win32' && options.connectEndpoint === undefined ? createWindowsNativeEndpointConnector({ addonPath: options.windowsClientAddonPath }) : null
-    const connectEndpoint = options.connectEndpoint ?? nativeWindowsConnector ?? connectSocket
-    // The native Windows connector owns one absolute seven-second activation
-    // deadline across SCM start, pipe appearance, connect, and identity proof.
+    const nativeMacOsConnector = platform === 'darwin' && options.connectEndpoint === undefined ? createMacOsNativeEndpointConnector({ addonPath: options.macosClientAddonPath }) : null
+    const connectEndpoint = options.connectEndpoint ?? nativeWindowsConnector ?? nativeMacOsConnector ?? connectSocket
+    // The native connectors own one absolute seven-second activation/proof
+    // deadline. Windows also starts the fixed SCM service within that bound.
     // Keep a deterministic one-second outer watchdog margin; the separate
     // protocol deadline is armed only after verified transport readiness.
-    const connectTimeoutMs = options.connectTimeoutMs ?? (platform === 'win32' ? 8_000 : 2_000)
+    const connectTimeoutMs = options.connectTimeoutMs ?? (platform === 'linux' ? 2_000 : 8_000)
     const teardownTimeoutMs = options.teardownTimeoutMs ?? 1_000
     const maxBufferedBytes = options.maxBufferedBytes ?? 1_048_576
     const timers = options.timers ?? Object.freeze({ setTimeout, clearTimeout })

@@ -66,6 +66,11 @@ if (consoleErrorInjection !== null && !['before-mount', 'during-transition'].inc
 const trustedWebContents = new Set()
 let pendingDeviceList = null
 
+/** @param {string} phase - Bounded owned QA operation. @returns {void} Emits optional progress for hung-process diagnosis. */
+function traceVisualPhase(phase) {
+    if (process.env.OPENRDX_VISUAL_QA_TRACE === '1') console.error(`visual-phase: ${phase}`)
+}
+
 /**
  * Creates a manually controlled promise for the production renderer's initial
  * service list. Holding it proves the visible starting state; resolving it
@@ -815,7 +820,9 @@ async function writeVisualScreenshot(screenshotPath, image, injectRasterNoise, c
  * @returns {Promise<void>} Resolves after evidence and manifest are written.
  */
 async function runVisualQa() {
+    traceVisualPhase('app-ready-wait')
     await app.whenReady()
+    traceVisualPhase('app-ready')
     await mkdir(evidenceDirectory, { recursive: true })
     pendingDeviceList = createDeferredDeviceList()
     const window = new BrowserWindow(visualWindowOptions)
@@ -876,13 +883,16 @@ async function runVisualQa() {
             }
             await loadWithPageErrorCapture(debuggerSession, handleDebuggerMessage, navigateToRenderer)
         }
+        traceVisualPhase('initial-renderer-load')
         const { cursor: initialLoadCursor } = await runWithVisualErrorCursor(errorTracker, loadInitialRenderer)
+        traceVisualPhase('initial-renderer-mounted')
         await waitForSelector(window.webContents, '[data-service-pending="starting"]')
         errorTracker.assertEmptySince(initialLoadCursor, 'initial renderer load')
         // A transition-error probe targets the real preload/service transition;
         // the complete unrelated fixture matrix is exercised by positive runs.
         const fixtureEntries = consoleErrorInjection === 'during-transition' ? [] : matrix.filter(({ fixture }) => fixture)
         for (const entry of fixtureEntries) {
+            traceVisualPhase(`resize:${entry.state}:${entry.viewport.width}`)
             // Mount and exercise at the final capture size so Chromium cannot
             // retain sticky compositor layers from the preceding viewport.
             await setWindowSize(window, entry.viewport)
@@ -895,6 +905,7 @@ async function runVisualQa() {
                 return evidence
             }
             const { cursor: fixtureCursor, value: functionalEvidence } = await runWithVisualErrorCursor(errorTracker, exerciseAndRestoreFixture)
+            traceVisualPhase(`capture:${entry.state}:${entry.viewport.width}`)
             results.push(await captureEntry(window, entry, errorTracker, fixtureCursor, functionalEvidence))
         }
 
@@ -903,9 +914,13 @@ async function runVisualQa() {
         async function reloadRuntimeRenderer() {
             await window.webContents.reload()
         }
+        traceVisualPhase('runtime-reload')
         const { cursor: runtimeLoadCursor } = await runWithVisualErrorCursor(errorTracker, reloadRuntimeRenderer)
+        traceVisualPhase('runtime-starting-wait')
         await waitForSelector(window.webContents, '[data-service-pending="starting"]')
+        traceVisualPhase('runtime-starting-mounted')
         for (const entry of matrix.filter(({ state }) => state === 'starting-runtime')) {
+            traceVisualPhase(`runtime-capture:${entry.state}:${entry.viewport.width}`)
             results.push(await captureEntry(window, entry, errorTracker, runtimeLoadCursor))
         }
         errorTracker.assertEmptySince(runtimeLoadCursor, 'real-runtime renderer load and starting captures')
@@ -916,6 +931,7 @@ async function runVisualQa() {
             await injectConsoleError(window.webContents, 'during-transition')
         }
         const { cursor: transitionCursor } = await runWithVisualErrorCursor(errorTracker, transitionToReadyNoDevice)
+        traceVisualPhase('runtime-ready-wait')
         await waitForSelector(window.webContents, '[data-service-status="ready"]')
         await waitForPaint(window.webContents)
         for (const entry of matrix.filter(({ state }) => state === 'ready-no-device-runtime')) {

@@ -610,7 +610,7 @@ const bridgeFailureSchema = z
 export const actionResponseSchema = z.discriminatedUnion('ok', [z.object({ ok: z.literal(true) }).strict(), bridgeFailureSchema])
 
 /** Closed renderer-safe setup states for the packaged macOS launch daemon. */
-export const privilegedServiceSetupStateSchema = z.enum(['not-applicable', 'not-registered', 'enabled', 'requires-approval', 'not-found', 'invalid-signature', 'registration-failed'])
+export const privilegedServiceSetupStateSchema = z.enum(['not-applicable', 'not-registered', 'enabled', 'requires-approval', 'not-found', 'invalid-signature', 'registration-failed', 'installer-required', 'repair-required'])
 
 /** Safe current privileged-service setup result without native error details. */
 export const privilegedServiceSetupResponseSchema = z.discriminatedUnion('ok', [z.object({ ok: z.literal(true), state: privilegedServiceSetupStateSchema, reason: boundedReasonSchema.optional() }).strict(), bridgeFailureSchema])

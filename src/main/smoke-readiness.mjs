@@ -5,6 +5,17 @@ const DEFAULT_TIMEOUT_MS = 15_000
 const LIFECYCLE_FAILURE_CODES = Object.freeze(new Set(['smoke-renderer-destroyed', 'smoke-renderer-load-failed', 'smoke-renderer-process-gone']))
 
 /**
+ * Requires an authenticated native handshake for installed-service acceptance.
+ * Zero attached devices can pass authentication; physical access is separate.
+ * @param {object} readiness - Validated service readiness state.
+ * @returns {void} Resolves only after a privileged native handshake.
+ * @throws {Error} For unavailable, development or unprivileged service state.
+ */
+export function assertAuthenticatedServiceReadiness(readiness) {
+    if (readiness?.status !== 'ready' || readiness.mode !== 'native' || readiness.privileged !== true) throw new Error('installed-service-authentication-unverified')
+}
+
+/**
  * Reports a bounded failure category without exposing paths or native messages.
  * @param {object} readiness - Internal service readiness snapshot.
  * @returns {string} Stable unavailable reason, or none for non-failed startup.

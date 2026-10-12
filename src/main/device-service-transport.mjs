@@ -688,7 +688,7 @@ export function createChildProcessTransportFactory(options = {}) {
  * falls back; explicit development/tests retain the bounded stdio child.
  * Development alone forwards the explicit `sptiDiagnostics`/`onSptiDiagnostic`
  * capture options; packaged runtimes ignore both without opening a diagnostic sink.
- * @param {{isPackaged: boolean, platform?: 'darwin'|'win32'|'linux', elevateDevelopmentService?: boolean, spawnProcess?: Function, connectEndpoint?: Function, connectTimeoutMs?: number, teardownTimeoutMs?: number, maxBufferedBytes?: number, timers?: {setTimeout: Function, clearTimeout: Function}, verifyWindowsServerIdentity?: Function, windowsClientAddonPath?: string}} options - Main-owned runtime and injectable boundary.
+ * @param {{isPackaged: boolean, platform?: 'darwin'|'win32'|'linux', elevateDevelopmentService?: boolean, spawnProcess?: Function, connectEndpoint?: Function, connectTimeoutMs?: number, teardownTimeoutMs?: number, maxBufferedBytes?: number, timers?: {setTimeout: Function, clearTimeout: Function}, verifyWindowsServerIdentity?: Function, windowsClientAddonPath?: string, macosClientAddonPath?: string}} options - Main-owned runtime and injectable boundary.
  * @returns {Function} Exact transport factory for this runtime.
  * @throws {TypeError} When the production/development selector is ambiguous.
  */
@@ -705,7 +705,8 @@ export function createDeviceServiceTransportFactory(options) {
             teardownTimeoutMs: options.teardownTimeoutMs,
             timers: options.timers,
             verifyWindowsServerIdentity: options.verifyWindowsServerIdentity,
-            windowsClientAddonPath: options.windowsClientAddonPath
+            windowsClientAddonPath: options.windowsClientAddonPath,
+            macosClientAddonPath: options.macosClientAddonPath
         })
     }
     return createChildProcessTransportFactory({

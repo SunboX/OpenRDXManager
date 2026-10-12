@@ -71,6 +71,7 @@ const MAX_DISK_PARTITIONS: usize = 128;
 /// Official Windows GPT type for an ordinary data partition.
 const MICROSOFT_BASIC_DATA: windows::core::GUID = PARTITION_BASIC_DATA_GUID;
 
+pub(crate) mod device_access;
 mod format;
 mod layout;
 mod mac_layout;

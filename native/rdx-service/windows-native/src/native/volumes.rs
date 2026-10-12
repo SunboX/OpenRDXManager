@@ -561,7 +561,7 @@ fn volume_disk_extents(volume: HANDLE) -> Result<Vec<VolumeExtent>, NativeError>
 }
 
 /// Captures every identity field and ordered extent from one live volume handle.
-fn volume_topology(volume: HANDLE) -> Result<VolumeTopology, NativeError> {
+pub(super) fn volume_topology(volume: HANDLE) -> Result<VolumeTopology, NativeError> {
     query_volume_topology(storage_device_identity(volume), || {
         volume_disk_extents(volume)
     })

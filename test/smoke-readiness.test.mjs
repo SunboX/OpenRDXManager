@@ -5,7 +5,14 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import test from 'node:test'
 
-import { attachSmokeReadinessListeners, getServiceReadinessFailureReason, SmokeReadinessGate } from '../src/main/smoke-readiness.mjs'
+import { assertAuthenticatedServiceReadiness, attachSmokeReadinessListeners, getServiceReadinessFailureReason, SmokeReadinessGate } from '../src/main/smoke-readiness.mjs'
+
+test('installed-service acceptance requires a privileged native handshake', () => {
+    assert.doesNotThrow(() => assertAuthenticatedServiceReadiness({ status: 'ready', mode: 'native', privileged: true, hardwareReady: false }))
+    for (const state of [null, {}, { status: 'unavailable', mode: 'native', privileged: true }, { status: 'ready', mode: 'no-device', privileged: true }, { status: 'ready', mode: 'native', privileged: false }]) {
+        assert.throws(() => assertAuthenticatedServiceReadiness(state), /installed-service-authentication-unverified/)
+    }
+})
 
 test('startup diagnostics retain bounded failure reasons without exposing host paths or native messages', () => {
     assert.equal(getServiceReadinessFailureReason({ status: 'ready', reason: 'ignored' }), 'none')

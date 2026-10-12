@@ -3,6 +3,9 @@
 
 #include <Foundation/Foundation.h>
 #include <ServiceManagement/ServiceManagement.h>
+#include <Security/Security.h>
+#include <sys/stat.h>
+#include <errno.h>
 #include <node_api.h>
 
 namespace {
@@ -43,6 +46,36 @@ napi_value StateString(napi_env env, const char *state) {
         return nullptr;
     }
     return value;
+}
+
+/**
+ * Selects the sealed installer mode without taking renderer, environment or path
+ * inputs. A local policy artifact can only force verification, never readiness.
+ * Unsigned and ad-hoc portable copies require the administrator-owned installer.
+ */
+const char *InstalledMode() {
+    id mode = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"OpenRDXInstallationMode"];
+    if (mode != nil) return [mode isEqual:@"local"] ? "local" : "invalid";
+    struct stat metadata;
+    if (lstat("/Library/Application Support/OpenRDXManager/LocalTrust", &metadata) == 0 || errno != ENOENT) {
+        return "local";
+    }
+    SecCodeRef code = nullptr;
+    SecRequirementRef requirement = nullptr;
+    const CFStringRef expression = CFSTR("anchor apple generic and identifier \"com.openrdx.manager\"");
+    const OSStatus found = SecCodeCopySelf(kSecCSDefaultFlags, &code);
+    const OSStatus parsed = SecRequirementCreateWithString(expression, kSecCSDefaultFlags, &requirement);
+    const bool signedManager = found == errSecSuccess && parsed == errSecSuccess &&
+        SecCodeCheckValidity(code, kSecCSStrictValidate | kSecCSCheckAllArchitectures, requirement) == errSecSuccess;
+    if (requirement != nullptr) CFRelease(requirement);
+    if (code != nullptr) CFRelease(code);
+    return signedManager ? "signed" : "local";
+}
+
+/** Returns only the installer-owned mode selector, with no readiness claim. */
+napi_value InstallationMode(napi_env env, napi_callback_info info) {
+    if (!RequireZeroArguments(env, info)) return nullptr;
+    @autoreleasepool { return StateString(env, InstalledMode()); }
 }
 
 /** Returns the one fixed launch-daemon service descriptor. */
@@ -90,6 +123,7 @@ napi_value Status(napi_env env, napi_callback_info info) {
         return nullptr;
     }
     @autoreleasepool {
+        if (strcmp(InstalledMode(), "signed") != 0) return StateString(env, "installer-required");
         return StateString(env, MapStatus(DaemonService().status));
     }
 }
@@ -100,6 +134,7 @@ napi_value RegisterService(napi_env env, napi_callback_info info) {
         return nullptr;
     }
     @autoreleasepool {
+        if (strcmp(InstalledMode(), "signed") != 0) return StateString(env, "installer-required");
         NSError *error = nil;
         SMAppService *service = DaemonService();
         if ([service registerAndReturnError:&error]) {
@@ -115,6 +150,7 @@ napi_value UnregisterService(napi_env env, napi_callback_info info) {
         return nullptr;
     }
     @autoreleasepool {
+        if (strcmp(InstalledMode(), "signed") != 0) return StateString(env, "installer-required");
         NSError *error = nil;
         SMAppService *service = DaemonService();
         if ([service unregisterAndReturnError:&error]) {
@@ -133,6 +169,11 @@ napi_value OpenApprovalSettings(napi_env env, napi_callback_info info) {
         return nullptr;
     }
     @autoreleasepool {
+        if (strcmp(InstalledMode(), "signed") != 0) {
+            napi_value denied;
+            napi_get_boolean(env, false, &denied);
+            return denied;
+        }
         [SMAppService openSystemSettingsLoginItems];
     }
     napi_value result;
@@ -146,6 +187,7 @@ napi_value OpenApprovalSettings(napi_env env, napi_callback_info info) {
 /** Defines the complete fixed N-API export surface. */
 napi_value Initialize(napi_env env, napi_value exports) {
     const napi_property_descriptor properties[] = {
+        {"installationMode", nullptr, InstallationMode, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"status", nullptr, Status, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"registerService", nullptr, RegisterService, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"unregisterService", nullptr, UnregisterService, nullptr, nullptr, nullptr, napi_default, nullptr},

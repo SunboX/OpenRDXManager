@@ -6,10 +6,57 @@
 `openrdx-hardware-service.xml` is declarative packaging metadata, not an
 automatic installer or elevation request. It records a demand-started,
 noninteractive `LocalService` identity and the minimum access expected by the
-adapter. The companion `openrdx-service-acl.exe` plus
-`provision-openrdx-service-access.ps1` form the installable, idempotent service
-DACL contract invoked by the signed elevated installer. The thin PowerShell
-wrapper makes no ACL or identity decision and is never invoked by Electron.
+adapter. The unsigned locally trusted NSIS installer invokes only the native
+`openrdx-local-install.exe` fixed actions `prepare`, `install`, `verify`, `repair`
+and `remove`. Setup accepts a live Manager PID for Install/Repair and derives
+its unelevated active-console SID and retained executable identity from the
+kernel; no root, service, account, SID or device path is accepted. The companion
+`openrdx-service-acl.exe` retains a separate Authenticode provisioning route.
+Signed-only legacy client/server runtime authentication is not implemented by
+this local-enrollment change and requires its own acceptance gate.
+
+Local mode fixes the runtime at `C:\Program Files\OpenRDXManager` and stores
+administrator-protected policy at `C:\ProgramData\OpenRDXManager\LocalTrust`.
+Every runtime object has a protected complete owner/DACL, single-link files,
+no reparses and retained handles during authentication and connected sessions.
+Enrollment pins final complete hashes, including NSIS-generated uninstaller
+files. The service remains demand-started LocalService with its enabled
+`NT SERVICE\OpenRDXHardwareService` SID. Incoming setup proves prior ownership
+before payload replacement, refuses an active hardware operation, revokes user
+START and runtime enrollment during quiescence, and publishes the new enrollment
+only after all service, Manager and device policy checks pass. Failures revoke
+admission; atomic policy writes clean only their own retained temporary identity.
+The checksum-pinned NSIS bundle 1.2.1 creates an administrator-owned incoming
+source directory. The maintained installer and uninstaller templates select
+`$WINDIR\Temp` with the pinned compiler's `UnsafeStrCpy` instruction before any
+plugin call; ordinary `StrCpy` cannot modify NSIS's read-only `$TEMP` variable.
+The hook removes the incoming directory's initial Everyone child-deletion grant
+before extracting the provisioner and fixed `pending-runtime.json` sibling.
+Native preflight retains both files, their protected parent and every protected
+ancestor, denies user-owned or policy-mutable ancestry, and validates the
+strict bounded inventory and the provisioner's own SHA-256, and records protected
+`history.json` before creating the empty application root or extracting payload.
+An interrupted first extraction can therefore be repaired. Uninstaller preflight
+quiesces and revokes admission in `un.onInit` before any process shutdown helper;
+removal still precedes payload deletion. Only elevated recovery
+after history proof accepts the exact privileged inherited read-only policy and
+normalizes it; runtime authentication still requires protected complete ACLs.
+Protected `history.json` permits elevated repair/removal of corrupt files without
+relaxing runtime hash authentication. History and device permission records remain
+when removing runtime enrollment, preserving safe deferred restoration.
+
+Device setup adds only that service SID to positively identified RDX device
+instances and exclusively mapped volume instances. It never changes a disk-class
+ACL. Protected records preserve each prior instance policy; repair accepts only
+its exact prior/installed policy and removal restores only unchanged matching
+instance, dock serial and volume topology. Unknown or administrator-modified
+policies fail closed or are preserved. Effective driver access after reconnect or
+restart and physical RDX behavior remain separate unverified gates; LocalSystem
+is never a fallback. The disposable installed acceptance script is
+`scripts/verify-windows-installation.ps1`; it requires an actual interactive
+console and launches the installed Manager with a limited token before accepting
+the authenticated-service marker. Compilation and no-device tests do not satisfy
+that installed or physical gate.
 The executable enters the Windows SCM dispatcher before opening the pipe,
 registers only STOP and SHUTDOWN controls, and publishes the exact
 `START_PENDING` -> `RUNNING` -> `STOP_PENDING` -> `STOPPED` lifecycle. The

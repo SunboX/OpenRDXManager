@@ -150,13 +150,23 @@ pub fn apply_manager_service_access(
 ) -> Result<ManagerServiceAccessOutcome, NativeError> {
     #[cfg(windows)]
     {
-        windows_impl::apply(command)
+        windows_impl::apply(command, false)
     }
     #[cfg(not(windows))]
     {
         let _ = command;
         Err(NativeError::UnsupportedPlatform)
     }
+}
+/// Uses a protected candidate solely during elevated fixed-path installer setup.
+#[cfg(windows)]
+pub(crate) fn apply_installer_manager_service_access(
+    command: ManagerServiceAccessCommand,
+) -> Result<ManagerServiceAccessOutcome, NativeError> {
+    if !crate::current_process_is_elevated() {
+        return Err(NativeError::AccessDenied);
+    }
+    windows_impl::apply(command, true)
 }
 #[cfg(windows)]
 mod windows_helpers;
@@ -282,9 +292,10 @@ mod windows_impl {
     /// Runs one fail-closed service access operation.
     pub(super) fn apply(
         command: ManagerServiceAccessCommand,
+        candidate: bool,
     ) -> Result<ManagerServiceAccessOutcome, NativeError> {
         let (expected_binary, expected_identity, expected_manager, expected_manager_identity) =
-            expected_package_binaries()?;
+            expected_package_binaries(candidate)?;
         let manager_process = open_manager_process(command.manager_process_id())?;
         validate_manager_process(
             &manager_process,
@@ -425,6 +436,25 @@ mod windows_impl {
         unsafe { OpenProcessToken(process.0, TOKEN_QUERY, &mut token) }
             .map_err(map_native_error)?;
         let token = OwnedHandle(token);
+        // Setup pins a live, unelevated Manager rather than granting the
+        // administrator's installer token interactive service rights.
+        let mut elevation = windows::Win32::Security::TOKEN_ELEVATION::default();
+        let mut returned_elevation = 0;
+        unsafe {
+            GetTokenInformation(
+                token.0,
+                windows::Win32::Security::TokenElevation,
+                Some((&mut elevation as *mut windows::Win32::Security::TOKEN_ELEVATION).cast()),
+                size_of::<windows::Win32::Security::TOKEN_ELEVATION>() as u32,
+                &mut returned_elevation,
+            )
+        }
+        .map_err(map_native_error)?;
+        if returned_elevation as usize != size_of::<windows::Win32::Security::TOKEN_ELEVATION>()
+            || elevation.TokenIsElevated != 0
+        {
+            return Err(NativeError::AccessDenied);
+        }
         let mut token_session = u32::MAX;
         let mut returned = 0_u32;
         // SAFETY: output is exact writable u32 storage for TokenSessionId.
@@ -566,8 +596,9 @@ mod windows_impl {
     }
 
     /// Resolves fixed package binaries and verifies the installed manager signature.
-    fn expected_package_binaries()
-    -> Result<(PathBuf, FileIdentity, PathBuf, FileIdentity), NativeError> {
+    fn expected_package_binaries(
+        candidate: bool,
+    ) -> Result<(PathBuf, FileIdentity, PathBuf, FileIdentity), NativeError> {
         let provisioner = std::env::current_exe().map_err(|_| NativeError::Other)?;
         let native_windows = provisioner.parent().ok_or(NativeError::Other)?;
         let resources = native_windows
@@ -579,7 +610,23 @@ mod windows_impl {
         let manager_binary = install_root.join("OpenRDXManager.exe");
         let service_identity = file_identity(&service_binary)?;
         let manager_identity = file_identity(&manager_binary)?;
-        verify_trusted_signature(&manager_binary)?;
+        // Local mode is explicitly selected by fixed protected enrollment, never
+        // as a fallback after Authenticode failure. Malformed enrollment denies.
+        let local_policy =
+            Path::new(crate::local_trust::LOCAL_ENROLLMENT_ROOT).join("runtime.json");
+        if candidate {
+            let _lease = crate::local_trust::verify_packaged_runtime_lease()?;
+            if install_root != Path::new(crate::local_trust::LOCAL_RUNTIME_ROOT) {
+                return Err(NativeError::AccessDenied);
+            }
+        } else if local_policy.exists() {
+            crate::verify_installed_local_trust()?;
+            if install_root != Path::new(crate::local_trust::LOCAL_RUNTIME_ROOT) {
+                return Err(NativeError::AccessDenied);
+            }
+        } else {
+            verify_trusted_signature(&manager_binary)?;
+        }
         Ok((
             service_binary,
             service_identity,

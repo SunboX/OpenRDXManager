@@ -7,18 +7,10 @@ use std::fmt::{Display, Formatter};
 use std::io::{self, Read};
 use std::time::{Duration, Instant, SystemTime};
 
-#[cfg(target_os = "macos")]
-use std::fs::File;
-#[cfg(target_os = "macos")]
-use std::os::unix::fs::MetadataExt;
-
 use crate::service::MAX_SERVICE_FRAME_BYTES;
 
 const MAX_APPLICATION_IDENTITY_BYTES: usize = 128;
 const MAX_PEER_EVIDENCE_AGE: Duration = Duration::from_secs(5);
-#[cfg(target_os = "macos")]
-const MACOS_MANAGER_REQUIREMENT_PATH: &str =
-    "/Library/PrivilegedHelperTools/com.openrdx.manager.requirement";
 
 const MACOS_MANAGER_REQUIREMENT_PREFIX: &str = "identifier \"com.openrdx.manager\" and anchor apple generic and certificate leaf[subject.OU] = \"";
 
@@ -46,14 +38,30 @@ pub fn macos_manager_designated_requirement_for_team(
     ))
 }
 
-/// Returns the manager requirement embedded by the controlled package build.
+/// Selects the controlled signed-team policy or explicit fixed local enrollment.
 ///
 /// # Errors
 ///
-/// Returns insufficient permission when this binary was not built for one
-/// exact signed manager team.
+/// Returns insufficient permission when the embedded signed-team policy is
+/// malformed or the separately selected local enrollment cannot be verified.
+/// A failed signed policy never downgrades to locally trusted mode.
 pub fn embedded_macos_manager_designated_requirement() -> Result<String, EndpointAccessError> {
-    macos_manager_designated_requirement_for_team(option_env!("OPENRDX_MANAGER_TEAM_ID"))
+    let canonical = option_env!("OPENRDX_MACOS_TEAM_ID");
+    let legacy = option_env!("OPENRDX_MANAGER_TEAM_ID");
+    if canonical.is_some() && legacy.is_some() && canonical != legacy {
+        return Err(EndpointAccessError::InsufficientPermission);
+    }
+    if let Some(team) = canonical.or(legacy) {
+        return macos_manager_designated_requirement_for_team(Some(team));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        load_macos_manager_designated_requirement()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err(EndpointAccessError::InsufficientPermission)
+    }
 }
 
 /// A framed endpoint reader that enforces one absolute first-frame deadline.
@@ -387,10 +395,10 @@ impl Display for EndpointAccessError {
 
 impl std::error::Error for EndpointAccessError {}
 
-/// Loads the root-provisioned manager designated requirement from a fixed path.
+/// Loads canonical local manager identity only after fixed protected enrollment verification.
 ///
-/// The already-open file must be a root-owned, single-link regular file with
-/// mode `0600`; the read is bounded and returned text is trimmed once.
+/// The inventory and complete installed app are verified with the shared retained-file
+/// verifier. No caller-authored requirement text or arbitrary path is accepted.
 ///
 /// # Errors
 ///
@@ -398,30 +406,10 @@ impl std::error::Error for EndpointAccessError {}
 /// non-UTF-8, or weakly protected requirement evidence.
 #[cfg(target_os = "macos")]
 pub fn load_macos_manager_designated_requirement() -> Result<String, EndpointAccessError> {
-    let file = File::open(MACOS_MANAGER_REQUIREMENT_PATH)
+    let inventory = rdx_macos_native::local_trust::verify_installed_local_trust()
         .map_err(|_| EndpointAccessError::InsufficientPermission)?;
-    let metadata = file
-        .metadata()
-        .map_err(|_| EndpointAccessError::InsufficientPermission)?;
-    if !metadata.is_file()
-        || metadata.uid() != 0
-        || metadata.nlink() != 1
-        || metadata.mode() & 0o777 != 0o600
-    {
-        return Err(EndpointAccessError::InsufficientPermission);
-    }
-    let mut bounded = String::new();
-    file.take((MAX_APPLICATION_IDENTITY_BYTES as u64 * 16) + 1)
-        .read_to_string(&mut bounded)
-        .map_err(|_| EndpointAccessError::InsufficientPermission)?;
-    if bounded.len() > MAX_APPLICATION_IDENTITY_BYTES * 16 {
-        return Err(EndpointAccessError::InsufficientPermission);
-    }
-    let requirement = bounded.trim();
-    if requirement.is_empty() || requirement.len() != bounded.trim_end().len() {
-        return Err(EndpointAccessError::InsufficientPermission);
-    }
-    Ok(requirement.to_owned())
+    rdx_macos_native::local_manager_requirement(&inventory.manager_cd_hash)
+        .map_err(|_| EndpointAccessError::InsufficientPermission)
 }
 
 /// Validates one bounded reverse-domain application identifier.

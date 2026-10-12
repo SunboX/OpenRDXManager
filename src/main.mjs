@@ -28,7 +28,7 @@ import { scheduleAfterMcpResponse } from './main/mcp/response-actions.mjs'
 import { resolveStartupLanguage, SettingsService } from './main/settings-service.mjs'
 import { ShutdownController } from './main/shutdown-controller.mjs'
 import { containBrokenConsolePipes } from './main/process-output.mjs'
-import { attachSmokeReadinessListeners, getServiceReadinessFailureReason, SmokeReadinessError, SmokeReadinessGate } from './main/smoke-readiness.mjs'
+import { assertAuthenticatedServiceReadiness, attachSmokeReadinessListeners, getServiceReadinessFailureReason, SmokeReadinessError, SmokeReadinessGate } from './main/smoke-readiness.mjs'
 import { createSupportRuntimeServices, runStartupUpdateCheck } from './main/support-runtime.mjs'
 import { AutoScanController, DesktopLifecycleController, TrayController } from './main/tray-controller.mjs'
 import { createTranslator } from './renderer/i18n.mjs'
@@ -44,7 +44,8 @@ const htmlUrl = pathToFileURL(htmlPath).href
 // A renamed development executable still runs the default app with an explicit
 // source directory. Actual packaged launches do not carry process.defaultApp.
 const isPackagedRuntime = app.isPackaged && process.defaultApp !== true
-const isSmokeTest = process.argv.includes('--smoke-test')
+const isServiceAuthenticationTest = process.argv.includes('--service-auth-test')
+const isSmokeTest = process.argv.includes('--smoke-test') || isServiceAuthenticationTest
 const trustedWebContents = new Set()
 let serviceRuntime = null
 let mcpController = null
@@ -134,9 +135,23 @@ function loadMacOsServiceManagementAddon() {
     return require(join(process.resourcesPath, 'native', 'macos', 'openrdx-service-management.node'))
 }
 
+/**
+ * Loads only the fixed packaged read-only macOS local trust verifier. Missing
+ * native verification leaves setup disabled and directs the user to repair.
+ * @returns {object|null} Native verifier for packaged macOS, otherwise null.
+ */
+function loadMacOsLocalTrustAddon() {
+    if (process.platform !== 'darwin' || isPackagedRuntime !== true) return null
+    try {
+        return require(join(process.resourcesPath, 'native', 'macos', 'openrdx-macos-client.node'))
+    } catch {
+        return null
+    }
+}
+
 /** @returns {Promise<object>} Refreshes ServiceManagement status through the strict IPC shape. */
 async function getPrivilegedServiceSetup() {
-    const status = privilegedServiceController.getStatus()
+    const status = await privilegedServiceController.getStatus()
     return { ok: true, ...status }
 }
 
@@ -382,7 +397,7 @@ async function start() {
     const startupLanguage = resolveStartupLanguage({ argv: process.argv, persistedLanguage: settingsService.getDesktopState().language, warn: console.warn })
     settingsService.setSessionLanguage(startupLanguage.language)
     desktopTranslator = createTranslator(getCatalog(startupLanguage.language), englishCatalog)
-    privilegedServiceController = createMacOsPrivilegedServiceController({ addon: loadMacOsServiceManagementAddon(), isPackaged: isPackagedRuntime, platform: process.platform })
+    privilegedServiceController = createMacOsPrivilegedServiceController({ addon: loadMacOsServiceManagementAddon(), localTrustAddon: loadMacOsLocalTrustAddon(), isPackaged: isPackagedRuntime, platform: process.platform })
     services.service = Object.freeze({
         getSetup: getPrivilegedServiceSetup,
         openApprovalSettings: privilegedServiceController.openApprovalSettings,
@@ -475,11 +490,13 @@ async function start() {
 
     if (isSmokeTest) {
         const readiness = await smokeCompletion
+        if (isServiceAuthenticationTest) assertAuthenticatedServiceReadiness(readiness.service)
         await autoScanController.stop()
         trayController.destroy()
         await stopApplicationRuntime()
         smokeReadiness.dispose()
         console.log(`OpenRDXManager smoke test passed: renderer=${readiness.renderer} service=${readiness.service.status} mode=${readiness.service.mode ?? 'none'} hardware=${readiness.service.hardwareReady === true} capability=${readiness.service.platformCapability?.reason ?? readiness.service.platformCapability?.state ?? 'none'} reason=${getServiceReadinessFailureReason(readiness.service)}`)
+        if (isServiceAuthenticationTest) console.log(`OpenRDXManager installed service authentication passed: platform=${process.platform}`)
         app.quit()
         return
     }

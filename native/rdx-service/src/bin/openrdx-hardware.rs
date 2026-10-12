@@ -187,7 +187,10 @@ fn run_platform_endpoint(platform: ServicePlatform) -> Result<(), ()> {
     let listener =
         rdx_macos_native::activate_launchd_manager_endpoint(&requirement).map_err(|_| ())?;
     for _ in 0..rdx_macos_native::launchd_endpoint_contract().max_connections {
-        let connection = listener.accept().map_err(|_| ())?;
+        let connection = match listener.accept() {
+            Ok(connection) => connection,
+            Err(error) => return classify_macos_endpoint_failure(error).map_err(|_| ()),
+        };
         let reader = connection.try_clone().map_err(|_| ())?;
         let reader =
             HandshakeDeadlineReader::new(reader, FIRST_FRAME_TIMEOUT, |reader, timeout| {
@@ -217,6 +220,18 @@ fn run_platform_endpoint(platform: ServicePlatform) -> Result<(), ()> {
         }
     }
     Ok(())
+}
+
+/// Retire only an ordinary empty-listener timeout; launchd retains activation.
+#[cfg(any(target_os = "macos", test))]
+fn classify_macos_endpoint_failure(
+    error: rdx_macos_native::NativeError,
+) -> Result<(), rdx_macos_native::NativeError> {
+    if error == rdx_macos_native::NativeError::TimedOut {
+        Ok(())
+    } else {
+        Err(error)
+    }
 }
 
 /// Runs one authenticated systemd socket connection on Linux.
@@ -586,7 +601,8 @@ fn main() -> ExitCode {
 mod tests {
     use super::{
         LinuxAcceptDisposition, StopAwareReader, WindowsAcceptDisposition,
-        classify_linux_endpoint_failure, classify_windows_endpoint_failure,
+        classify_linux_endpoint_failure, classify_macos_endpoint_failure,
+        classify_windows_endpoint_failure,
     };
     use rdx_windows_native::NativeError;
     use std::cell::Cell;
@@ -821,6 +837,22 @@ mod tests {
             classify_windows_endpoint_failure(NativeError::Other, false),
             Err(NativeError::Other)
         );
+    }
+
+    #[test]
+    fn macos_idle_accept_timeout_is_the_only_clean_listener_retirement() {
+        use rdx_macos_native::NativeError;
+        assert_eq!(
+            classify_macos_endpoint_failure(NativeError::TimedOut),
+            Ok(())
+        );
+        for error in [
+            NativeError::Other,
+            NativeError::AccessDenied,
+            NativeError::TransportUnavailable,
+        ] {
+            assert_eq!(classify_macos_endpoint_failure(error), Err(error));
+        }
     }
 
     #[test]

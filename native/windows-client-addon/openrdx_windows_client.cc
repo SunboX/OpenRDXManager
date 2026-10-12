@@ -21,6 +21,12 @@
 #include <utility>
 #include <vector>
 
+// Native trust policy is shared with the Rust service; successful leases retain
+// all protected runtime handles until this connection is destroyed.
+extern "C" void* openrdx_local_trust_open();
+extern "C" void openrdx_local_trust_close(void* lease);
+extern "C" std::uint8_t openrdx_local_trust_service_sid(std::uint32_t pid);
+
 namespace {
 
 static_assert(sizeof(char16_t) == sizeof(wchar_t));
@@ -70,6 +76,7 @@ struct Connection {
   napi_ref wrapper = nullptr;
   napi_threadsafe_function events = nullptr;
   std::wstring expected_executable;
+  std::shared_ptr<void> trust;
   std::atomic<bool> closing{false};
   std::atomic<bool> wrapped{false};
   std::atomic<HANDLE> pipe{INVALID_HANDLE_VALUE};
@@ -81,6 +88,7 @@ struct Connection {
 struct ServiceConfigSnapshot {
   DWORD service_type = 0;
   DWORD start_type = 0;
+  DWORD service_sid_type = 0;
   DWORD error_control = 0;
   DWORD tag = 0;
   std::wstring binary_path;
@@ -359,7 +367,8 @@ bool ProcessIsLocalServiceAndExactFile(DWORD pid,
   if (!GetTokenInformation(token.value, TokenUser, buffer.data(), bytes, &bytes))
     return false;
   const auto* user = reinterpret_cast<const TOKEN_USER*>(buffer.data());
-  return IsWellKnownSid(user->User.Sid, WinLocalServiceSid) != FALSE;
+  return IsWellKnownSid(user->User.Sid, WinLocalServiceSid) != FALSE &&
+         openrdx_local_trust_service_sid(pid) == 1;
 }
 
 bool CopyBoundedString(const wchar_t* input, const std::uint8_t* begin,
@@ -420,6 +429,12 @@ bool QueryServiceSnapshot(SC_HANDLE service, SERVICE_STATUS_PROCESS* status,
   auto* bytes = reinterpret_cast<std::uint8_t*>(storage.data());
   auto* config = reinterpret_cast<QUERY_SERVICE_CONFIGW*>(storage.data());
   if (!QueryServiceConfigW(service, config, needed, &needed)) return false;
+  SERVICE_SID_INFO sid_info{};
+  DWORD sid_bytes = 0;
+  if (!QueryServiceConfig2W(service, SERVICE_CONFIG_SERVICE_SID_INFO,
+                           reinterpret_cast<BYTE*>(&sid_info), sizeof(sid_info),
+                           &sid_bytes)) return false;
+  snapshot->service_sid_type = sid_info.dwServiceSidType;
   snapshot->service_type = config->dwServiceType;
   snapshot->start_type = config->dwStartType;
   snapshot->error_control = config->dwErrorControl;
@@ -559,7 +574,6 @@ const char* EnsureServiceRunning(const std::wstring& expected,
     if (delay == 0) return "service-exited";
     Sleep(delay);
   }
-  return "service-exited";
 }
 
 bool ImmutableServiceConfigMatches(const ServiceConfigSnapshot& config,
@@ -568,6 +582,7 @@ bool ImmutableServiceConfigMatches(const ServiceConfigSnapshot& config,
   const std::wstring exact_command = L"\"" + expected + L"\"" + kServiceArguments;
   return config.service_type == SERVICE_WIN32_OWN_PROCESS &&
          config.start_type == SERVICE_DEMAND_START &&
+         config.service_sid_type == SERVICE_SID_TYPE_UNRESTRICTED &&
          config.error_control == SERVICE_ERROR_NORMAL && config.tag == 0 &&
          config.binary_path == exact_command && config.load_order_group.empty() &&
          config.dependencies.empty() &&
@@ -648,8 +663,16 @@ HANDLE OpenVerifiedPipe(const std::wstring& expected, const char** reason) {
 
 void Worker(Connection* connection) {
   const char* failure = nullptr;
-  HANDLE pipe = OpenVerifiedPipe(connection->expected_executable, &failure);
+  connection->trust = std::shared_ptr<void>(openrdx_local_trust_open(),
+                                             openrdx_local_trust_close);
+  HANDLE pipe = INVALID_HANDLE_VALUE;
+  if (connection->trust) {
+    pipe = OpenVerifiedPipe(connection->expected_executable, &failure);
+  } else {
+    failure = "service-identity-unverified";
+  }
   if (pipe == INVALID_HANDLE_VALUE) {
+    connection->trust.reset();
     Emit(connection, std::make_unique<Event>(Event{EventKind::kError, {}, failure}));
     connection->closing.store(true, std::memory_order_release);
     Emit(connection, std::make_unique<Event>(Event{EventKind::kClosed, {}, nullptr}));
@@ -712,6 +735,7 @@ void Worker(Connection* connection) {
       !connection->closing.load(std::memory_order_acquire)) {
     Emit(connection, std::make_unique<Event>(Event{EventKind::kError, {}, failure}));
   }
+  connection->trust.reset();
   connection->closing.store(true, std::memory_order_release);
   Emit(connection, std::make_unique<Event>(Event{EventKind::kClosed, {}, nullptr}));
   napi_release_threadsafe_function(connection->events, napi_tsfn_release);

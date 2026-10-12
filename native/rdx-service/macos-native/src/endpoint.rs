@@ -79,6 +79,25 @@ impl LaunchdManagerEndpointListener {
     pub fn accept(&self) -> Result<ManagerEndpointConnection, NativeError> {
         #[cfg(target_os = "macos")]
         {
+            if self
+                .requirement
+                .to_bytes()
+                .starts_with(b"identifier \"com.openrdx.manager\" and cdhash ")
+            {
+                let inventory = crate::local_trust::verify_installed_local_trust()?;
+                let expected = local_manager_requirement(&inventory.manager_cd_hash)?;
+                if self.requirement.to_bytes() != expected.as_bytes() {
+                    return Err(NativeError::AccessDenied);
+                }
+            } else {
+                // Team authenticity is proven against the accepted audit token
+                // below. Before admission, independently refuse older/unfused
+                // signed apps and user-owned/writable or redirected runtimes.
+                // Native peer validation then checks the whole nested seal and
+                // refuses sealed local markers on this distinct signed route.
+                rdx_local_trust::verify_protected_signed_macos_runtime()
+                    .map_err(|_| NativeError::AccessDenied)?;
+            }
             let mut socket = -1;
             let mut user_id = 0_u32;
             // SAFETY: the listener and requirement are owned and live, and C
@@ -207,8 +226,9 @@ impl Write for ManagerEndpointConnection {
 
 /// Adopts one launchd-activated socket and accepts an exact signed manager.
 ///
-/// The requirement must pin the bundle identifier, Apple anchor, and signing
-/// team. The C boundary binds validation to the accepted socket's audit token.
+/// The requirement pins either the signed team or protected enrolled cdhash.
+/// The C boundary binds validation to the accepted socket audit token and fixed
+/// executable path; local sessions also verify the protected complete runtime.
 ///
 /// # Errors
 ///
@@ -229,7 +249,7 @@ pub fn accept_launchd_manager_endpoint(
 pub fn activate_launchd_manager_endpoint(
     designated_requirement: &str,
 ) -> Result<LaunchdManagerEndpointListener, NativeError> {
-    if !requirement_is_pinned(designated_requirement) {
+    if !manager_requirement_is_pinned(designated_requirement) {
         return Err(NativeError::InvalidRequest);
     }
     #[cfg(target_os = "macos")]
@@ -282,8 +302,15 @@ fn connection_from_status(
     Ok(ManagerEndpointConnection { stream, user_id })
 }
 
-/// Requires an exact identifier, Apple anchor, and pinned certificate team.
-fn requirement_is_pinned(requirement: &str) -> bool {
+/// Accepts only canonical signed-team or locally enrolled generation requirements.
+pub fn manager_requirement_is_pinned(requirement: &str) -> bool {
+    const LOCAL_PREFIX: &str = "identifier \"com.openrdx.manager\" and cdhash H\"";
+    if let Some(hash) = requirement
+        .strip_prefix(LOCAL_PREFIX)
+        .and_then(|text| text.strip_suffix('"'))
+    {
+        return valid_cdhash(hash);
+    }
     const PREFIX: &str = "identifier \"com.openrdx.manager\" and anchor apple generic and certificate leaf[subject.OU] = \"";
     let Some(team_identifier) = requirement
         .strip_prefix(PREFIX)
@@ -296,4 +323,25 @@ fn requirement_is_pinned(requirement: &str) -> bool {
         && team_identifier
             .bytes()
             .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+}
+
+/// Constructs the sole accepted ad-hoc manager requirement from protected enrollment.
+///
+/// # Errors
+/// Returns invalid request for any non-canonical twenty-byte CodeDirectory hash.
+pub fn local_manager_requirement(cdhash: &str) -> Result<String, NativeError> {
+    if !valid_cdhash(cdhash) {
+        return Err(NativeError::InvalidRequest);
+    }
+    Ok(format!(
+        "identifier \"com.openrdx.manager\" and cdhash H\"{cdhash}\""
+    ))
+}
+
+/// Accepts only the lower-case hexadecimal canonical enrollment format.
+fn valid_cdhash(hash: &str) -> bool {
+    hash.len() == 40
+        && hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }

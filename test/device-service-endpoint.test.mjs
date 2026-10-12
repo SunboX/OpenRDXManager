@@ -533,3 +533,80 @@ test('service client preserves all typed Windows startup reasons and sanitizes u
         })
     }
 })
+
+test('macOS endpoint rejects an unauthenticated helper before ready or protocol data', async () => {
+    const socket = createSocket()
+    const factory = createDeviceServiceTransportFactory({ connectEndpoint: () => socket, isPackaged: true, platform: 'darwin' })
+    const transport = factory({ command: '/ignored', args: [] })
+    const events = []
+    transport.on('ready', () => events.push('ready'))
+    transport.on('data', () => events.push('data'))
+    transport.on('error', (error) => events.push(error.reason))
+    assert.deepEqual(transport.write(Buffer.from([1])), { ok: false, reason: 'service-unavailable' })
+    socket.emit('connect')
+    socket.emit('data', Buffer.from([1]))
+    await new Promise(setImmediate)
+    assert.equal(socket.destroyed, true)
+    assert.deepEqual(events, ['service-identity-unverified'])
+})
+
+test('macOS endpoint admits bytes only after the retained native socket proves helper identity', async () => {
+    const socket = createSocket()
+    socket.serverIdentityVerified = () => true
+    const factory = createDeviceServiceTransportFactory({ connectEndpoint: () => socket, isPackaged: true, platform: 'darwin' })
+    const transport = factory({ command: '/ignored', args: [] })
+    const events = []
+    transport.on('ready', () => events.push('ready'))
+    transport.on('data', () => events.push('data'))
+    socket.emit('connect')
+    await new Promise(setImmediate)
+    socket.emit('data', Buffer.from([1]))
+    assert.deepEqual(events, ['ready', 'data'])
+    assert.deepEqual(transport.write(Buffer.from([1])), { ok: true })
+    await transport.close()
+})
+
+test('macOS retained native socket write failure terminates admission instead of reporting backpressure', async () => {
+    const socket = createSocket()
+    socket.serverIdentityVerified = () => true
+    socket.write = () => false
+    const factory = createDeviceServiceTransportFactory({ connectEndpoint: () => socket, isPackaged: true, platform: 'darwin' })
+    const transport = factory({ command: '/ignored', args: [] })
+    const errors = []
+    transport.on('error', (error) => errors.push(error))
+    socket.emit('connect')
+    await new Promise(setImmediate)
+    assert.deepEqual(transport.write(Buffer.from([1])), { ok: false, reason: 'service-unavailable' })
+    assert.deepEqual(errors, [{ reason: 'service-exited' }])
+    assert.equal(socket.destroyed, true)
+})
+
+test('macOS endpoint discards late bytes after identity-verified transport failure', async () => {
+    const socket = createSocket()
+    socket.serverIdentityVerified = () => true
+    const factory = createDeviceServiceTransportFactory({ connectEndpoint: () => socket, isPackaged: true, platform: 'darwin' })
+    const transport = factory({ command: '/ignored', args: [] })
+    const bytes = []
+    transport.on('error', () => {})
+    transport.on('data', (data) => bytes.push(data))
+    socket.emit('connect')
+    await new Promise(setImmediate)
+    socket.emit('error', new Error('disconnected'))
+    socket.emit('data', Buffer.from('late'))
+    assert.deepEqual(bytes, [])
+})
+
+test('macOS verified native connect and immediate data preserve ordered admission within one callback turn', () => {
+    const socket = createSocket()
+    socket.serverIdentityVerified = () => true
+    const factory = createDeviceServiceTransportFactory({ connectEndpoint: () => socket, isPackaged: true, platform: 'darwin' })
+    const transport = factory({ command: '/ignored', args: [] })
+    const events = []
+    transport.on('ready', () => events.push('ready'))
+    transport.on('data', () => events.push('data'))
+    transport.on('error', (error) => events.push(error.reason))
+    socket.emit('connect')
+    socket.emit('data', Buffer.from([1]))
+    assert.deepEqual(events, ['ready', 'data'])
+    socket.emit('error', new Error('cleanup'))
+})

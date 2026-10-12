@@ -45,6 +45,11 @@ export async function buildWindowsClientAddon({ platform = process.platform, roo
     if (platform !== 'win32') return { runtimePath: paths.runtimePath, skipped: true }
     await requireRegularFile(join(paths.addonRoot, 'binding.gyp'))
     await requireRegularFile(join(paths.addonRoot, 'openrdx_windows_client.cc'))
+    await execFileAsync('cargo', ['build', '--release', '--locked', '--manifest-path', join(resolve(root), 'native', 'rdx-service', 'windows-native', 'Cargo.toml'), '--lib'], {
+        cwd: resolve(root),
+        windowsHide: true,
+        maxBuffer: 16 * 1024 * 1024
+    })
     const nodeGyp = require.resolve('node-gyp/bin/node-gyp.js')
     await execFileAsync(process.execPath, [nodeGyp, 'rebuild', '--release'], {
         cwd: paths.addonRoot,

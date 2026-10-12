@@ -275,3 +275,31 @@ fn macos_native_endpoint_requires_exact_launchd_socket_activation() {
         rdx_macos_native::NativeError::TransportUnavailable
     );
 }
+
+#[test]
+fn macos_local_requirement_pins_only_one_identifier_and_enrolled_generation() {
+    let hash = "0123456789abcdef0123456789abcdef01234567";
+    let requirement = rdx_macos_native::local_manager_requirement(hash).unwrap();
+    assert_eq!(
+        requirement,
+        format!("identifier \"com.openrdx.manager\" and cdhash H\"{hash}\"")
+    );
+    assert!(rdx_macos_native::manager_requirement_is_pinned(
+        &requirement
+    ));
+    for bad in [
+        "",
+        "0123",
+        "0123456789ABCDEF0123456789ABCDEF01234567",
+        "0123456789abcdef0123456789abcdef0123456g",
+    ] {
+        assert!(rdx_macos_native::local_manager_requirement(bad).is_err());
+    }
+    for bad in [
+        format!("{requirement} or true"),
+        requirement.replace(" and ", "  and "),
+        requirement.replace("com.openrdx.manager", "other.app"),
+    ] {
+        assert!(!rdx_macos_native::manager_requirement_is_pinned(&bad));
+    }
+}

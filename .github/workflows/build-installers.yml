@@ -30,6 +30,7 @@ jobs:
         env:
             CSC_IDENTITY_AUTO_DISCOVERY: false
             OPENRDX_VISUAL_QA_DIAGNOSTICS_DIRECTORY: ${{ github.workspace }}/out/visual-qa-diagnostics
+            OPENRDX_VISUAL_QA_TRACE: '1'
         strategy:
             fail-fast: false
             matrix:
@@ -58,9 +59,18 @@ jobs:
               run: sudo chown root:root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
             - run: npm run format:check
             - run: npm run native:test
-            - name: Verify Windows manufacturing storage security
+            - name: Verify Windows native security and installer policy
               if: matrix.platform == 'win'
-              run: cargo test --manifest-path native/rdx-service/windows-native/Cargo.toml --locked --lib manufacturing_storage::tests
+              run: |
+                  cargo test --manifest-path native/rdx-service/local-trust/Cargo.toml --locked
+                  cargo test --manifest-path native/rdx-service/windows-native/Cargo.toml --locked
+                  powershell -NoProfile -ExecutionPolicy Bypass -File native/rdx-service/windows-native/tests/installer_script_contract.ps1
+            - name: Verify local trust policy and macOS installer
+              if: matrix.platform == 'mac'
+              run: |
+                  cargo test --manifest-path native/rdx-service/local-trust/Cargo.toml --locked
+                  cargo test --manifest-path native/local-install/macos/Cargo.toml --locked
+                  cargo test --manifest-path native/rdx-service/macos-native/Cargo.toml --locked --all-features
             - name: Build installers
               run: npm run dist -- --${{ matrix.platform }} --${{ matrix.arch }}
             - name: Test application on macOS and Windows
@@ -72,6 +82,17 @@ jobs:
             - name: Verify packaged application on macOS and Windows
               if: matrix.platform != 'linux'
               run: npm run verify:packaged-app
+            - name: Install and verify the macOS PKG
+              if: matrix.platform == 'mac'
+              shell: bash
+              run: bash scripts/verify-macos-installation.sh
+            - name: Install and verify the Windows EXE
+              if: matrix.platform == 'win'
+              shell: pwsh
+              run: |
+                  $version = node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version"
+                  $installer = Join-Path $env:GITHUB_WORKSPACE "dist/installers/OpenRDXManager-$version-win-${{ matrix.arch }}.exe"
+                  & ./scripts/verify-windows-installation.ps1 -Installer $installer -Workspace $env:GITHUB_WORKSPACE -NodePath (Get-Command node).Source
             - name: Install and verify the Linux DEB
               if: matrix.platform == 'linux'
               shell: bash
@@ -143,6 +164,7 @@ jobs:
                   name: installers-${{ matrix.platform }}-${{ matrix.arch }}
                   path: |
                       dist/installers/*.dmg
+                      dist/installers/*.pkg
                       dist/installers/*.zip
                       dist/installers/*.exe
                       dist/installers/*.AppImage
@@ -216,5 +238,5 @@ jobs:
                       echo 'Release already exists; refusing to replace published assets' >&2
                       exit 1
                   fi
-                  gh release create "$tag" dist/installers/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "OpenRDXManager ${version}" --notes-file docs/releases/first-release.md --draft
+                  gh release create "$tag" dist/installers/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "OpenRDXManager ${version}" --notes-file docs/releases/locally-trusted-installers.md --draft
                   gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest

@@ -115,7 +115,11 @@ fn service_identity_evidence() -> ServiceIdentityEvidence {
     let token_local_service = status_before
         .as_ref()
         .filter(|status| status.dwCurrentState == SERVICE_RUNNING && status.dwProcessId != 0)
-        .is_some_and(|status| process_token_is_local_service(status.dwProcessId));
+        .is_some_and(|status| {
+            process_token_is_local_service(status.dwProcessId)
+                && crate::local_trust::windows::service_sid_enabled(status.dwProcessId)
+                    .unwrap_or(false)
+        });
     let config_after = query_service_config(&service);
     let status_after = query_service_status(&service);
 
@@ -126,7 +130,9 @@ fn service_identity_evidence() -> ServiceIdentityEvidence {
         evidence.status_after = runtime_status(status);
     }
     if let (Some(before), Some(after)) = (config_before, config_after) {
-        evidence.config_stable = before == after && crate::registry_acl::registry_acl_ready();
+        evidence.config_stable = before == after
+            && crate::registry_acl::registry_acl_ready()
+            && crate::verify_installed_local_trust().is_ok();
         if evidence.config_stable {
             evidence.demand_start = before.demand_start;
             evidence.binary_matches = before.binary_matches;

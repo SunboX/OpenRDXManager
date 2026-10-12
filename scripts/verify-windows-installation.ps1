@@ -1,0 +1,241 @@
+# SPDX-FileCopyrightText: 2026 André Fiedler
+# SPDX-License-Identifier: AGPL-3.0-or-later
+<#
+.SYNOPSIS
+Exercises the real unsigned installer on a disposable Windows machine with an active console.
+.PARAMETER Installer
+Absolute NSIS installer path. Existing installations and physical RDX devices are refused.
+.PARAMETER Workspace
+Checkout containing the installed-app verifier and its npm dependencies.
+.PARAMETER NodePath
+Ordinary Node executable used by the limited interactive acceptance process.
+.PARAMETER WorkerMode
+Internal scheduled-task operation; never supplies production trust paths or principals.
+.PARAMETER ResultPath
+Internal bounded result file in the exact per-run verification directory.
+#>
+param(
+    [string]$Installer,
+    [string]$Workspace = (Split-Path -Parent $PSScriptRoot),
+    [string]$NodePath = (Get-Command node -ErrorAction SilentlyContinue).Source,
+    [ValidateSet('', 'Manager', 'Acceptance', 'Portable')][string]$WorkerMode = '',
+    [string]$ResultPath
+)
+$ErrorActionPreference = 'Stop'
+$fixedRoot = 'C:\Program Files\OpenRDXManager'
+$provisioner = "$fixedRoot\resources\native\windows\openrdx-local-install.exe"
+$manager = "$fixedRoot\OpenRDXManager.exe"
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class OpenRDXConsole {
+ [DllImport("kernel32.dll")] public static extern UInt32 WTSGetActiveConsoleSessionId();
+ [DllImport("wtsapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern bool WTSQuerySessionInformationW(IntPtr server, UInt32 session, int kind, out IntPtr value, out UInt32 bytes);
+ [DllImport("wtsapi32.dll")] public static extern void WTSFreeMemory(IntPtr value);
+}
+'@
+
+<# .SYNOPSIS Reads the kernel's current console account; rejects absent or disconnected consoles. #>
+function Get-ConsoleAccount {
+    $session = [OpenRDXConsole]::WTSGetActiveConsoleSessionId()
+    if ($session -eq [UInt32]::MaxValue -or $session -eq 0) { throw 'active-console-required' }
+    $parts = @()
+    foreach ($kind in @(7, 5)) {
+        $pointer = [IntPtr]::Zero; $size = [UInt32]0
+        if (-not [OpenRDXConsole]::WTSQuerySessionInformationW([IntPtr]::Zero, $session, $kind, [ref]$pointer, [ref]$size)) { throw 'console-account-unavailable' }
+        try {
+            if ($size -gt 4096) { throw 'console-account-unbounded' }
+            $parts += [Runtime.InteropServices.Marshal]::PtrToStringUni($pointer)
+        } finally { [OpenRDXConsole]::WTSFreeMemory($pointer) }
+    }
+    if ([string]::IsNullOrWhiteSpace($parts[1])) { throw 'interactive-console-user-required' }
+    return "$($parts[0])\$($parts[1])"
+}
+
+<# .SYNOPSIS Captures native stdout/stderr and its actual exit status on Windows PowerShell 5.1. .PARAMETER Executable Exact test-owned program. .PARAMETER Arguments Its bounded operation arguments. #>
+function Invoke-CapturedProgram([string]$Executable, [string[]]$Arguments) {
+    # PowerShell 5.1 promotes redirected native stderr to ErrorRecords. Preserve
+    # expected denials and harmless diagnostics until the caller checks exitCode.
+    $preference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = & $Executable @Arguments 2>&1 | ForEach-Object { $_.ToString() } | Out-String
+        $code = $LASTEXITCODE
+        return @{ output = $output; exitCode = $code }
+    } finally { $ErrorActionPreference = $preference }
+}
+
+if ($WorkerMode) {
+    # Task Scheduler must supply the actual interactive limited token. A SYSTEM
+    # session or elevated GUI cannot count as installed Manager authentication.
+    if ([Diagnostics.Process]::GetCurrentProcess().SessionId -ne [OpenRDXConsole]::WTSGetActiveConsoleSessionId()) { throw 'worker-console-mismatch' }
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    if ((New-Object Security.Principal.WindowsPrincipal($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'worker-must-be-unelevated' }
+    try {
+        if ($WorkerMode -eq 'Manager') {
+            $deadline = [DateTime]::UtcNow.AddSeconds(120)
+            while (-not (Test-Path -LiteralPath $manager) -or -not (Test-Path -LiteralPath $provisioner) -or -not (Test-Path -LiteralPath "$fixedRoot\resources\local-trust\runtime.json")) {
+                if ([DateTime]::UtcNow -ge $deadline) { throw 'installed-manager-placement-timeout' }
+                Start-Sleep -Milliseconds 250
+            }
+            $candidates = @(Get-CimInstance Win32_Process -Filter "Name='OpenRDXManager.exe'" | Where-Object { $_.ExecutablePath -eq $manager -and $_.CommandLine -notmatch '--type=' })
+            if ($candidates.Count -eq 0) { Start-Process -FilePath $manager | Out-Null }
+            do {
+                Start-Sleep -Milliseconds 500
+                $candidates = @(Get-CimInstance Win32_Process -Filter "Name='OpenRDXManager.exe'" | Where-Object { $_.ExecutablePath -eq $manager -and $_.CommandLine -notmatch '--type=' })
+                if ([DateTime]::UtcNow -ge $deadline) { throw 'stable-installed-manager-pid-timeout' }
+            } while ($candidates.Count -ne 1)
+            @{ ok = $true; pid = $candidates[0].ProcessId } | ConvertTo-Json -Compress | Set-Content -LiteralPath $ResultPath -Encoding UTF8
+        } elseif ($WorkerMode -eq 'Portable') {
+            Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+            $copy = Join-Path (Split-Path -Parent $ResultPath) 'portable\OpenRDXManager\OpenRDXManager.exe'
+            $source = @'
+import {execFile} from 'node:child_process'; import {promisify} from 'node:util';
+try { let output=''; try { const result=await promisify(execFile)(process.argv[1],['--service-auth-test','--user-data-dir='+process.argv[2]],{timeout:60000,maxBuffer:8388608});output=result.stdout+result.stderr; } catch(error) { if(error.killed)throw error;output=(error.stdout||'')+(error.stderr||''); } if(output.includes('OpenRDXManager installed service authentication passed:')||!output.includes('OpenRDXManager service readiness:'))throw Error('portable-rejection-unconfirmed');console.log('Windows copied Manager privileged authentication denied'); } catch(error) { console.error(error);process.exitCode=1; }
+'@
+            $nativeResult = Invoke-CapturedProgram -Executable $NodePath -Arguments @('--input-type=module', '-e', $source, $copy, (Join-Path (Split-Path -Parent $ResultPath) 'portable-profile'))
+            $output = $nativeResult.output
+            if ($nativeResult.exitCode -ne 0) { throw "portable-negative-failed: $output" }
+            @{ ok = $true; output = $output } | ConvertTo-Json -Compress | Set-Content -LiteralPath $ResultPath -Encoding UTF8
+        } else {
+            Set-Location -LiteralPath $Workspace
+            Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+            $nativeResult = Invoke-CapturedProgram -Executable $NodePath -Arguments @("$Workspace\scripts\verify-packaged-app.mjs", '--installed', '--require-service')
+            $output = $nativeResult.output
+            if ($nativeResult.exitCode -ne 0 -or $output -notmatch 'OpenRDXManager installed service authentication passed: platform=win32') { throw "installed-authentication-failed: $output" }
+            @{ ok = $true; output = $output } | ConvertTo-Json -Compress | Set-Content -LiteralPath $ResultPath -Encoding UTF8
+        }
+    } catch {
+        @{ ok = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress | Set-Content -LiteralPath $ResultPath -Encoding UTF8
+        exit 1
+    }
+    exit 0
+}
+
+<# .SYNOPSIS Runs an exact fixed installer action and requires its exit status. .PARAMETER Arguments Closed native action arguments. #>
+function Invoke-LocalAction([string[]]$Arguments) {
+    $result = Invoke-CapturedProgram -Executable $provisioner -Arguments $Arguments
+    Write-Output $result.output
+    if ($result.exitCode -ne 0) { throw "native-action-failed: $($Arguments[1]) code=$($result.exitCode)" }
+}
+<# .SYNOPSIS Runs bounded NSIS setup and never treats a launched process as installation proof. #>
+function Invoke-Setup {
+    $process = Start-Process -FilePath $Installer -ArgumentList '/S' -PassThru
+    if (-not $process.WaitForExit(120000)) { $process.Kill(); throw 'installer-timeout' }
+    if ($process.ExitCode -ne 0) { throw "installer-failed: $($process.ExitCode)" }
+}
+<# .SYNOPSIS Waits for bounded output from the exact limited interactive task. #>
+function Wait-Worker([string]$Path, [switch]$AllowFailure) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(150)
+    while (-not (Test-Path -LiteralPath $Path)) {
+        if ([DateTime]::UtcNow -ge $deadline) { throw 'interactive-task-timeout' }
+        Start-Sleep -Milliseconds 250
+    }
+    if ((Get-Item -LiteralPath $Path).Length -gt 65536) { throw 'interactive-result-unbounded' }
+    $result = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
+    if (-not $result.ok -and -not $AllowFailure) { throw "interactive-task-failed: $($result.error)" }
+    return $result
+}
+<# .SYNOPSIS Launches the registered task with the console user's Interactive limited token. #>
+function Start-Worker([string]$Mode) {
+    $result = Join-Path $runDirectory "$Mode-$([Guid]::NewGuid()).json"
+    $arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -WorkerMode {1} -Workspace "{2}" -NodePath "{3}" -ResultPath "{4}"' -f $PSCommandPath, $Mode, $Workspace, $NodePath, $result
+    $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument $arguments
+    $principal = New-ScheduledTaskPrincipal -UserId $consoleAccount -LogonType Interactive -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 3)
+    Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings -Force | Out-Null
+    Start-ScheduledTask -TaskName $taskName
+    return $result
+}
+
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+if (-not (New-Object Security.Principal.WindowsPrincipal($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'elevated-disposable-test-required' }
+if (-not $Installer -or -not [IO.Path]::IsPathRooted($Installer) -or -not (Test-Path -LiteralPath $Installer -PathType Leaf)) { throw 'absolute-installer-required' }
+if (Test-Path -LiteralPath $fixedRoot) { throw 'existing-runtime-preserved-use-disposable-machine' }
+if (Test-Path -LiteralPath 'C:\ProgramData\OpenRDXManager') { throw 'existing-openrdx-data-preserved' }
+if (Get-Service -Name OpenRDXHardwareService -ErrorAction SilentlyContinue) { throw 'existing-service-preserved' }
+if (Get-CimInstance Win32_DiskDrive | Where-Object { $_.Model -match 'RDX' }) { throw 'physical-rdx-test-not-authorized-by-ci' }
+$consoleAccount = Get-ConsoleAccount
+$runDirectory = Join-Path ([IO.Path]::GetTempPath()) "openrdx-install-verification-$([Guid]::NewGuid())"
+New-Item -ItemType Directory -Path $runDirectory | Out-Null
+$acl = New-Object Security.AccessControl.DirectorySecurity
+$acl.SetAccessRuleProtection($true, $false)
+foreach ($entry in @(@('S-1-5-18', 'FullControl'), @('S-1-5-32-544', 'FullControl'), @($consoleAccount, 'Modify'))) {
+    $sid = if ($entry[0] -like 'S-*') { New-Object Security.Principal.SecurityIdentifier($entry[0]) } else { (New-Object Security.Principal.NTAccount($entry[0])).Translate([Security.Principal.SecurityIdentifier]) }
+    $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, $entry[1], 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+}
+Set-Acl -LiteralPath $runDirectory -AclObject $acl
+$taskName = "OpenRDX-LocalInstall-Verification-$([Guid]::NewGuid())"
+$managerPid = $null
+$backup = $null
+try {
+    # The limited console task waits for NSIS file placement, allowing the
+    # elevated installer to pin a real Manager without selecting a raw SID.
+    $resultPath = Start-Worker 'Manager'
+    Invoke-Setup
+    $managerPid = (Wait-Worker $resultPath).pid
+    Invoke-LocalAction -Arguments @('--action', 'verify', '--manager-process-id', "$managerPid")
+    Stop-Process -Id $managerPid -ErrorAction Stop
+    $managerPid = $null
+    $acceptance = Wait-Worker (Start-Worker 'Acceptance')
+    Write-Output $acceptance.output
+
+    # Close the verified service while preserving enrollment, so tamper tests
+    # exercise hash rejection rather than retained-handle write denial or absence.
+    Stop-Service -Name OpenRDXHardwareService -ErrorAction Stop
+    (Get-Service -Name OpenRDXHardwareService).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(10))
+    $portable = Join-Path $runDirectory 'portable'
+    New-Item -ItemType Directory -Path $portable | Out-Null
+    Copy-Item -LiteralPath $fixedRoot -Destination $portable -Recurse
+    Write-Output (Wait-Worker (Start-Worker 'Portable')).output
+
+    # Harmless JSON whitespace changes a final enrolled hash while permitting
+    # Electron to launch and report its native authentication denial.
+    $json = Get-ChildItem -LiteralPath "$fixedRoot\resources\app.asar.unpacked" -Filter package.json -File -Recurse | Sort-Object FullName | Select-Object -First 1
+    if (-not $json -or $json.Length -gt 1048576) { throw 'bounded-runtime-json-fixture-required' }
+    $target = $json.FullName
+    $backup = [IO.File]::ReadAllBytes($target)
+    $changed = New-Object byte[] ($backup.Length + 1)
+    [Array]::Copy($backup, $changed, $backup.Length)
+    $changed[$changed.Length - 1] = 32
+    [IO.File]::WriteAllBytes($target, $changed)
+    $tamperedResult = Invoke-CapturedProgram -Executable $provisioner -Arguments @('--action', 'verify')
+    Write-Output $tamperedResult.output
+    if ($tamperedResult.exitCode -eq 0) { throw 'tampered-runtime-was-accepted' }
+    $negative = Wait-Worker (Start-Worker 'Acceptance') -AllowFailure
+    if ($negative.ok -or $negative.error -match 'installed service authentication passed: platform=win32') { throw 'tampered-installed-manager-authenticated' }
+    # Repair uses incoming administrator-selected setup to replace corrupt files;
+    # original bytes are restored only on failure, never to make Repair pass.
+    $resultPath = Start-Worker 'Manager'
+    Invoke-Setup
+    $managerPid = (Wait-Worker $resultPath).pid
+    if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($target)) -ne [Convert]::ToBase64String($backup)) { throw 'installer-repair-did-not-restore-final-content' }
+    $backup = $null
+    Invoke-LocalAction -Arguments @('--action', 'repair', '--manager-process-id', "$managerPid")
+    Invoke-LocalAction -Arguments @('--action', 'verify', '--manager-process-id', "$managerPid")
+    Stop-Process -Id $managerPid -ErrorAction Stop
+    $managerPid = $null
+    Write-Output (Wait-Worker (Start-Worker 'Acceptance')).output
+    Invoke-LocalAction -Arguments @('--action', 'prepare')
+
+    $resultPath = Start-Worker 'Manager'
+    Invoke-Setup
+    $managerPid = (Wait-Worker $resultPath).pid
+    Invoke-LocalAction -Arguments @('--action', 'verify', '--manager-process-id', "$managerPid")
+    Stop-Process -Id $managerPid -ErrorAction Stop
+    $managerPid = $null
+    Write-Output (Wait-Worker (Start-Worker 'Acceptance')).output
+    Invoke-LocalAction -Arguments @('--action', 'prepare')
+    Invoke-LocalAction -Arguments @('--action', 'remove')
+    if (Get-Service -Name OpenRDXHardwareService -ErrorAction SilentlyContinue) { throw 'service-removal-unconfirmed' }
+    if (Test-Path -LiteralPath 'C:\ProgramData\OpenRDXManager\LocalTrust\runtime.json') { throw 'enrollment-removal-unconfirmed' }
+    $uninstaller = Start-Process -FilePath "$fixedRoot\Uninstall OpenRDXManager.exe" -ArgumentList '/S' -PassThru
+    if (-not $uninstaller.WaitForExit(120000) -or $uninstaller.ExitCode -ne 0) { throw 'nsis-uninstall-failed' }
+    Write-Output 'OpenRDX Windows installation acceptance passed: clean, repair, upgrade, tamper-denied, copied-manager-denied, owned-removal'
+} finally {
+    if ($backup) { [IO.File]::WriteAllBytes($target, $backup) }
+    if ($managerPid) { Stop-Process -Id $managerPid -ErrorAction SilentlyContinue }
+    Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $runDirectory -Recurse -Force -ErrorAction SilentlyContinue
+}

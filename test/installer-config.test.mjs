@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { posix } from 'node:path'
 import test from 'node:test'
-import { createInstallerConfiguration } from '../scripts/installer-config.mjs'
+import { createInstallerConfiguration, verifyWindowsInstallerToolchain } from '../scripts/installer-config.mjs'
 
 for (const platform of ['darwin', 'win32', 'linux']) {
     test(`installer contains only the matching native runtime on ${platform}`, () => {
@@ -40,4 +40,33 @@ test('Linux installer places the regular manager binary at the native peer ident
     assert.equal(declarations.length, 1)
     const config = createInstallerConfiguration('linux')
     assert.equal(declarations[0][1], posix.join('/opt', config.productName, config.executableName))
+})
+
+for (const platform of ['darwin', 'win32']) {
+    test(`locally trusted installer disables alternate Electron execution on ${platform}`, () => {
+        const config = createInstallerConfiguration(platform)
+        assert.equal(config.electronFuses?.runAsNode, false)
+        assert.equal(config.electronFuses?.enableNodeOptionsEnvironmentVariable, false)
+        assert.equal(config.electronFuses?.enableNodeCliInspectArguments, false)
+        assert.equal(config.electronFuses?.enableEmbeddedAsarIntegrityValidation, true)
+        assert.equal(config.electronFuses?.onlyLoadAppFromAsar, true)
+        assert.equal(typeof config.afterSign, 'function', 'Inventory must pin final executable bytes')
+    })
+}
+
+test('Windows installer uses fixed machine-wide placement and explicit native setup', () => {
+    const config = createInstallerConfiguration('win32')
+    assert.equal(config.nsis.allowToChangeInstallationDirectory, false)
+    assert.equal(config.nsis.include, 'resources/installer/windows-service.nsh')
+    assert.equal(config.nsis.script, 'resources/installer/windows-installer.nsi', 'Protect incoming and uninstaller temporary paths before any plugin loads')
+    assert.equal(config.win.signExecutable, false, 'Unsigned resource editing still invokes afterSign in builder 26.17')
+    assert.equal(config.toolsets?.nsis, '1.2.1', 'Pin the checksum-verified NSIS 3.12 bundle instead of the legacy bootstrap')
+})
+
+test('local Windows setup cannot substitute an unverified NSIS compiler or plugin bundle', () => {
+    const context = { electronPlatformName: 'win32', packager: { config: { toolsets: { nsis: '1.2.1' } } } }
+    assert.doesNotThrow(() => verifyWindowsInstallerToolchain(context, {}))
+    for (const name of ['ELECTRON_BUILDER_NSIS_DIR', 'ELECTRON_BUILDER_NSIS_RESOURCES_DIR', 'CUSTOM_NSIS_RESOURCES']) assert.throws(() => verifyWindowsInstallerToolchain(context, { [name]: '/unverified/toolset' }), /local-installer-nsis-toolchain-invalid/u)
+    for (const nsis of [{ customNsisBinary: {} }, { customNsisResources: {} }]) assert.throws(() => verifyWindowsInstallerToolchain({ ...context, packager: { config: { toolsets: { nsis: '1.2.1' }, nsis } } }, {}), /local-installer-nsis-toolchain-invalid/u)
+    assert.throws(() => verifyWindowsInstallerToolchain({ ...context, packager: { config: { toolsets: { nsis: '0.0.0' } } } }, {}), /local-installer-nsis-toolchain-invalid/u)
 })

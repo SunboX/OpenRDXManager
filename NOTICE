@@ -26,3 +26,10 @@ Phosphor Icons, the MCP SDK
 and Rust dependencies, retain their own licenses and notices. Their source and
 license files are supplied with the installed packages. A packaged distribution
 must include the notices required by the dependencies it ships.
+
+The Windows installer templates in resources/installer/windows-*.nsi and the
+derived windows-install-files.nsh, windows-install-section.nsh,
+windows-process-control.nsh and windows-uninstaller.nsh are adapted from
+electron-builder 26.17.0, Copyright (c) 2015 Loopline Systems, under the MIT
+license. Their original license and attribution remain in the source files;
+the complete redistribution notice is supplied in LICENSES/MIT.txt.

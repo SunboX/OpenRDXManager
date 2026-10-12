@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "rdx_iokit.h"
+#include "rdx_endpoint_identity.h"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
@@ -48,7 +49,7 @@ static bool rdx_listener_is_exact(int listener) {
         return false;
     }
     const mode_t permissions = path_status.st_mode & (mode_t)0777;
-    return permissions == (mode_t)0660;
+    return permissions == (mode_t)0660 && rdx_macos_endpoint_path_is_protected();
 }
 
 static bool rdx_monotonic_milliseconds(int64_t *out_milliseconds) {
@@ -62,7 +63,8 @@ static bool rdx_monotonic_milliseconds(int64_t *out_milliseconds) {
     return true;
 }
 
-static int rdx_accept_bounded(int listener) {
+static int rdx_accept_bounded(int listener, bool *out_idle_timeout) {
+    *out_idle_timeout = false;
     int64_t started = 0;
     if (!rdx_monotonic_milliseconds(&started)) {
         return -1;
@@ -70,9 +72,8 @@ static int rdx_accept_bounded(int listener) {
     const int64_t deadline = started + RDX_ACCEPT_TIMEOUT_MS;
     for (;;) {
         int64_t current = 0;
-        if (!rdx_monotonic_milliseconds(&current) || current >= deadline) {
-            return -1;
-        }
+        if (!rdx_monotonic_milliseconds(&current)) { return -1; }
+        if (current >= deadline) { *out_idle_timeout = true; return -1; }
         const int remaining = (int)(deadline - current);
         struct pollfd descriptor = {
             .fd = listener,
@@ -80,9 +81,7 @@ static int rdx_accept_bounded(int listener) {
             .revents = 0,
         };
         const int ready = poll(&descriptor, 1, remaining);
-        if (ready == 0) {
-            return -1;
-        }
+        if (ready == 0) { *out_idle_timeout = true; return -1; }
         if (ready < 0) {
             if (errno == EINTR) {
                 continue;
@@ -90,6 +89,7 @@ static int rdx_accept_bounded(int listener) {
             return -1;
         }
         if ((descriptor.revents & POLLIN) == 0) {
+            errno = EIO;
             return -1;
         }
         const int peer = accept(listener, NULL, NULL);
@@ -100,118 +100,6 @@ static int rdx_accept_bounded(int listener) {
             return -1;
         }
     }
-}
-
-static bool rdx_peer_matches_requirement(
-    int peer,
-    const char *requirement_text,
-    uint32_t *out_user_id
-) {
-    struct xucred credentials;
-    socklen_t credentials_length = (socklen_t)sizeof(credentials);
-    memset(&credentials, 0, sizeof(credentials));
-    if (getsockopt(
-            peer,
-            SOL_LOCAL,
-            LOCAL_PEERCRED,
-            &credentials,
-            &credentials_length
-        ) != 0 || credentials_length != sizeof(credentials) ||
-        credentials.cr_version != XUCRED_VERSION) {
-        return false;
-    }
-    struct stat console_status;
-    memset(&console_status, 0, sizeof(console_status));
-    if (stat("/dev/console", &console_status) != 0 ||
-        console_status.st_uid == 0 ||
-        credentials.cr_uid != console_status.st_uid) {
-        return false;
-    }
-
-    audit_token_t audit_token;
-    socklen_t token_length = (socklen_t)sizeof(audit_token);
-    memset(&audit_token, 0, sizeof(audit_token));
-    if (getsockopt(
-            peer,
-            SOL_LOCAL,
-            LOCAL_PEERTOKEN,
-            &audit_token,
-            &token_length
-        ) != 0 || token_length != sizeof(audit_token)) {
-        return false;
-    }
-
-    CFStringRef requirement_string = CFStringCreateWithCString(
-        kCFAllocatorDefault,
-        requirement_text,
-        kCFStringEncodingUTF8
-    );
-    SecRequirementRef requirement = NULL;
-    CFDataRef audit_data = NULL;
-    CFDictionaryRef attributes = NULL;
-    SecCodeRef guest = NULL;
-    bool authorized = false;
-    if (requirement_string == NULL ||
-        SecRequirementCreateWithString(
-            requirement_string,
-            kSecCSDefaultFlags,
-            &requirement
-        ) != errSecSuccess) {
-        goto cleanup;
-    }
-    audit_data = CFDataCreate(
-        kCFAllocatorDefault,
-        (const UInt8 *)&audit_token,
-        (CFIndex)sizeof(audit_token)
-    );
-    if (audit_data == NULL) {
-        goto cleanup;
-    }
-    const void *keys[] = {kSecGuestAttributeAudit};
-    const void *values[] = {audit_data};
-    attributes = CFDictionaryCreate(
-        kCFAllocatorDefault,
-        keys,
-        values,
-        1,
-        &kCFTypeDictionaryKeyCallBacks,
-        &kCFTypeDictionaryValueCallBacks
-    );
-    if (attributes == NULL ||
-        SecCodeCopyGuestWithAttributes(
-            NULL,
-            attributes,
-            kSecCSDefaultFlags,
-            &guest
-        ) != errSecSuccess) {
-        goto cleanup;
-    }
-    authorized = SecCodeCheckValidity(
-        guest,
-        kSecCSStrictValidate,
-        requirement
-    ) == errSecSuccess;
-    if (authorized) {
-        *out_user_id = credentials.cr_uid;
-    }
-
-cleanup:
-    if (guest != NULL) {
-        CFRelease(guest);
-    }
-    if (attributes != NULL) {
-        CFRelease(attributes);
-    }
-    if (audit_data != NULL) {
-        CFRelease(audit_data);
-    }
-    if (requirement != NULL) {
-        CFRelease(requirement);
-    }
-    if (requirement_string != NULL) {
-        CFRelease(requirement_string);
-    }
-    return authorized;
 }
 
 rdx_macos_status rdx_macos_activate_launchd_listener(int *out_listener) {
@@ -253,9 +141,10 @@ rdx_macos_status rdx_macos_accept_launchd_manager_from_listener(
     if (!rdx_listener_is_exact(listener)) {
         return RDX_MACOS_STATUS_TRANSPORT_UNAVAILABLE;
     }
-    const int peer = rdx_accept_bounded(listener);
+    bool idle_timeout = false;
+    const int peer = rdx_accept_bounded(listener, &idle_timeout);
     if (peer < 0) {
-        return RDX_MACOS_STATUS_TRANSPORT_UNAVAILABLE;
+        return idle_timeout ? RDX_MACOS_STATUS_TIMED_OUT : RDX_MACOS_STATUS_TRANSPORT_UNAVAILABLE;
     }
     if (fcntl(peer, F_SETFD, FD_CLOEXEC) != 0) {
         (void)close(peer);
@@ -266,7 +155,11 @@ rdx_macos_status rdx_macos_accept_launchd_manager_from_listener(
         (void)close(peer);
         return RDX_MACOS_STATUS_NATIVE_FAILURE;
     }
-    if (!rdx_peer_matches_requirement(peer, requirement_text, out_user_id)) {
+    struct stat console_status;
+    if (stat("/dev/console", &console_status) != 0 || console_status.st_uid == 0 ||
+        !rdx_macos_peer_identity_matches(peer, requirement_text,
+            "/Applications/OpenRDXManager.app/Contents/MacOS/OpenRDXManager",
+            console_status.st_uid, out_user_id)) {
         (void)close(peer);
         return RDX_MACOS_STATUS_ACCESS_DENIED;
     }
