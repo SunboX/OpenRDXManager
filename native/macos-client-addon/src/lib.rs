@@ -2,7 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Fixed local enrollment adapter for the handle-owning macOS N-API client.
 #![deny(unsafe_op_in_unsafe_fn)]
-use std::{path::Path, sync::Mutex};
+use std::{cell::Cell, path::Path, sync::Mutex};
+thread_local! { static TRUST_STAGE: Cell<u32> = const { Cell::new(0) }; }
+
+/// Numeric fixed trust phase from this native worker; never enrollment contents.
+#[unsafe(no_mangle)]
+pub extern "C" fn rdx_macos_client_last_trust_stage() -> u32 {
+    TRUST_STAGE.get()
+}
 
 // Shared retained-file verification can consume thousands of descriptors. Keep
 // concurrent UI status and connection attempts within one process budget.
@@ -14,25 +21,34 @@ fn verified_hashes() -> Result<(String, String), rdx_local_trust::TrustError> {
     let _guard = VERIFICATION_LOCK
         .lock()
         .map_err(|_| rdx_local_trust::TrustError("verification lock unavailable".into()))?;
+    TRUST_STAGE.set(1);
     let inventory = rdx_local_trust::verify_enrollment(
         Path::new(rdx_local_trust::MACOS_ENROLLMENT_PATH),
         "macos",
     )?;
-    ensure_process_descriptor_budget(rdx_local_trust::runtime_handle_requirement(&inventory)?)?;
+    TRUST_STAGE.set(2);
+    ensure_process_descriptor_budget(rdx_local_trust::protected_runtime_handle_requirement(
+        Path::new("/Applications/OpenRDXManager.app"),
+        &inventory,
+    )?)?;
+    TRUST_STAGE.set(3);
     rdx_local_trust::verify_protected_runtime(
         Path::new("/Applications/OpenRDXManager.app"),
         &inventory,
     )?;
+    TRUST_STAGE.set(4);
     let helper = inventory
         .files
         .iter()
         .find(|file| file.path == "Contents/Library/LaunchServices/openrdx-hardware")
         .ok_or_else(|| rdx_local_trust::TrustError("missing enrolled helper".into()))?;
+    TRUST_STAGE.set(5);
     rdx_local_trust::verify_protected_file(
         Path::new("/Library/PrivilegedHelperTools/openrdx-hardware"),
         &helper.sha256,
         helper.size,
     )?;
+    TRUST_STAGE.set(0);
     Ok((inventory.helper_cd_hash, inventory.manager_cd_hash))
 }
 

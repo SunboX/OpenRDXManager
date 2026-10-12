@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
-import { posix } from 'node:path'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
+import { join, posix } from 'node:path'
 import test from 'node:test'
 import { createInstallerConfiguration, verifyWindowsInstallerToolchain } from '../scripts/installer-config.mjs'
 
@@ -69,4 +71,24 @@ test('local Windows setup cannot substitute an unverified NSIS compiler or plugi
     for (const name of ['ELECTRON_BUILDER_NSIS_DIR', 'ELECTRON_BUILDER_NSIS_RESOURCES_DIR', 'CUSTOM_NSIS_RESOURCES']) assert.throws(() => verifyWindowsInstallerToolchain(context, { [name]: '/unverified/toolset' }), /local-installer-nsis-toolchain-invalid/u)
     for (const nsis of [{ customNsisBinary: {} }, { customNsisResources: {} }]) assert.throws(() => verifyWindowsInstallerToolchain({ ...context, packager: { config: { toolsets: { nsis: '1.2.1' }, nsis } } }, {}), /local-installer-nsis-toolchain-invalid/u)
     assert.throws(() => verifyWindowsInstallerToolchain({ ...context, packager: { config: { toolsets: { nsis: '0.0.0' } } } }, {}), /local-installer-nsis-toolchain-invalid/u)
+})
+
+test('macOS packages only maintained runtime helpers even if native build output contains stale verification binaries', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'openrdx-native-runtime-filter-'))
+    try {
+        const source = join(root, 'native')
+        const destination = join(root, 'packaged-native')
+        await mkdir(source)
+        const maintained = ['rdxctl', 'openrdx-hardware', 'openrdx-local-install', 'openrdx-macos-client.node', 'openrdx-service-management.node']
+        for (const name of [...maintained, 'openrdx-readiness-verifier', 'local-trust-test-fixture']) await writeFile(join(source, name), 'disposable-build-output')
+        const { FileMatcher, copyFiles } = createRequire(import.meta.url)('app-builder-lib/out/fileMatcher.js')
+        const runtime = createInstallerConfiguration('darwin').extraResources[0]
+        // Use builder's real copy operation: an absent filter would also ship the stale fixtures.
+        await copyFiles([new FileMatcher(source, destination, (value) => value, runtime.filter)], undefined, false)
+        assert.deepEqual((await readdir(destination)).sort(), maintained.sort())
+        assert.equal(createInstallerConfiguration('win32').extraResources[0].filter, undefined)
+        assert.equal(createInstallerConfiguration('linux').extraResources[0].filter, undefined)
+    } finally {
+        await rm(root, { recursive: true, force: true })
+    }
 })

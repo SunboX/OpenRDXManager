@@ -15,6 +15,14 @@
 #include <sys/acl.h>
 #include <unistd.h>
 
+static _Thread_local rdx_macos_identity_diagnostic rdx_diagnostic = {"not-checked", 0, 0, 0};
+/** Return this worker's last bounded diagnostic; this record grants no authority. */
+rdx_macos_identity_diagnostic rdx_macos_last_identity_diagnostic(void) { return rdx_diagnostic; }
+/** Capture one fixed stage and numeric native result, never user-authored data. */
+static bool rdx_identity_step(const char *stage, int32_t code) {
+    rdx_diagnostic.stage = stage; rdx_diagnostic.code = code; return code == 0;
+}
+
 /** Denies ACL-bearing paths; installer strips inherited mutable permissions. */
 static bool rdx_acl_is_empty(const char *path) {
     acl_t acl = acl_get_file(path, ACL_TYPE_EXTENDED);
@@ -90,6 +98,7 @@ bool rdx_macos_endpoint_path_is_protected(void) {
 
 /** Sealed local metadata cannot be admitted through the signed server policy. */
 static bool rdx_manager_marker_matches(CFDictionaryRef information, const char *requirement) {
+    rdx_diagnostic.stage = "peer-installation-marker";
     CFDictionaryRef plist = (CFDictionaryRef)CFDictionaryGetValue(information, kSecCodeInfoPList);
     if (plist == NULL || CFGetTypeID(plist) != CFDictionaryGetTypeID()) { return false; }
     CFTypeRef marker = CFDictionaryGetValue(plist, CFSTR("OpenRDXInstallationMode"));
@@ -108,6 +117,7 @@ bool rdx_macos_peer_identity_matches(
     uint32_t expected_uid,
     uint32_t *out_user_id
 ) {
+    rdx_diagnostic = (rdx_macos_identity_diagnostic){"peer-credentials", 0, 0, 0};
     struct xucred credentials;
     socklen_t credentials_length = (socklen_t)sizeof(credentials);
     memset(&credentials, 0, sizeof(credentials));
@@ -119,10 +129,13 @@ bool rdx_macos_peer_identity_matches(
             &credentials_length
         ) != 0 || credentials_length != sizeof(credentials) ||
         credentials.cr_version != XUCRED_VERSION) {
+        rdx_diagnostic.code = errno;
         return false;
     }
-    if (credentials.cr_uid != expected_uid) { return false; }
+    rdx_diagnostic.peer_uid = credentials.cr_uid;
+    if (credentials.cr_uid != expected_uid) { rdx_identity_step("peer-uid", -1); return false; }
 
+    rdx_diagnostic.stage = "peer-audit-token";
     audit_token_t audit_token;
     socklen_t token_length = (socklen_t)sizeof(audit_token);
     memset(&audit_token, 0, sizeof(audit_token));
@@ -134,9 +147,12 @@ bool rdx_macos_peer_identity_matches(
             &token_length
         ) != 0 || token_length != sizeof(audit_token) ||
         audit_token_to_euid(audit_token) != expected_uid || audit_token_to_pid(audit_token) <= 0) {
+        rdx_diagnostic.code = errno;
         return false;
     }
 
+    rdx_diagnostic.peer_pid = audit_token_to_pid(audit_token);
+    rdx_diagnostic.peer_uid = audit_token_to_euid(audit_token);
     CFStringRef requirement_string = CFStringCreateWithCString(
         kCFAllocatorDefault,
         requirement_text,
@@ -150,11 +166,11 @@ bool rdx_macos_peer_identity_matches(
     SecStaticCodeRef static_code = NULL;
     bool authorized = false;
     if (requirement_string == NULL ||
-        SecRequirementCreateWithString(
+         !rdx_identity_step("peer-requirement", SecRequirementCreateWithString(
             requirement_string,
             kSecCSDefaultFlags,
             &requirement
-        ) != errSecSuccess) {
+        ))) {
         goto cleanup;
     }
     audit_data = CFDataCreate(
@@ -176,35 +192,38 @@ bool rdx_macos_peer_identity_matches(
         &kCFTypeDictionaryValueCallBacks
     );
     if (attributes == NULL ||
-        SecCodeCopyGuestWithAttributes(
+        !rdx_identity_step("peer-code-lookup", SecCodeCopyGuestWithAttributes(
             NULL,
             attributes,
             kSecCSDefaultFlags,
             &guest
-        ) != errSecSuccess) {
+        ))) {
         goto cleanup;
     }
-    authorized = SecCodeCheckValidity(
+    authorized = rdx_identity_step("peer-dynamic-seal", SecCodeCheckValidity(
         guest,
         kSecCSStrictValidate,
         requirement
-    ) == errSecSuccess;
+    ));
     if (authorized) {
-        authorized = SecCodeCopySigningInformation(guest, kSecCSSigningInformation, &information) == errSecSuccess;
+        authorized = rdx_identity_step("peer-signing-information", SecCodeCopySigningInformation(guest, kSecCSSigningInformation, &information));
         CFURLRef executable = information == NULL ? NULL : (CFURLRef)CFDictionaryGetValue(information, kSecCodeInfoMainExecutable);
         UInt8 path[4096];
+        rdx_diagnostic.stage = "peer-executable";
         authorized = authorized && executable != NULL && CFGetTypeID(executable) == CFURLGetTypeID() &&
             CFURLGetFileSystemRepresentation(executable, true, path, sizeof(path)) &&
             strcmp((const char *)path, executable_path) == 0;
         if (authorized && strcmp(executable_path, "/Applications/OpenRDXManager.app/Contents/MacOS/OpenRDXManager") == 0) {
+            rdx_diagnostic.stage = "peer-installation-marker";
             authorized = rdx_manager_marker_matches(information, requirement_text);
         }
         // Dynamic validation authenticates the process; static validation also
         // rejects resource/seal tampering on disk before a session is admitted.
-        authorized = authorized && SecCodeCopyStaticCode(guest, kSecCSDefaultFlags, &static_code) == errSecSuccess &&
-            SecStaticCodeCheckValidity(static_code, kSecCSStrictValidate | kSecCSCheckAllArchitectures | kSecCSCheckNestedCode, requirement) == errSecSuccess;
+        authorized = authorized && rdx_identity_step("peer-static-code", SecCodeCopyStaticCode(guest, kSecCSDefaultFlags, &static_code)) &&
+            rdx_identity_step("peer-static-seal", SecStaticCodeCheckValidity(static_code, kSecCSStrictValidate | kSecCSCheckAllArchitectures | kSecCSCheckNestedCode, requirement));
     }
     if (authorized) {
+        rdx_identity_step("verified", 0);
         *out_user_id = credentials.cr_uid;
     }
 
@@ -231,13 +250,15 @@ cleanup:
 
 /** Compare Security's own main executable URL, never a user-authored argv value. */
 bool rdx_macos_current_process_is_installed_manager(void) {
+    rdx_diagnostic = (rdx_macos_identity_diagnostic){"manager-self", 0, 0, 0};
     SecCodeRef code = NULL;
     CFDictionaryRef information = NULL;
     bool matches = false;
-    if (SecCodeCopySelf(kSecCSDefaultFlags, &code) != errSecSuccess ||
-        SecCodeCopySigningInformation(code, kSecCSSigningInformation, &information) != errSecSuccess) { goto cleanup; }
+    if (!rdx_identity_step("manager-self", SecCodeCopySelf(kSecCSDefaultFlags, &code)) ||
+        !rdx_identity_step("manager-information", SecCodeCopySigningInformation(code, kSecCSSigningInformation, &information))) { goto cleanup; }
     CFURLRef executable = (CFURLRef)CFDictionaryGetValue(information, kSecCodeInfoMainExecutable);
     UInt8 path[4096];
+    rdx_diagnostic.stage = "manager-executable";
     matches = executable != NULL && CFGetTypeID(executable) == CFURLGetTypeID() &&
         CFURLGetFileSystemRepresentation(executable, true, path, sizeof(path)) &&
         strcmp((const char *)path, "/Applications/OpenRDXManager.app/Contents/MacOS/OpenRDXManager") == 0;
@@ -254,11 +275,11 @@ bool rdx_macos_current_manager_matches(const char *requirement_text) {
     SecRequirementRef requirement = NULL;
     CFStringRef text = CFStringCreateWithCString(kCFAllocatorDefault, requirement_text, kCFStringEncodingUTF8);
     bool matches = false;
-    if (text == NULL || SecRequirementCreateWithString(text, kSecCSDefaultFlags, &requirement) != errSecSuccess ||
-        SecCodeCopySelf(kSecCSDefaultFlags, &code) != errSecSuccess ||
-        SecCodeCopyStaticCode(code, kSecCSDefaultFlags, &static_code) != errSecSuccess) { goto cleanup; }
-    matches = SecCodeCheckValidity(code, kSecCSStrictValidate, requirement) == errSecSuccess &&
-        SecStaticCodeCheckValidity(static_code, kSecCSStrictValidate | kSecCSCheckAllArchitectures | kSecCSCheckNestedCode, requirement) == errSecSuccess;
+    if (text == NULL || !rdx_identity_step("manager-requirement", SecRequirementCreateWithString(text, kSecCSDefaultFlags, &requirement)) ||
+        !rdx_identity_step("manager-self", SecCodeCopySelf(kSecCSDefaultFlags, &code)) ||
+        !rdx_identity_step("manager-static-code", SecCodeCopyStaticCode(code, kSecCSDefaultFlags, &static_code))) { goto cleanup; }
+    matches = rdx_identity_step("manager-dynamic-seal", SecCodeCheckValidity(code, kSecCSStrictValidate, requirement)) &&
+        rdx_identity_step("manager-static-seal", SecStaticCodeCheckValidity(static_code, kSecCSStrictValidate | kSecCSCheckAllArchitectures | kSecCSCheckNestedCode, requirement));
 cleanup:
     if (static_code != NULL) { CFRelease(static_code); }
     if (code != NULL) { CFRelease(code); }
@@ -308,10 +329,12 @@ rdx_macos_installation_mode rdx_macos_current_installation_mode(void) {
     SecCodeRef code = NULL;
     CFDictionaryRef information = NULL;
     rdx_macos_installation_mode mode = RDX_INSTALLATION_DENIED;
-    if (SecCodeCopySelf(kSecCSDefaultFlags, &code) != errSecSuccess ||
-        SecCodeCopySigningInformation(code, kSecCSSigningInformation, &information) != errSecSuccess) { goto cleanup; }
+    if (!rdx_identity_step("manager-self", SecCodeCopySelf(kSecCSDefaultFlags, &code)) ||
+        !rdx_identity_step("manager-information", SecCodeCopySigningInformation(code, kSecCSSigningInformation, &information))) { goto cleanup; }
+    rdx_diagnostic.stage = "manager-sealed-plist";
     CFDictionaryRef plist = (CFDictionaryRef)CFDictionaryGetValue(information, kSecCodeInfoPList);
     if (plist == NULL || CFGetTypeID(plist) != CFDictionaryGetTypeID()) { goto cleanup; }
+    rdx_diagnostic.stage = "manager-installation-marker";
     CFTypeRef marker = CFDictionaryGetValue(plist, CFSTR("OpenRDXInstallationMode"));
     if (marker != NULL && (CFGetTypeID(marker) != CFStringGetTypeID() ||
         !CFEqual(marker, CFSTR("local")))) { goto cleanup; }

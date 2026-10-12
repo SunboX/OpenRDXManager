@@ -9,6 +9,7 @@ import { createRequire } from 'node:module'
 import { promisify } from 'node:util'
 import { createRuntimeInventory, verifyRuntimeInventory } from './local-trust-inventory.mjs'
 import { normalizeMacOsPackageScriptOwners } from './macos-package-ownership.mjs'
+import { buildWindowsRemover } from './build-windows-remover.mjs'
 
 const execute = promisify(execFile)
 const require = createRequire(import.meta.url)
@@ -104,7 +105,10 @@ export async function finalizeLocalTrustRuntime(context) {
     const platform = { darwin: 'macos', win32: 'windows' }[context.electronPlatformName]
     if (!platform) return
     const root = runtimeRoot(context)
-    if (platform === 'windows') await stageWindowsElevationHelper({ root })
+    if (platform === 'windows') {
+        await stageWindowsElevationHelper({ root })
+        await buildWindowsRemover({ root, appId: context.packager.appInfo.id, version: context.packager.appInfo.version, guid: context.packager.config.nsis?.guid })
+    }
     if (platform === 'macos') {
         // Explicitly reseal the changed nested helper, then only its parent.
         // Deep strict verification ensures the rest of builder's nested seals

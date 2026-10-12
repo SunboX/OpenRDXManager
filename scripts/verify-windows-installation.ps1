@@ -35,6 +35,42 @@ public static class OpenRDXConsole {
 }
 '@
 
+<# .SYNOPSIS Accepts complete removal or only the protected running remover scheduled for deletion at reboot. .PARAMETER RuntimeRoot Exact verification-owned runtime. .PARAMETER PendingDeletes Test-only captured OS rename operations; production reads the Session Manager journal. #>
+function Assert-RemovedRuntime([string]$RuntimeRoot, [string[]]$PendingDeletes) {
+    if (-not (Test-Path -LiteralPath $RuntimeRoot)) { return }
+    $remaining = @(Get-ChildItem -LiteralPath $RuntimeRoot -Force)
+    $self = Join-Path $RuntimeRoot 'Uninstall OpenRDXManager.exe'
+    if ($remaining.Count -ne 1 -or $remaining[0].PSIsContainer -or $remaining[0].Name -cne 'Uninstall OpenRDXManager.exe' -or
+        ($remaining[0].Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'unexpected-runtime-removal-residue' }
+    foreach ($path in @($RuntimeRoot, $self)) {
+        $acl = Get-Acl -LiteralPath $path
+        $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+        $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+        if ($owner -notin @('S-1-5-18', 'S-1-5-32-544') -or -not $acl.AreAccessRulesProtected -or $rules.Count -ne 4) { throw 'unprotected-runtime-removal-residue' }
+        $expected = @{'S-1-5-18'=0x1f01ff; 'S-1-5-32-544'=0x1f01ff; 'S-1-5-19'=0x1200a9; 'S-1-5-32-545'=0x1200a9}
+        $inheritance = if ($path -eq $RuntimeRoot) { 3 } else { 0 }
+        foreach ($rule in $rules) {
+            $sid = $rule.IdentityReference.Value
+            if (-not $expected.ContainsKey($sid) -or $rule.AccessControlType -ne 'Allow' -or $rule.IsInherited -or
+                [int64]$rule.FileSystemRights -ne $expected[$sid] -or [int]$rule.InheritanceFlags -ne $inheritance -or [int]$rule.PropagationFlags -ne 0) {
+                throw 'noncanonical-runtime-removal-residue'
+            }
+            $expected.Remove($sid)
+        }
+    }
+    if ($null -eq $PendingDeletes) {
+        $PendingDeletes = @((Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue).PendingFileRenameOperations)
+    }
+    $scheduled = $false
+    for ($index = 0; $index + 1 -lt $PendingDeletes.Count; $index += 2) {
+        # The Windows VM records this delayed deletion with a *1 prefix.
+        # Accept only that observed token or the unflagged exact NT pathname.
+        if (($PendingDeletes[$index] -ieq "\??\$self" -or $PendingDeletes[$index] -ieq "*1\??\$self") -and $PendingDeletes[$index + 1] -eq '') { $scheduled = $true }
+    }
+    if (-not $scheduled) { throw 'pending-own-remover-delete-unconfirmed' }
+    Write-Output 'owned-remover-only-residue-scheduled-for-reboot'
+}
+
 <# .SYNOPSIS Reads the kernel's current console account; rejects absent or disconnected consoles. #>
 function Get-ConsoleAccount {
     $session = [OpenRDXConsole]::WTSGetActiveConsoleSessionId()
@@ -231,6 +267,7 @@ try {
     if (Test-Path -LiteralPath 'C:\ProgramData\OpenRDXManager\LocalTrust\runtime.json') { throw 'enrollment-removal-unconfirmed' }
     $uninstaller = Start-Process -FilePath "$fixedRoot\Uninstall OpenRDXManager.exe" -ArgumentList '/S' -PassThru
     if (-not $uninstaller.WaitForExit(120000) -or $uninstaller.ExitCode -ne 0) { throw 'nsis-uninstall-failed' }
+    Assert-RemovedRuntime -RuntimeRoot $fixedRoot
     Write-Output 'OpenRDX Windows installation acceptance passed: clean, repair, upgrade, tamper-denied, copied-manager-denied, owned-removal'
 } finally {
     if ($backup) { [IO.File]::WriteAllBytes($target, $backup) }

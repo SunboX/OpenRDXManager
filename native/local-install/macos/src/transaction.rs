@@ -7,7 +7,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     os::{
-        fd::AsRawFd,
+        fd::{AsRawFd, FromRawFd},
         unix::{
             fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
             net::{UnixListener, UnixStream},
@@ -55,15 +55,22 @@ impl Lease {
 
     /// Reject namespace replacement while the lease remains retained.
     fn recheck(&self, path: &str) -> Result<(), String> {
-        rdx_local_trust::verify_protected_descriptor(&self.0).map_err(|error| error.to_string())?;
-        let opened = self.0.metadata().map_err(|error| error.to_string())?;
-        let named = fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+        rdx_local_trust::verify_protected_descriptor(&self.0).map_err(|error| {
+            // A failed ACL/metadata syscall after fork needs the retained fd and
+            // a fresh diagnostic snapshot; neither becomes authorization proof.
+            let snapshot = self.0.metadata().map(|metadata| {
+                (metadata.mode(), metadata.uid(), metadata.gid(), metadata.nlink())
+            });
+            format!("retained lease protection failed (fd={}, mode/uid/gid/links={snapshot:?}): {error}", self.0.as_raw_fd())
+        })?;
+        let opened = self.0.metadata().map_err(|error| format!("cannot inspect retained lease fd={}: {error}", self.0.as_raw_fd()))?;
+        let named = fs::symlink_metadata(path).map_err(|error| format!("cannot inspect lease namespace {path}: {error}"))?;
         openrdx_macos_local_install::validate_lock_evidence(
             named.is_file(),
             named.uid(),
             named.nlink(),
             named.mode(),
-        )?;
+        ).map_err(|error| format!("named lease protection failed at {path}: {error}"))?;
         if opened.dev() != named.dev() || opened.ino() != named.ino() {
             return Err("installation ownership namespace was replaced".into());
         }
@@ -170,6 +177,7 @@ fn clear_socket() -> Result<(), String> {
 /// Preinstall failure never triggers privileged payload replacement. The child times out
 /// after ten minutes with the daemon stopped and enrollment revoked, requiring repair.
 pub(super) fn prepare() -> Result<(), String> {
+    let _standard_descriptors = reserve_missing_standard_descriptors()?;
     let setup = Lease::acquire(INSTALL_LOCK)?;
     let hardware = Lease::acquire(HARDWARE_LOCK)?;
     let package_record = super::package_source::read_package_record()?;
@@ -229,6 +237,36 @@ pub(super) fn prepare() -> Result<(), String> {
     drop(setup);
     drop(hardware);
     read_preparation_result(&mut parent)
+}
+
+/// Retain only missing standard stream slots before opening leases or private sockets.
+/// Present streams remain untouched; the single-threaded prepare entrypoint owns
+/// these guards through fork so later dup2 detachment cannot replace a protocol fd.
+fn reserve_missing_standard_descriptors() -> Result<Vec<File>, String> {
+    let mut retained = Vec::new();
+    for descriptor in [0, 1, 2] {
+        if unsafe { libc::fcntl(descriptor, libc::F_GETFD) } >= 0 {
+            continue;
+        }
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::EBADF) {
+            return Err(format!("cannot inspect standard stream {descriptor}: {error}"));
+        }
+        let opened = unsafe {
+            libc::open(c"/dev/null".as_ptr(), libc::O_RDWR | libc::O_CLOEXEC)
+        };
+        if opened < 0 {
+            return Err(format!("cannot reserve missing standard stream {descriptor}: {}", std::io::Error::last_os_error()));
+        }
+        let file = unsafe { File::from_raw_fd(opened) };
+        // open chooses the lowest free descriptor. The entrypoint is single
+        // threaded, so a different result means our reservation is unreliable.
+        if opened != descriptor {
+            return Err("standard stream namespace changed during reservation".into());
+        }
+        retained.push(file);
+    }
+    Ok(retained)
 }
 
 /// Await one private fork-channel response under the parent's existing timeout.
@@ -474,6 +512,81 @@ fn revoke_enrollment() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Missing Installer stdio must never place ownership/protocol handles below fd3.
+    #[test]
+    fn missing_standard_streams_cannot_become_lease_or_ready_handles() {
+        for missing in ["1", "all"] {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "transaction::tests::stdio_reservation_isolated_child", "--nocapture"])
+                .env("OPENRDX_TEST_MISSING_STDIO", missing)
+                .output().unwrap();
+            assert!(output.status.success(), "missing={missing}, status={}: {}", output.status, String::from_utf8_lossy(&output.stderr));
+        }
+    }
+
+    /// Self-exec fixture closes only its own stdio and exercises real fd replacement.
+    #[test]
+    fn stdio_reservation_isolated_child() {
+        let close_stderr = match std::env::var("OPENRDX_TEST_MISSING_STDIO").as_deref() {
+            Ok("1") => false,
+            Ok("all") => true,
+            _ => return,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let evidence_fd = unsafe { libc::fcntl(2, libc::F_DUPFD_CLOEXEC, 3) };
+        assert!(evidence_fd >= 3);
+        let mut evidence = unsafe { File::from_raw_fd(evidence_fd) };
+        let existing_stderr = evidence.metadata().unwrap();
+        unsafe { libc::close(0); libc::close(1); }
+        if close_stderr {
+            unsafe { libc::close(2); }
+        }
+        let _guards = reserve_missing_standard_descriptors().unwrap();
+        let stderr_check_fd = unsafe { libc::fcntl(2, libc::F_DUPFD_CLOEXEC, 3) };
+        assert!(stderr_check_fd >= 3);
+        let retained_stderr = unsafe { File::from_raw_fd(stderr_check_fd) }.metadata().unwrap();
+        let present_stream_unchanged = close_stderr || (existing_stderr.dev() == retained_stderr.dev()
+            && existing_stderr.ino() == retained_stderr.ino());
+        let lease = OpenOptions::new().read(true).write(true).create_new(true).mode(0o600)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(directory.path().join("lease")).unwrap();
+        openrdx_macos_local_install::acquire_file_lock(&lease).unwrap();
+        let original = lease.metadata().unwrap();
+        let (mut ready_parent, mut ready_child) = UnixStream::pair().unwrap();
+        let critical_fds_above_stdio = [lease.as_raw_fd(), ready_parent.as_raw_fd(), ready_child.as_raw_fd()]
+            .iter().all(|descriptor| *descriptor >= 3);
+        let null = File::options().read(true).write(true).open("/dev/null").unwrap();
+        for descriptor in [0, 1, 2] {
+            assert!(unsafe { libc::dup2(null.as_raw_fd(), descriptor) } >= 0);
+        }
+        let held = lease.metadata().unwrap();
+        let lease_unchanged = held.is_file() && held.dev() == original.dev() && held.ino() == original.ino();
+        ready_parent.set_read_timeout(Some(Duration::from_millis(50))).ok();
+        let sent = ready_child.write_all(b"Y").is_ok();
+        let mut ready = [0];
+        let protocol_unchanged = sent && ready_parent.read_exact(&mut ready).is_ok() && ready == [b'Y'];
+        writeln!(evidence, "lease_fd={}, above_stdio={critical_fds_above_stdio}, lease_unchanged={lease_unchanged}, protocol_unchanged={protocol_unchanged}, existing_stderr_unchanged={present_stream_unchanged}", lease.as_raw_fd()).unwrap();
+        fs::remove_dir_all(directory.path()).unwrap();
+        // Exit directly: this isolated fixture intentionally replaced standard
+        // descriptor slots, so its test harness must not flush inherited streams.
+        unsafe { libc::_exit(if critical_fds_above_stdio && lease_unchanged && protocol_unchanged && present_stream_unchanged { 0 } else { 1 }); }
+    }
+
+    /// Foreign files remain refused while the diagnostic identifies retained fd state.
+    #[test]
+    fn lease_recheck_reports_protected_descriptor_failure_with_metadata() {
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let lease = Lease(file.as_file().try_clone().unwrap());
+        let error = lease.recheck(file.path().to_str().unwrap()).unwrap_err();
+        assert!(error.contains("retained lease protection failed"), "{error}");
+        assert!(error.contains(&format!("fd={}", lease.0.as_raw_fd())), "{error}");
+        assert!(error.contains("mode/uid/gid/links=Ok("), "{error}");
+        assert!(error.contains("foreign-owned"), "{error}");
+    }
 
     /// Darwin accepts inherit nonblocking mode; commit follows content verification.
     #[test]

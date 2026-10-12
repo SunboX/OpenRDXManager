@@ -76,3 +76,17 @@ export async function resizeVisualWindow(window, viewport, platform = process.pl
     }
     await window.webContents.executeJavaScript(`(${waitForRendererWindowGeometry.toString()})(${JSON.stringify(expected)})`)
 }
+
+/**
+ * Settles the native viewport before replacing the renderer's overlay cache.
+ * Reloading at the previous expanded size can leave Chromium's overlay API
+ * stale after the following shrink even while CSS and content bounds update.
+ * @param {Electron.BrowserWindow} window - Owned secure visual QA window.
+ * @param {{width: number, height: number}} viewport - First real-runtime capture size.
+ * @param {string} [platform=process.platform] - Native QA host; injected in unit fixtures.
+ * @returns {Promise<void>} Resolves after strict resize validation and reload request.
+ */
+export async function reloadVisualRuntimeAtViewport(window, viewport, platform = process.platform) {
+    await resizeVisualWindow(window, viewport, platform)
+    await window.webContents.reload()
+}

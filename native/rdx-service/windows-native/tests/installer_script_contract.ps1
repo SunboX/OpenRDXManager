@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path -LiteralPath $ScriptPath).Path, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'acceptance-script-syntax-error' }
-foreach ($name in @('Invoke-CapturedProgram', 'Invoke-LocalAction')) {
+foreach ($name in @('Invoke-CapturedProgram', 'Invoke-LocalAction', 'Assert-RemovedRuntime')) {
     $function = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     if (-not $function) { throw "acceptance-script-function-missing: $name" }
     Invoke-Expression $function.Extent.Text
@@ -28,20 +28,56 @@ Write-Output 'Windows installer script native boundary passed'
 # The complete custom script must initialize NSIS's readonly temp variable using
 # the pinned compiler's supported instruction before helpers extract plugins.
 $resources = Join-Path $PSScriptRoot '../../../../resources/installer'
-foreach ($item in @(@('windows-installer.nsi', '.onInit'), @('windows-uninstaller.nsh', 'un.onInit'))) {
+foreach ($item in @(@('windows-installer.nsi', '.onInit'), @('windows-remover.nsi', '.onInit'))) {
     $text = Get-Content -LiteralPath (Join-Path $resources $item[0]) -Raw
-    $pattern = 'Function ' + [regex]::Escape($item[1]) + '\s*\r?\n\s*;[^\n]*\n\s*UnsafeStrCpy \$TEMP "\$WINDIR\\Temp"'
+    $pattern = 'Function ' + [regex]::Escape($item[1]) + '\s*\r?\n\s*;[^\n]*\n\s*UnsafeStrCpy \$TEMP "C:\\Program Files"'
     if ($text -notmatch $pattern) { throw 'protected-temp-must-precede-all-plugin-code' }
 }
-$uninstaller = Get-Content -LiteralPath (Join-Path $resources 'windows-uninstaller.nsh') -Raw
-$start = $uninstaller.IndexOf('Function un.onInit')
+$uninstaller = Get-Content -LiteralPath (Join-Path $resources 'windows-remover.nsi') -Raw
+$start = $uninstaller.IndexOf('Function .onInit')
 $init = $uninstaller.Substring($start, $uninstaller.IndexOf('FunctionEnd', $start) - $start)
 if ($init.IndexOf('!insertmacro OpenRDXPrepareRemoval') -lt 0 -or
-    $init.IndexOf('!insertmacro OpenRDXPrepareRemoval') -gt $init.IndexOf('call un.checkAppRunning')) {
+    $init.IndexOf('!insertmacro OpenRDXPrepareRemoval') -gt $init.IndexOf('nsExec::ExecToStack')) {
     throw 'native-quiescence-must-precede-process-shutdown'
 }
 $files = Get-Content -LiteralPath (Join-Path $resources 'windows-install-files.nsh') -Raw
-if ($files -notmatch 'WriteUninstaller "\$INSTDIR\\\$\{UNINSTALL_FILENAME\}"' -or $files -match '\$\{UNINSTALLER_OUT_FILE\}') {
-    throw 'custom-script-must-generate-its-own-uninstaller'
+if ($files -match 'WriteUninstaller|\$\{UNINSTALLER_OUT_FILE\}' -or $uninstaller -match 'Section ["'']un\.|Function un\.') {
+    throw 'remover-must-use-normal-nsis-entrypoint-without-self-copy'
 }
 Write-Output 'Windows pinned template lifecycle contract passed'
+
+# Exercise the real residue guard against protected disposable filesystem objects.
+$fixture = Join-Path $env:TEMP ('openrdx-removal-residue-' + [Guid]::NewGuid().ToString('N'))
+$self = Join-Path $fixture 'Uninstall OpenRDXManager.exe'
+try {
+    Assert-RemovedRuntime -RuntimeRoot $fixture
+    New-Item -ItemType Directory -Path $fixture | Out-Null
+    Set-Content -LiteralPath $self -Value 'disposable-remover'
+    $directoryAcl = New-Object Security.AccessControl.DirectorySecurity
+    $directoryAcl.SetSecurityDescriptorSddlForm('O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FRFX;;;LS)(A;OICI;FRFX;;;BU)')
+    Set-Acl -LiteralPath $fixture -AclObject $directoryAcl
+    $fileAcl = New-Object Security.AccessControl.FileSecurity
+    $fileAcl.SetSecurityDescriptorSddlForm('O:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;LS)(A;;FRFX;;;BU)')
+    Set-Acl -LiteralPath $self -AclObject $fileAcl
+    Assert-RemovedRuntime -RuntimeRoot $fixture -PendingDeletes @("\??\$self", '')
+    Assert-RemovedRuntime -RuntimeRoot $fixture -PendingDeletes @("*1\??\$self", '')
+    foreach ($pending in @(@(), @("\??\$self", '\??\C:\wrong-destination'), @('\??\C:\other-file', ''))) {
+        $rejected = $false
+        try { Assert-RemovedRuntime -RuntimeRoot $fixture -PendingDeletes $pending }
+        catch { $rejected = $_.Exception.Message -eq 'pending-own-remover-delete-unconfirmed' }
+        if (-not $rejected) { throw 'unscheduled-or-renamed-remover-was-accepted' }
+    }
+    Set-Content -LiteralPath (Join-Path $fixture 'unexpected-payload') -Value 'disposable-residue'
+    $rejected = $false
+    try { Assert-RemovedRuntime -RuntimeRoot $fixture -PendingDeletes @("\??\$self", '') }
+    catch { $rejected = $_.Exception.Message -eq 'unexpected-runtime-removal-residue' }
+    if (-not $rejected) { throw 'unexpected-removal-residue-was-accepted' }
+    Remove-Item -LiteralPath (Join-Path $fixture 'unexpected-payload')
+    $fileAcl.SetSecurityDescriptorSddlForm('O:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;LS)(A;;FA;;;BU)')
+    Set-Acl -LiteralPath $self -AclObject $fileAcl
+    $rejected = $false
+    try { Assert-RemovedRuntime -RuntimeRoot $fixture -PendingDeletes @("\??\$self", '') }
+    catch { $rejected = $_.Exception.Message -eq 'noncanonical-runtime-removal-residue' }
+    if (-not $rejected) { throw 'unprivileged-mutable-remover-residue-was-accepted' }
+} finally { Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue }
+Write-Output 'Windows strict removal residue contract passed'

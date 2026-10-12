@@ -19,26 +19,35 @@ Local mode fixes the runtime at `C:\Program Files\OpenRDXManager` and stores
 administrator-protected policy at `C:\ProgramData\OpenRDXManager\LocalTrust`.
 Every runtime object has a protected complete owner/DACL, single-link files,
 no reparses and retained handles during authentication and connected sessions.
-Enrollment pins final complete hashes, including NSIS-generated uninstaller
-files. The service remains demand-started LocalService with its enabled
+Enrollment pins final complete hashes, including the separately compiled normal NSIS removal
+executable. The service remains demand-started LocalService with its enabled
 `NT SERVICE\OpenRDXHardwareService` SID. Incoming setup proves prior ownership
 before payload replacement, refuses an active hardware operation, revokes user
 START and runtime enrollment during quiescence, and publishes the new enrollment
 only after all service, Manager and device policy checks pass. Failures revoke
 admission; atomic policy writes clean only their own retained temporary identity.
 The checksum-pinned NSIS bundle 1.2.1 creates an administrator-owned incoming
-source directory. The maintained installer and uninstaller templates select
-`$WINDIR\Temp` with the pinned compiler's `UnsafeStrCpy` instruction before any
-plugin call; ordinary `StrCpy` cannot modify NSIS's read-only `$TEMP` variable.
+source directory. The maintained installer and normal remover select
+`C:\Program Files` with the pinned compiler's `UnsafeStrCpy` instruction before
+any plugin call; ordinary `StrCpy` cannot modify NSIS's read-only `$TEMP` variable.
+Windows Temp is not a trust root: hosted runner images can grant Users full
+control there. The remover is built as a normal installer entrypoint, with no
+NSIS Uninstall section, so it never performs NSIS's pre-hook self-copy through
+caller TEMP. Its final bytes are staged before inventory generation and are
+identical in NSIS, ZIP and unpacked runtime artifacts.
 The hook removes the incoming directory's initial Everyone child-deletion grant
 before extracting the provisioner and fixed `pending-runtime.json` sibling.
 Native preflight retains both files, their protected parent and every protected
 ancestor, denies user-owned or policy-mutable ancestry, and validates the
 strict bounded inventory and the provisioner's own SHA-256, and records protected
 `history.json` before creating the empty application root or extracting payload.
-An interrupted first extraction can therefore be repaired. Uninstaller preflight
-quiesces and revokes admission in `un.onInit` before any process shutdown helper;
-removal still precedes payload deletion. Only elevated recovery
+An interrupted first extraction can therefore be repaired. Normal-remover
+preflight quiesces and revokes admission in `.onInit` before checking Manager
+processes; native removal still precedes payload deletion. Personal application
+data is preserved. Direct removal can leave only its own protected executable
+scheduled for deletion at reboot; a protected upgrade copy removes the old tree
+immediately. Other payload removal failures preserve registry discovery and
+native history for repair and retry. Only elevated recovery
 after history proof accepts the exact privileged inherited read-only policy and
 normalizes it; runtime authentication still requires protected complete ACLs.
 Protected `history.json` permits elevated repair/removal of corrupt files without

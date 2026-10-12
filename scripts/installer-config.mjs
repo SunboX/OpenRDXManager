@@ -50,7 +50,7 @@ export function createInstallerConfiguration(platform) {
         // Keep the bridge's ordinary ESM/package/dependency tree together.
         asarUnpack: ['scripts/mcp-stdio.mjs', 'src/main/**/*', 'package.json', 'node_modules/**/*'],
         npmRebuild: false,
-        // The pinned modern bundle fixes elevated temporary-directory races.
+        // Pin the atomic plugin-directory compiler used by the normal remover.
         toolsets: { nsis: '1.2.1' },
         beforePack: verifyNativeArchitecture,
         afterPack: prepareLocalTrustSeal,
@@ -68,7 +68,7 @@ export function createInstallerConfiguration(platform) {
                   },
         files: ['package.json', 'src/**/*', 'scripts/mcp-stdio.mjs', 'out/preload.cjs', 'resources/icons/**/*', 'LICENSE', 'LICENSES/**/*', 'NOTICE', 'COMMERCIAL-LICENSE.md'],
         extraResources: [
-            { from: `out/native/${folder}`, to: `native/${folder}` },
+            { from: `out/native/${folder}`, to: `native/${folder}`, ...(platform === 'darwin' ? { filter: ['rdxctl', 'openrdx-hardware', 'openrdx-local-install', 'openrdx-macos-client.node', 'openrdx-service-management.node'] } : {}) },
             { from: `native/rdx-service/resources/${folder}`, to: `native/${folder}`, filter: ['**/*', '!README.md'] }
         ],
         mac: {

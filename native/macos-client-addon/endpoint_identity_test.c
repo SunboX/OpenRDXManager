@@ -99,6 +99,8 @@ int main(void) {
     int result = 0;
     if (!rdx_macos_peer_identity_matches(descriptors[0], requirement, (const char *)path, getuid(), &uid)) { result = 4; }
     if (uid != getuid()) { result = 5; }
+    const rdx_macos_identity_diagnostic verified = rdx_macos_last_identity_diagnostic();
+    if (strcmp(verified.stage, "verified") != 0 || verified.code != 0 || verified.peer_uid != getuid() || verified.peer_pid != getpid()) { result = 33; }
     if (rdx_macos_peer_identity_matches(descriptors[0], requirement, "/Applications/OpenRDXManager.app/Contents/MacOS/OpenRDXManager", getuid(), &uid)) { result = 6; }
     if (rdx_macos_peer_identity_matches(descriptors[0], requirement, (const char *)path, getuid() + 1, &uid)) { result = 7; }
     const char *signed_requirement = "identifier \"com.openrdx.manager\" and anchor apple generic and certificate leaf[subject.OU] = \"ABCD123456\"";
@@ -106,6 +108,8 @@ int main(void) {
         rdx_macos_current_installation_mode() != RDX_INSTALLATION_DENIED) { result = 26; }
     const char *wrong = "identifier \"com.openrdx.manager\" and cdhash H\"0000000000000000000000000000000000000000\"";
     if (rdx_macos_peer_identity_matches(descriptors[0], wrong, (const char *)path, getuid(), &uid)) { result = 8; }
+    const rdx_macos_identity_diagnostic denied = rdx_macos_last_identity_diagnostic();
+    if (strcmp(denied.stage, "peer-dynamic-seal") != 0 || denied.code == 0) { result = 34; }
     if (rdx_macos_current_process_is_installed_manager() || rdx_macos_current_manager_matches(requirement)) { result = 9; }
     (void)close(descriptors[0]); (void)close(descriptors[1]);
     CFRelease(information); CFRelease(code);

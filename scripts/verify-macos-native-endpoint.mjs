@@ -27,15 +27,23 @@ export async function verifyMacOsNativeEndpoint() {
             sdk = (await execFileAsync('/usr/bin/xcrun', ['--sdk', 'macosx', '--show-sdk-path'])).stdout.trim()
         }
     }
-    const output = join(root, 'out/native/macos/endpoint-peer-verification-test')
-    await mkdir(join(root, 'out/native/macos'), { recursive: true })
+    const output = join(root, 'out/verification/macos-native/endpoint-peer-verification-test')
+    await mkdir(join(root, 'out/verification/macos-native'), { recursive: true })
     await execFileAsync('/usr/bin/xcrun', ['clang', '-std=c17', '-Wall', '-Wextra', '-Werror', '-DRDX_MACOS_ENDPOINT_TEST_HOOKS=1', '-DOPENRDX_MACOS_TEAM_ID="ABCD123456"', '-I', join(root, 'native/rdx-service/native/macos'), join(root, 'native/macos-client-addon/endpoint_identity_test.c'), join(root, 'native/rdx-service/native/macos/rdx_endpoint_identity.c'), '-framework', 'Security', '-framework', 'CoreFoundation', '-lbsm', '-o', output], {
         env: { ...process.env, SDKROOT: sdk },
         maxBuffer: 1024 * 1024
     })
     await execFileAsync('/usr/bin/codesign', ['--force', '--sign', '-', '--identifier', 'com.openrdx.manager', output])
     const result = await execFileAsync(output, [], { timeout: 10_000, maxBuffer: 1024 * 1024 })
-    return { skipped: false, output: result.stdout.trim() }
+    const inheritedHelper = join(root, 'out/verification/macos-native/inherited-listener-helper')
+    const inheritedTest = join(root, 'out/verification/macos-native/inherited-listener-test')
+    const environment = { ...process.env, SDKROOT: sdk }
+    await execFileAsync('/usr/bin/xcrun', ['clang', '-std=c17', '-Wall', '-Wextra', '-Werror', join(root, 'native/macos-client-addon/inherited_listener_helper.c'), '-o', inheritedHelper], { env: environment })
+    await execFileAsync('/usr/bin/codesign', ['--force', '--sign', '-', '--identifier', 'com.openrdx.hardware', inheritedHelper])
+    await execFileAsync('/usr/bin/xcrun', ['clang', '-std=c17', '-Wall', '-Wextra', '-Werror', '-I', join(root, 'native/rdx-service/native/macos'), join(root, 'native/macos-client-addon/inherited_listener_test.c'), join(root, 'native/rdx-service/native/macos/rdx_endpoint_identity.c'), '-framework', 'Security', '-framework', 'CoreFoundation', '-lbsm', '-o', inheritedTest], { env: environment })
+    await execFileAsync('/usr/bin/codesign', ['--force', '--sign', '-', '--identifier', 'com.openrdx.manager', inheritedTest])
+    const inherited = await execFileAsync(inheritedTest, [inheritedHelper], { timeout: 10_000, maxBuffer: 1024 * 1024 })
+    return { skipped: false, output: `${result.stdout.trim()}; ${inherited.stdout.trim()}` }
 }
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

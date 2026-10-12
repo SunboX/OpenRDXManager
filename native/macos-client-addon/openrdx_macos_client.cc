@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <cstdio>
 #include <fcntl.h>
 #include <memory>
 #include <mutex>
@@ -18,6 +19,7 @@
 
 extern "C" bool rdx_macos_client_verified_hashes(unsigned char*, unsigned char*, size_t);
 extern "C" bool rdx_macos_client_verify_signed_runtime();
+extern "C" uint32_t rdx_macos_client_last_trust_stage();
 namespace {
 constexpr char kEndpoint[] = "/var/run/openrdx-hardware.sock";
 constexpr char kHelper[] = "/Library/PrivilegedHelperTools/openrdx-hardware";
@@ -34,6 +36,8 @@ struct Connection {
     std::mutex mutex;
     int fd = -1;
     bool verified = false;
+    const char* proof_stage = "not-started";
+    size_t proof_attempts = 0;
     std::atomic<bool> cancelled{false};
     std::atomic<bool> slot_released{false};
     std::shared_ptr<std::atomic<size_t>> pending = std::make_shared<std::atomic<size_t>>(0);
@@ -141,11 +145,15 @@ bool VerifyInstalledPolicy(PeerPolicy& policy, bool local_only = false) {
 }
 /** Open only the fixed root-protected Unix socket before auditing its peer. */
 const char* OpenAndVerify(Connection& connection, Clock::time_point deadline, bool local_only = false) {
+    connection.proof_stage = "manager-location";
     if (!rdx_macos_current_process_is_installed_manager()) return "service-identity-unverified";
+    connection.proof_stage = "installation-policy";
     PeerPolicy policy;
     if (!VerifyInstalledPolicy(policy, local_only)) return "service-identity-unverified";
+    connection.proof_stage = "endpoint-protection";
     if (!rdx_macos_endpoint_path_is_protected()) return "service-not-installed";
     if (connection.cancelled.load() || Clock::now() >= deadline) return "service-exited";
+    connection.proof_stage = "endpoint-open";
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) return "service-exited";
     {
@@ -158,6 +166,7 @@ const char* OpenAndVerify(Connection& connection, Clock::time_point deadline, bo
     sockaddr_un address{};
     address.sun_family = AF_UNIX;
     std::strcpy(address.sun_path, kEndpoint);
+    connection.proof_stage = "endpoint-connect";
     if (connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
         if (errno != EINPROGRESS) return errno == EACCES ? "insufficient-permission" : "service-not-installed";
         if (!Wait(connection, POLLOUT, deadline)) return "service-exited";
@@ -166,7 +175,9 @@ const char* OpenAndVerify(Connection& connection, Clock::time_point deadline, bo
     }
     // launchd creates the listener. Wait for accept() to attach the helper's
     // audit token; never send an application handshake to solicit that identity.
+    connection.proof_stage = "peer-proof";
     while (!connection.cancelled.load() && Clock::now() < deadline) {
+        connection.proof_attempts += 1;
         uint32_t uid = 0;
         if (rdx_macos_peer_identity_matches(fd, policy.requirement.c_str(), policy.helper, 0, &uid)) {
             std::lock_guard<std::mutex> lock(connection.mutex);
@@ -190,7 +201,15 @@ void Cleanup(void* raw) {
 void Execute(napi_env, void* raw) {
     auto& connection = *static_cast<Work*>(raw)->connection;
     const char* failure = OpenAndVerify(connection, Clock::now() + std::chrono::seconds(7));
-    if (failure) Emit(connection, {"error", failure, {}, {}});
+    if (failure) {
+        const auto detail = rdx_macos_last_identity_diagnostic();
+        // One bounded terminal record per attempt. Fixed phase strings/numeric
+        // codes only; no raw paths, code hashes, protocol bytes or inventory.
+        std::fprintf(stderr, "OpenRDXManager native identity failure: phase=%s identity=%s code=%d peer-pid=%d peer-uid=%u trust-phase=%u attempts=%zu\n",
+            connection.proof_stage, detail.stage, detail.code, detail.peer_pid, detail.peer_uid,
+            rdx_macos_client_last_trust_stage(), connection.proof_attempts);
+        Emit(connection, {"error", failure, {}, {}});
+    }
     else if (Emit(connection, {"connect", {}, {}, {}})) {
         while (!connection.cancelled.load()) {
             if (!Wait(connection, POLLIN, Clock::now() + std::chrono::milliseconds(100))) {

@@ -3,11 +3,16 @@
 
 ; Local installation has one native trust root. The elevated native provisioner
 ; independently proves all roots, runtime contents, SCM configuration and PID.
+; The one checksum-pinned archive identifies its Windows compiler as v3.12
+; and its macOS/Linux builds as the exact CVS revision below.
 !if "${NSIS_VERSION}" != "v23-May-2026.cvs"
-  !error "OpenRDX setup requires the checksum-pinned NSIS bundle 1.2.1 compiler"
+  !if "${NSIS_VERSION}" != "v3.12"
+    !error "OpenRDX setup requires the checksum-pinned NSIS bundle 1.2.1 compiler"
+  !endif
 !endif
 
-; NSIS 3.12 atomically creates $PLUGINSDIR with a Builtin Administrators owner.
+; NSIS 3.12 atomically creates $PLUGINSDIR below the fixed Program Files parent
+; with a Builtin Administrators owner. Windows Temp can grant Users full control.
 ; Its initial Everyone grant permits child deletion, so remove that grant before
 ; extracting any incoming executable or inventory. System.dll is already loaded
 ; when this call runs; ordinary users cannot add files to the initial directory.

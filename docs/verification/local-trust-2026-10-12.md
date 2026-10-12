@@ -5,9 +5,9 @@
 
 ## Current delivery state
 
-The working tree implements the approved Windows/macOS local installation mode and uses application version **1.0.1** from `package.json`. The starting commit was `14a07d4`. Local implementation and verification initially remained uncommitted at the user’s request. On 2026-10-12 the user explicitly authorized committing, pushing, all platform builds and a new release after successful verification. The checks below describe the pre-release local evidence; native CI and installed acceptance must be recorded separately.
+The approved Windows/macOS local installation mode uses application version **1.0.1** from `package.json`. Implementation was committed and pushed as `694aa87`; the first installer fixes and diagnostics were pushed as `c3f6e17`. Native CI acceptance has exposed further failures described below. Release **1.0.1 remains unpublished** pending successful installed authentication, repair/removal, all six build jobs and read-only physical acceptance.
 
-Local source verification is separate from installed-service and physical-device acceptance. No privileged installation was performed on the macOS development host. Windows native checks ran in the local Windows 11 ARM64 VM using x64 Rust/Node/MSVC; they do not establish native Windows ARM64 compatibility or a completed installer lifecycle.
+Local source verification is separate from installed-service and physical-device acceptance. The initial local checks preceded installation on the macOS development host. Subsequent administrator-approved Installer attempts and native CI results are recorded below. Initial Windows checks used x64 Rust/Node/MSVC in the local Windows 11 ARM64 VM; installed acceptance remains required for each native architecture.
 
 ## Completed local checks
 
@@ -30,7 +30,7 @@ Ownership-only historical records permit elevated repair or removal of a damaged
 
 macOS keeps its separately signed route explicit. That route additionally requires a compiled Team ID, strict code seals, protected runtime and the five required Electron fuse states. A real public signing certificate was not exercised here. Windows uses the new local installer route; an older unrecorded installation must be removed through its original uninstaller before migration.
 
-Final read-only reviews found no remaining actionable issue in the amended source. macOS removal retains the current ownership history through cleanup failures; Windows removal quiesces native ownership before process shutdown. Post-review focused tests and formatting passed.
+Initial read-only source reviews and focused tests passed. Later actual installer execution exposed failures that those checks did not cover. macOS removal retains the current ownership history through cleanup failures; Windows removal quiesces native ownership before process shutdown.
 
 ## Release validation
 
@@ -41,7 +41,7 @@ Final read-only reviews found no remaining actionable issue in the amended sourc
 5. Select an explicitly identified RDX dock for non-destructive physical access checks. Verify service/device readiness and supported read-only status before considering any device mutation. Software or no-device CI success does not prove physical access.
 6. Verify all installer names, versions and checksums, then publish only after the required installer, architecture and device evidence is complete.
 
-The macOS development host still has an older SMAppService registration associated with the original 0.1.0 app at `dist/macos/OpenRDXManager.app`. The new installer must not silently replace this unrecorded registration. Use the original app's service controls to unregister it before a deliberately authorized migration; no such change was made during local checks.
+The development host's earlier SMAppService registration belonged to the original 0.1.0 app at `dist/macos/OpenRDXManager.app`. Before the authorized migration, its original native controller successfully unregistered it, and `launchctl print system/com.openrdx.hardware` confirmed absence. It reappeared after the first failed installation and was again removed through that original controller. The new installer continues to refuse foreign registrations.
 
 See the [approved specification](../specs/locally-trusted-installation-2026-10-12.md), [implementation plan](../plans/locally-trusted-installation-2026-10-12.md) and [user installation guide](../installation.md).
 
@@ -51,6 +51,27 @@ The fresh pre-commit suite exposed an intermittent macOS QA resize mismatch: the
 
 The later fresh suite also exposed an intermittent visual-process deadline without a completion marker. Phase diagnostics and a reduced reload reproduction were added; the reduced reproduction and a traced full 62-capture run passed. The cause of the deadline is not verified. Optional phase traces remain available through `OPENRDX_VISUAL_QA_TRACE=1`; a fresh complete traced suite is required before commit.
 
-The user selected this Mac for read-only physical acceptance. The current `IOUSBHostDevice` registry identifies dock `1a5a:0005`, serial `007820999743`; the legacy USB plane and System Profiler returned no devices. This is identification only, not installed-service or hardware-protocol proof. The earlier 0.1.0 registration remains and new PKG installation requires administrator authentication.
+The user selected this Mac for read-only physical acceptance. The current `IOUSBHostDevice` registry identifies dock `1a5a:0005`, serial `007820999743`; the legacy USB plane and System Profiler returned no devices. This establishes identification. Installed-service and hardware-protocol acceptance remain pending, and PKG installation requires administrator authentication.
 
 Final pre-commit verification: `OPENRDX_VISUAL_QA_TRACE=1 npm test` passed with 1,069 tests passing, 19 skipped and zero failed. Both complete screenshot runs and intentionally corrupted-image rejection passed. Formatting and staged diff checks passed. This supersedes the failed diagnostic preflight attempts; it does not establish physical or installed-service acceptance.
+
+## Native CI and subsequent corrections
+
+[Run 38268320552](https://github.com/SunboX/OpenRDXManager/actions/runs/38268320552) tested `694aa87`. Both Linux jobs passed. Windows native fixtures incorrectly assumed SYSTEM ownership and a protected Windows Temp ancestor; runtime inventory compared Windows pathname metadata with incompatible handle metadata. macOS PKG installation failed during the commit handoff. None of these failed jobs was published.
+
+[Run 38273699105](https://github.com/SunboX/OpenRDXManager/actions/runs/38273699105) tested `c3f6e17`. Both Linux jobs passed again. Both macOS PKGs installed successfully and root-side verification passed; the installed Manager then refused service identity, so repair and removal checks were not reached. Both Windows jobs passed their native and PowerShell checks, then packaging rejected the compiler revision string. The same pinned archive reports different revisions on its Windows and macOS/Linux compiler builds; actual Windows compilation and behavior must be checked before admitting either revision.
+
+On this Mac, the first installation failed in postinstall with `Broken pipe`. A real Darwin socket regression proved that accepted sockets inherit the polling listener's nonblocking mode; the supervisor closed the peer before verification completed. The authenticated accepted stream now waits under the existing timeout. The next installation failed earlier in preparation with `Invalid argument`. A third diagnostic installation identified the supervisor hardware-lease recheck. An isolated missing-stdio regression reproduced a retained lock/private channel allocated below fd 3 being replaced during supervisor detachment. Preparation now reserves missing standard streams before opening those handles, preserving present streams. This proven lifecycle fix does not yet establish the cause of the host error; the next actual installation remains required. Bounded diagnostics retain strict protection checks.
+
+Fresh local checks passed for the amended macOS installer (25 tests), shared trust policy (27 tests), macOS native boundary (74 passed, one physical test ignored) and relevant Node contracts. A real inherited-listener fixture confirms that the accepting helper's kernel audit token and code can be verified before protocol bytes. This does not identify the installed CI authentication failure. Generated native verification executables now live under `out/verification/macos-native`.
+
+The fresh full Node suite had 1,069 passed, 21 skipped and two visual failures at the reload/resize boundary. Native overlay width retained the expanded size while viewport and CSS geometry had settled. The QA harness now settles the first runtime viewport before reload. Its subsequent exact real Electron suite passed all five tests, including two complete 62-image matrices, manifest and raster identity, corruption/wrong-seed rejection and unchanged canonical evidence. The subsequent combined full Node suite passed 1,075 tests, with 21 skipped and zero failed. The later native descriptor fixes passed their focused suites and formatting; final native CI remains required.
+
+
+### Final correction preflight
+
+An ordinary-user native probe against the protected installed runtime reproduced authentication failure with a soft descriptor limit of 256: the inventory-only estimate omitted 55 directories. The corrected protected-tree count includes empty directories and raises only the current process soft limit within its existing hard limit. The actual requirement was 2,632 handles; the corrected probe verified the runtime successfully. Full retained content verification still follows the capacity check. This establishes the local cause; installed CI confirmation remains required.
+
+The corrected macOS ARM64 PKG, DMG and ZIP passed final strict seal, helper identity, version, root payload/script ownership, exact CLI bytes, payload inventory, PKG metadata and PKG-only DMG checks. It includes the missing-stdio reservation and corrected handle count; actual installation is pending. Native verification fixtures are excluded by an exact five-file runtime resource whitelist.
+
+Windows packaging now admits the two revision strings verified from the same pinned tool bundle: `v3.12` on Windows and `v23-May-2026.cvs` on macOS/Linux. Actual Windows production-remover compilation passed. The remover uses a normal elevated entrypoint and protected Program Files plugin staging, avoiding an uninstaller self-copy before its initialization hook. The disposable lifecycle probe used a native-boundary stub and is not installed-service proof. Temporary VM account, task, profile, tools and owned pending-deletion entries were removed; unrelated entries were preserved. The original stopped VM state and enabled idle pause were restored.

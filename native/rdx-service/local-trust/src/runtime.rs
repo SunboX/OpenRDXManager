@@ -32,7 +32,9 @@ pub fn verify_runtime(root: &Path, inventory: &RuntimeInventory) -> Result<(), T
 /// plus 128 descriptors reserved for the caller, protected ancestors and setup
 /// artifacts. Unix verification preflights the current process soft limit;
 /// installers may raise only their own process limit before calling verification.
-/// Empty undeclared directories are additionally bounded during traversal.
+/// This inventory-only estimate omits empty directories; Unix installed callers
+/// must use `protected_runtime_handle_requirement` before raising their limit.
+/// Actual retained capacity remains bounded during full verification.
 pub fn runtime_handle_requirement(inventory: &RuntimeInventory) -> Result<usize, TrustError> {
     validate_inventory(inventory, &inventory.platform)?;
     let mut directories = HashSet::new();

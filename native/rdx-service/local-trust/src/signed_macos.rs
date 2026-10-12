@@ -3,7 +3,7 @@
 
 use crate::{
     MAX_ENTRIES, MAX_INVENTORY_BYTES, RuntimeFile, RuntimeInventory, RuntimeLink, TrustError, deny,
-    runtime_handle_requirement, verify_protected_descriptor, verify_protected_directory,
+    protected_runtime_handle_requirement, verify_protected_descriptor, verify_protected_directory,
     verify_protected_runtime,
 };
 use sha2::{Digest, Sha256};
@@ -25,7 +25,7 @@ const ELECTRON_FRAMEWORK: &str =
 pub fn verify_protected_signed_macos_runtime() -> Result<(), TrustError> {
     let root = Path::new(APP_ROOT);
     let inventory = snapshot(root)?;
-    ensure_process_descriptor_budget(runtime_handle_requirement(&inventory)?)?;
+    ensure_process_descriptor_budget(protected_runtime_handle_requirement(root, &inventory)?)?;
     verify_protected_runtime(root, &inventory)?;
     let expected = inventory
         .files

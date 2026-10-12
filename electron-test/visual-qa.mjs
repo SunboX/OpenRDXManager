@@ -16,7 +16,7 @@ import { registerWindowMenu } from '../src/main/window-menu.mjs'
 import { WindowMenuChannel } from '../src/shared/window-menu.mjs'
 import { visualWindowOptions } from './visual-window-options.mjs'
 import { waitForRendererVisualPaint } from './visual-paint.mjs'
-import { resizeVisualWindow } from './visual-window-geometry.mjs'
+import { reloadVisualRuntimeAtViewport, resizeVisualWindow } from './visual-window-geometry.mjs'
 import { guardVisualOutput } from './visual-output.mjs'
 import { normalizeConsoleMessage, VisualErrorTracker } from './visual-error-tracker.mjs'
 import { isVisualAnchorUnoccluded } from './visual-anchor-visibility.mjs'
@@ -912,7 +912,8 @@ async function runVisualQa() {
         pendingDeviceList = createDeferredDeviceList()
         /** Reloads the production renderer for real-runtime state capture. @returns {Promise<void>} */
         async function reloadRuntimeRenderer() {
-            await window.webContents.reload()
+            const initialRuntimeEntry = matrix.find(({ state }) => state === 'starting-runtime')
+            await reloadVisualRuntimeAtViewport(window, initialRuntimeEntry.viewport)
         }
         traceVisualPhase('runtime-reload')
         const { cursor: runtimeLoadCursor } = await runWithVisualErrorCursor(errorTracker, reloadRuntimeRenderer)

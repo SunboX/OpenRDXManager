@@ -7,6 +7,10 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+/** Bounded native-only failure evidence, with no path/hash/enrollment contents. */
+typedef struct { const char *stage; int32_t code; int32_t peer_pid; uint32_t peer_uid; } rdx_macos_identity_diagnostic;
+/** Return the calling native worker's most recent fixed-stage evidence. */
+rdx_macos_identity_diagnostic rdx_macos_last_identity_diagnostic(void);
 /** Checks current kernel credentials/audit token and strict code seal on one retained socket. */
 bool rdx_macos_peer_identity_matches(int peer, const char *requirement_text,
     const char *executable_path, uint32_t expected_uid, uint32_t *out_user_id);

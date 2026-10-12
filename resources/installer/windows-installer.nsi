@@ -64,12 +64,9 @@ Var launchLink
 !include "multiUser.nsh"
 !include "${BUILD_RESOURCES_DIR}\windows-process-control.nsh"
 
-; Both the installer and generated uninstaller require administrator admission.
+; Both the installer and separately compiled remover require administrator admission.
 RequestExecutionLevel admin
 !include "assistedInstaller.nsh"
-!insertmacro MUI_UNPAGE_WELCOME
-!insertmacro MUI_UNPAGE_INSTFILES
-!insertmacro MUI_UNPAGE_FINISH
 !insertmacro addLangs
 
 !ifmacrodef customHeader
@@ -77,8 +74,8 @@ RequestExecutionLevel admin
 !endif
 
 Function .onInit
-  ; Select a privileged namespace before the first possible plugin call.
-  UnsafeStrCpy $TEMP "$WINDIR\Temp"
+  ; Use protected installation ancestors before the first possible plugin call.
+  UnsafeStrCpy $TEMP "C:\Program Files"
   Call setInstallSectionSpaceRequired
   ; Never create a caller-selected /D destination before fixed native preflight.
   SetOutPath $TEMP
@@ -109,12 +106,3 @@ SectionEnd
 Function setInstallSectionSpaceRequired
   !insertmacro setSpaceRequired ${INSTALL_SECTION_ID}
 FunctionEnd
-
-; Custom scripts bypass builder's separate uninstaller pass. Generate both
-; instruction sets together, preserving helper expansion's uninstall context.
-!define BUILD_UNINSTALLER
-Function un._GetProcessInfo
-  !insertmacro FUNC_GETPROCESSINFO
-FunctionEnd
-!include "${BUILD_RESOURCES_DIR}\windows-uninstaller.nsh"
-!undef BUILD_UNINSTALLER

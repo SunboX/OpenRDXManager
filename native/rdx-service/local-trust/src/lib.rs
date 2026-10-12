@@ -14,7 +14,11 @@ mod signed_macos;
 #[cfg(target_os = "macos")]
 pub use signed_macos::verify_protected_signed_macos_runtime;
 #[cfg(unix)]
+mod budget;
+#[cfg(unix)]
 mod unix;
+#[cfg(unix)]
+pub use budget::protected_runtime_handle_requirement;
 
 pub use inventory::{
     MAX_ENTRIES, MAX_INVENTORY_BYTES, RuntimeFile, RuntimeInventory, RuntimeLink, parse_inventory,

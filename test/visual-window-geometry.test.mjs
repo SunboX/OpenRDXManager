@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { runInNewContext } from 'node:vm'
 import { test } from 'node:test'
 
-import { resizeVisualWindow, waitForRendererWindowGeometry } from '../electron-test/visual-window-geometry.mjs'
+import { reloadVisualRuntimeAtViewport, resizeVisualWindow, waitForRendererWindowGeometry } from '../electron-test/visual-window-geometry.mjs'
 
 /**
  * Runs the renderer wait against delayed native overlay/CSS updates.
@@ -75,4 +75,31 @@ test('macOS QA refreshes native overlay layout after viewport resize without cha
     }
     await resizeVisualWindow(window, { width: 1024, height: 768 }, 'darwin')
     assert.deepEqual(calls, ['resize', 'viewport', 'native-layout', 'strict-geometry'])
+})
+
+test('real-runtime reload starts only after the target viewport and native overlay settle', async () => {
+    const calls = []
+    const window = {
+        webContents: {
+            async executeJavaScript(code) {
+                if (code.includes('readNativeTitlebarInsets')) return { left: 78, right: 0 }
+                if (code.includes('waitForRendererViewport')) calls.push('viewport')
+                else if (code.includes('waitForRendererWindowGeometry')) calls.push('strict-geometry')
+            },
+            async reload() {
+                calls.push('reload')
+            }
+        },
+        setBounds() {
+            calls.push('resize')
+        },
+        getContentBounds() {
+            return { width: 1024, height: 768 }
+        },
+        setWindowButtonVisibility() {
+            calls.push('native-layout')
+        }
+    }
+    await reloadVisualRuntimeAtViewport(window, { width: 1024, height: 768 }, 'darwin')
+    assert.deepEqual(calls, ['resize', 'viewport', 'native-layout', 'strict-geometry', 'reload'])
 })

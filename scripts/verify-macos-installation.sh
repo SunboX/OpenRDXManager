@@ -21,6 +21,14 @@ restoration_required=false
 
 # Restore the exact file before cleanup, including when a negative check fails.
 cleanup() {
+    local installation_exit=$?
+    if [[ "$installation_exit" != 0 ]]; then
+        # Keep bounded native service evidence when installed authentication or
+        # repair fails, before any test-owned restoration. This disposable CI
+        # host has no physical device or application secrets.
+        sudo /bin/launchctl print system/com.openrdx.hardware || true
+        sudo /usr/bin/log show --last 5m --style compact --predicate 'process == "openrdx-hardware"' 2>/dev/null | /usr/bin/tail -n 100 || true
+    fi
     if [[ "$restoration_required" == true ]]; then
         sudo /bin/cp "$original" "$pinned_file"
         sudo /usr/sbin/chown root:wheel "$pinned_file"
@@ -29,6 +37,10 @@ cleanup() {
     /bin/rm -rf "$evidence"
 }
 trap cleanup EXIT
+
+# Record the actual desktop principal used by native peer authentication.
+/usr/bin/id
+/usr/bin/stat -f 'console-owner=%u:%g mode=%Lp' /dev/console
 
 # Include package-script diagnostics in the job, rather than reporting only
 # Installer's generic failure. This runs on the disposable native CI host.

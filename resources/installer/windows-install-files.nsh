@@ -126,8 +126,8 @@
     !endif
   !endif
 
-  ; Custom scripts do not receive builder's separately compiled uninstaller.
-  WriteUninstaller "$INSTDIR\${UNINSTALL_FILENAME}"
+  ; The archive already contains the separately compiled, inventory-pinned
+  ; normal NSIS remover. Never emit a self-copying NSIS Uninstall executable.
 !macroend
 
 !macro registryAddInstallInfo
