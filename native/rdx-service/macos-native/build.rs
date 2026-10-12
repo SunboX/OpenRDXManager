@@ -100,6 +100,7 @@ fn main() {
     objc.compile("rdx_macos_usb_host");
 
     println!("cargo:rustc-link-lib=bsm");
+    println!("cargo:rustc-link-lib=proc");
     for framework in [
         "CoreFoundation",
         "Foundation",

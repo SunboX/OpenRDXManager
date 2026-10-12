@@ -182,14 +182,35 @@ fn service_mode() -> Option<&'static str> {
 /// Runs one authenticated production endpoint for the current platform.
 #[cfg(target_os = "macos")]
 fn run_platform_endpoint(platform: ServicePlatform) -> Result<(), ()> {
-    let _namespace = rdx_macos_native::initialize_hardware_ownership_namespace().map_err(|_| ())?;
-    let requirement = embedded_macos_manager_designated_requirement().map_err(|_| ())?;
+    use rdx_macos_native::log_endpoint_phase;
+    log_endpoint_phase("startup", None);
+    let _namespace =
+        rdx_macos_native::initialize_hardware_ownership_namespace().map_err(|error| {
+            log_endpoint_phase("ownership-namespace", Some(error));
+        })?;
+    log_endpoint_phase("ownership-namespace", None);
+    let requirement = embedded_macos_manager_designated_requirement().map_err(|_| {
+        log_endpoint_phase(
+            "embedded-trust-requirement",
+            Some(rdx_macos_native::NativeError::AccessDenied),
+        );
+    })?;
+    log_endpoint_phase("embedded-trust-requirement", None);
     let listener =
-        rdx_macos_native::activate_launchd_manager_endpoint(&requirement).map_err(|_| ())?;
+        rdx_macos_native::activate_launchd_manager_endpoint(&requirement).map_err(|error| {
+            log_endpoint_phase("launchd-activation", Some(error));
+        })?;
+    log_endpoint_phase("launchd-activation", None);
     for _ in 0..rdx_macos_native::launchd_endpoint_contract().max_connections {
         let connection = match listener.accept() {
-            Ok(connection) => connection,
-            Err(error) => return classify_macos_endpoint_failure(error).map_err(|_| ()),
+            Ok(connection) => {
+                log_endpoint_phase("authenticated-accept", None);
+                connection
+            }
+            Err(error) => {
+                log_endpoint_phase("authenticated-accept", Some(error));
+                return classify_macos_endpoint_failure(error).map_err(|_| ());
+            }
         };
         let reader = connection.try_clone().map_err(|_| ())?;
         let reader =

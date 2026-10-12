@@ -61,7 +61,12 @@ its exact prior/installed policy and removal restores only unchanged matching
 instance, dock serial and volume topology. Unknown or administrator-modified
 policies fail closed or are preserved. Effective driver access after reconnect or
 restart and physical RDX behavior remain separate unverified gates; LocalSystem
-is never a fallback. The disposable installed acceptance script is
+is never a fallback. Native setup denials report only fixed checkpoint labels and sanitized fieldless
+error names. Silent NSIS setup writes those allowlisted tokens to inherited stderr,
+exits nonzero, and does not display a blocking dialog; assisted setup also fails
+nonzero after displaying its public repair instruction. The verifier captures at
+most 65,536 UTF-8 text characters per stream and retains its process deadline.
+The disposable installed acceptance script is
 `scripts/verify-windows-installation.ps1`; it requires an actual interactive
 console and launches the installed Manager with a limited token before accepting
 the authenticated-service marker. Compilation and no-device tests do not satisfy

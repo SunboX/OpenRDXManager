@@ -41,8 +41,7 @@ Function .onInit
   Pop $0
   Pop $1
   ${If} $0 != 0
-    MessageBox MB_ICONSTOP "Close OpenRDXManager, then run removal again."
-    Abort
+    !insertmacro OpenRDXFail "removal-manager-process" "$0" "Close OpenRDXManager, then run removal again."
   ${EndIf}
 FunctionEnd
 
@@ -73,9 +72,7 @@ Section "Remove OpenRDXManager"
     FindClose $R0
     IfRebootFlag removal_files_complete removal_files_failed
   removal_files_failed:
-    SetErrorLevel 3
-    MessageBox MB_ICONSTOP "Some application files could not be removed. Run the installer Repair action, then retry removal. Your saved records were preserved."
-    Abort
+    !insertmacro OpenRDXFail "removal-files" "3" "Some application files could not be removed. Run the installer Repair action, then retry removal. Your saved records were preserved."
   removal_files_complete:
   Delete "$DESKTOP\OpenRDXManager.lnk"
   Delete "$SMPROGRAMS\OpenRDXManager.lnk"

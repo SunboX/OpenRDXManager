@@ -154,11 +154,39 @@ function Invoke-LocalAction([string[]]$Arguments) {
     Write-Output $result.output
     if ($result.exitCode -ne 0) { throw "native-action-failed: $($Arguments[1]) code=$($result.exitCode)" }
 }
-<# .SYNOPSIS Runs bounded NSIS setup and never treats a launched process as installation proof. #>
-function Invoke-Setup {
-    $process = Start-Process -FilePath $Installer -ArgumentList '/S' -PassThru
-    if (-not $process.WaitForExit(120000)) { $process.Kill(); throw 'installer-timeout' }
-    if ($process.ExitCode -ne 0) { throw "installer-failed: $($process.ExitCode)" }
+<# .SYNOPSIS Reads at most 65,536 characters of UTF-8 text from an exact verification-owned process log. .PARAMETER Path Captured stdout or stderr file. #>
+function Read-SetupDiagnostic([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) { return '' }
+    $stream = New-Object IO.FileStream($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::UTF8, $true, 1024)
+    try {
+        $buffer = New-Object char[] 65536
+        $count = $reader.ReadBlock($buffer, 0, $buffer.Length)
+        $output = New-Object string($buffer, 0, $count)
+        if (-not $reader.EndOfStream) { $output += '[diagnostic-output-truncated]' }
+        return $output
+    } finally { $reader.Dispose(); $stream.Dispose() }
+}
+<# .SYNOPSIS Runs bounded NSIS setup, captures inherited GUI diagnostics and requires its actual exit status. .PARAMETER Executable Exact verification target, defaults to the requested installer. .PARAMETER Arguments Its fixed operation, defaults to silent setup. .PARAMETER TimeoutMilliseconds Bounded wait; tests use a shorter interval to prove timeout handling. #>
+function Invoke-Setup([string]$Executable = $Installer, [string]$Arguments = '/S', [int]$TimeoutMilliseconds = 120000) {
+    $token = [Guid]::NewGuid().ToString('N')
+    $stdout = Join-Path $runDirectory "setup-$token.stdout"
+    $stderr = Join-Path $runDirectory "setup-$token.stderr"
+    $process = $null
+    try {
+        $process = Start-Process -FilePath $Executable -ArgumentList $Arguments -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+        # Pin the handle before exit: Windows PowerShell 5.1 otherwise loses ExitCode.
+        $handle = $process.Handle
+        $finished = $process.WaitForExit($TimeoutMilliseconds)
+        if (-not $finished) { $process.Kill(); $null = $process.WaitForExit(5000) }
+        $output = (Read-SetupDiagnostic $stdout) + (Read-SetupDiagnostic $stderr)
+        Write-Output $output
+        if (-not $finished) { throw "installer-timeout: diagnostics=$output" }
+        if ($process.ExitCode -ne 0) { throw "installer-failed: $($process.ExitCode) diagnostics=$output" }
+    } finally {
+        if ($process) { if (-not $process.HasExited) { $process.Kill() }; $process.Dispose() }
+        Remove-Item -LiteralPath $stdout, $stderr -Force -ErrorAction SilentlyContinue
+    }
 }
 <# .SYNOPSIS Waits for bounded output from the exact limited interactive task. #>
 function Wait-Worker([string]$Path, [switch]$AllowFailure) {

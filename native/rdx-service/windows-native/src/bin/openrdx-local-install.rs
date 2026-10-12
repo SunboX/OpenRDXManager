@@ -32,12 +32,14 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(rdx_windows_native::NativeError::Busy) => {
+            eprintln!("OpenRDX native failure: phase=entrypoint reason=Busy");
             eprintln!(
                 "OpenRDX setup: service is active; close Manager, wait for hardware operations to finish, then retry setup"
             );
             ExitCode::from(4)
         }
-        Err(_) => {
+        Err(error) => {
+            eprintln!("OpenRDX native failure: phase=entrypoint reason={error:?}");
             eprintln!(
                 "OpenRDX setup incomplete: launch installed Manager as the active console user, then rerun the elevated installer Repair action"
             );

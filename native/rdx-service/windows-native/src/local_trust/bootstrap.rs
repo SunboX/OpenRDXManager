@@ -11,6 +11,7 @@ use super::{
     validate_runtime_acl,
 };
 use crate::NativeError;
+use crate::installer::diagnostics::{InstallStage as Stage, diagnostic};
 #[cfg(test)]
 use rdx_local_trust::RuntimeInventory;
 use rdx_local_trust::{MAX_INVENTORY_BYTES, parse_inventory};
@@ -102,27 +103,36 @@ pub(super) fn validate_empty_root(path: &Path) -> Result<File, NativeError> {
 /// Creates the fixed first-install intent and protected empty root before any payload write.
 /// Caller already proved the fixed SCM name is absent; no path or identity is supplied.
 pub(crate) fn prepare_first_install() -> Result<(), NativeError> {
-    super::windows::verify_fresh_install_root()?;
+    diagnostic(
+        Stage::FreshRoot,
+        super::windows::verify_fresh_install_root(),
+    )?;
     let executable = std::env::current_exe().map_err(|_| NativeError::AccessDenied)?;
-    let incoming = incoming_source(&executable)?;
+    let incoming = diagnostic(Stage::IncomingSource, incoming_source(&executable))?;
     let runtime = Path::new(LOCAL_RUNTIME_ROOT);
     let existing_root = if runtime.exists() {
-        Some(validate_empty_root(runtime)?)
+        Some(diagnostic(Stage::EmptyRoot, validate_empty_root(runtime))?)
     } else {
         None
     };
     for directory in [r"C:\ProgramData\OpenRDXManager", LOCAL_ENROLLMENT_ROOT] {
         let path = Path::new(directory);
         if path.exists() {
-            validate_runtime_acl(&evidence(&open(path, false)?)?)?;
+            diagnostic(
+                Stage::ExistingData,
+                validate_runtime_acl(&evidence(&open(path, false)?)?),
+            )?;
         } else {
-            create_protected_directory(path)?;
+            diagnostic(Stage::CreateData, create_protected_directory(path))?;
         }
     }
-    super::windows::remove_enrollment()?;
-    persist_intent(Path::new(LOCAL_ENROLLMENT_ROOT), &incoming.bytes)?;
+    diagnostic(Stage::RevokeEnrollment, super::windows::remove_enrollment())?;
+    diagnostic(
+        Stage::PersistIntent,
+        persist_intent(Path::new(LOCAL_ENROLLMENT_ROOT), &incoming.bytes),
+    )?;
     if existing_root.is_none() {
-        create_protected_directory(runtime)?;
+        diagnostic(Stage::CreateRuntime, create_protected_directory(runtime))?;
     }
     Ok(())
 }

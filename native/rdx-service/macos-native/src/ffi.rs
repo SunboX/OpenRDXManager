@@ -255,6 +255,10 @@ pub(crate) struct ScsiLease {
 // SAFETY: declarations mirror the compiler-checked C header; the safe wrapper
 // validates the complete ABI layout before tests and owns every pointer result.
 unsafe extern "C" {
+    pub(crate) fn rdx_macos_log_endpoint_phase(
+        phase: *const std::ffi::c_char,
+        result: *const std::ffi::c_char,
+    );
     pub(crate) fn rdx_macos_run_directory_is_protected() -> bool;
     pub(crate) fn rdx_macos_enumerate(output: *mut *mut EnumerationResult) -> u32;
     pub(crate) fn rdx_macos_probe_readiness(output: *mut Readiness) -> u32;

@@ -345,3 +345,27 @@ fn valid_cdhash(hash: &str) -> bool {
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
+
+/// Record a fixed service startup/accept phase in macOS unified logging.
+/// Only bounded internal phase/error text is emitted; no identity pins or paths.
+pub fn log_endpoint_phase(phase: &str, error: Option<NativeError>) {
+    #[cfg(target_os = "macos")]
+    {
+        if phase.len() > 64 {
+            return;
+        }
+        let Ok(phase) = CString::new(phase) else {
+            return;
+        };
+        let result = CString::new(error.map_or_else(|| "ok".into(), |error| format!("{error:?}")))
+            .expect("sanitized error has no NUL");
+        // SAFETY: both bounded owned strings outlive this synchronous log call.
+        unsafe {
+            crate::ffi::rdx_macos_log_endpoint_phase(phase.as_ptr(), result.as_ptr());
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (phase, error);
+    }
+}

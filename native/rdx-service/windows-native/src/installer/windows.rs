@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! Fixed SCM registration. Updates refuse live hardware service sessions.
+use super::diagnostics::{InstallStage as Stage, diagnostic};
 use super::{LocalInstallAction, LocalInstallCommand};
 use crate::local_trust::{
     LOCAL_RUNTIME_ROOT, LOCAL_SERVICE_BINARY, commit_enrollment, prepare_runtime,
@@ -169,7 +170,7 @@ pub(super) fn apply(command: LocalInstallCommand) -> Result<(), NativeError> {
     let service = match existing {
         Ok(handle) => {
             let service = Service(handle);
-            configuration(&service)?;
+            diagnostic(Stage::ServiceConfiguration, configuration(&service))?;
             if !matches!(
                 command.action(),
                 LocalInstallAction::Verify | LocalInstallAction::Prepare
@@ -243,8 +244,11 @@ pub(super) fn apply(command: LocalInstallCommand) -> Result<(), NativeError> {
         }
         Err(_) => return Err(NativeError::AccessDenied),
     };
-    configuration(&service)?;
-    verify_service_owner(&service, newly_created)?;
+    diagnostic(Stage::ServiceConfiguration, configuration(&service))?;
+    diagnostic(
+        Stage::ServiceOwner,
+        verify_service_owner(&service, newly_created),
+    )?;
     if !newly_created
         && matches!(
             command.action(),
@@ -254,7 +258,7 @@ pub(super) fn apply(command: LocalInstallCommand) -> Result<(), NativeError> {
         let _history = verify_owned_runtime_lease()?;
     }
     match command.action() {
-        LocalInstallAction::Prepare => quiesce(&service)?,
+        LocalInstallAction::Prepare => diagnostic(Stage::ServiceQuiescence, quiesce(&service))?,
         LocalInstallAction::Install | LocalInstallAction::Repair => {
             revoke_admission(&service)?;
             remove_enrollment()?;
@@ -271,25 +275,35 @@ pub(super) fn apply(command: LocalInstallCommand) -> Result<(), NativeError> {
                 }
                 .map_err(|_| NativeError::AccessDenied)?;
                 let administrator_sid = installer_sid()?;
-                let candidate = prepare_runtime(&administrator_sid)?;
+                let candidate =
+                    diagnostic(Stage::InstalledRuntime, prepare_runtime(&administrator_sid))?;
                 let pid = command
                     .manager_process_id()
                     .ok_or(NativeError::InvalidRequest)?
                     .to_string();
                 for action in ["provision", "verify"] {
-                    crate::service_acl::apply_installer_manager_service_access(
-                        parse_manager_service_access_arguments(&[
-                            "--action",
-                            action,
-                            "--manager-process-id",
-                            &pid,
-                        ])?,
+                    diagnostic(
+                        Stage::ManagerAccess,
+                        crate::service_acl::apply_installer_manager_service_access(
+                            parse_manager_service_access_arguments(&[
+                                "--action",
+                                action,
+                                "--manager-process-id",
+                                &pid,
+                            ])?,
+                        ),
                     )?;
                 }
-                crate::native::device_access::provision(&administrator_sid)?;
-                verify_service_sid(&service)?;
-                commit_enrollment(&candidate, &administrator_sid)?;
-                let _lease = verify_runtime_lease()?;
+                diagnostic(
+                    Stage::DeviceAccess,
+                    crate::native::device_access::provision(&administrator_sid),
+                )?;
+                diagnostic(Stage::ServiceSid, verify_service_sid(&service))?;
+                diagnostic(
+                    Stage::CommitEnrollment,
+                    commit_enrollment(&candidate, &administrator_sid),
+                )?;
+                let _lease = diagnostic(Stage::VerifyEnrollment, verify_runtime_lease())?;
                 Ok(())
             })();
             if let Err(error) = result {
@@ -301,8 +315,8 @@ pub(super) fn apply(command: LocalInstallCommand) -> Result<(), NativeError> {
             }
         }
         LocalInstallAction::Verify => {
-            verify_service_sid(&service)?;
-            let _lease = verify_runtime_lease()?;
+            diagnostic(Stage::ServiceSid, verify_service_sid(&service))?;
+            let _lease = diagnostic(Stage::VerifyEnrollment, verify_runtime_lease())?;
             if let Some(pid) = command.manager_process_id() {
                 let pid = pid.to_string();
                 apply_manager_service_access(parse_manager_service_access_arguments(&[

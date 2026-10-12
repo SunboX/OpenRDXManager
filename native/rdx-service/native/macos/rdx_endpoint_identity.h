@@ -11,6 +11,16 @@ extern "C" {
 typedef struct { const char *stage; int32_t code; int32_t peer_pid; uint32_t peer_uid; } rdx_macos_identity_diagnostic;
 /** Return the calling native worker's most recent fixed-stage evidence. */
 rdx_macos_identity_diagnostic rdx_macos_last_identity_diagnostic(void);
+/** Internal service-only bounded unified log; inputs come from fixed Rust phase/error strings. */
+void rdx_macos_log_endpoint_phase(const char *phase, const char *result);
+#if defined(RDX_MACOS_ENDPOINT_TEST_HOOKS)
+/** Native test-only validation of fixed public/private launchd address grammar. */
+bool rdx_macos_test_listener_address_is_valid(const char *address);
+/** Native test-only validation of Unix stream/listening state without namespace authority. */
+bool rdx_macos_test_listener_descriptor_is_valid(int listener);
+/** Test-only kernel state contract including datagram/non-listener rejection. */
+bool rdx_macos_test_listener_state_is_valid(int family, int type, int options);
+#endif
 /** Checks current kernel credentials/audit token and strict code seal on one retained socket. */
 bool rdx_macos_peer_identity_matches(int peer, const char *requirement_text,
     const char *executable_path, uint32_t expected_uid, uint32_t *out_user_id);

@@ -43,3 +43,23 @@ test('normal remover proves native ownership before process checks and preserves
     assert.match(text, /RMDir \/r \/REBOOTOK "\$\{OPENRDX_FIXED_ROOT\}"/u)
     assert.doesNotMatch(text, /RMDir[^\n]*\$(?:APPDATA|LOCALAPPDATA)/u)
 })
+
+test('native installer denials emit a stage and terminate silent setup with failure', async () => {
+    const hook = await source('windows-service.nsh')
+    assert.match(hook, /!macro OpenRDXFail STAGE CODE MESSAGE/u)
+    assert.match(hook, /GetStdHandle\(i -12\)/u)
+    assert.match(hook, /WriteFile/u)
+    assert.match(hook, /SetErrorLevel 3\s*\n\s*Abort/u)
+    assert.match(hook, /\$\{IfNot\} \$\{Silent\}[\s\S]*MessageBox[\s\S]*\$\{EndIf\}/u)
+    for (const stage of ['manager-process']) {
+        assert.ok(hook.includes('!insertmacro OpenRDXFail "' + stage + '"'))
+    }
+    for (const stage of ['prepare', 'install', 'verify', 'removal-prepare', 'remove']) {
+        assert.ok(hook.includes('!insertmacro OpenRDXNativeFail "' + stage + '"'))
+    }
+    const nativeFailure = hook.slice(hook.indexOf('!macro OpenRDXNativeFail'), hook.indexOf('!macroend', hook.indexOf('!macro OpenRDXNativeFail')))
+    assert.doesNotMatch(nativeFailure, /OpenRDXFail[^\n]*\$1/u)
+    const remover = await source('windows-remover.nsi')
+    assert.doesNotMatch(remover, /MessageBox/u)
+    assert.match(remover, /!insertmacro OpenRDXFail "removal-files"/u)
+})

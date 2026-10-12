@@ -83,6 +83,8 @@ pub fn parse_local_install_arguments(
         manager_process_id,
     })
 }
+#[cfg(any(windows, test))]
+pub(crate) mod diagnostics;
 #[cfg(windows)]
 mod windows;
 /// Executes fixed setup only from an elevated installed provisioner process.

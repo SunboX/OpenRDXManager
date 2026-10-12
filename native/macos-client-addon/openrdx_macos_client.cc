@@ -38,6 +38,8 @@ struct Connection {
     bool verified = false;
     const char* proof_stage = "not-started";
     size_t proof_attempts = 0;
+    int64_t policy_ms = 0;
+    int64_t peer_ms = 0;
     std::atomic<bool> cancelled{false};
     std::atomic<bool> slot_released{false};
     std::shared_ptr<std::atomic<size_t>> pending = std::make_shared<std::atomic<size_t>>(0);
@@ -145,11 +147,13 @@ bool VerifyInstalledPolicy(PeerPolicy& policy, bool local_only = false) {
 }
 /** Open only the fixed root-protected Unix socket before auditing its peer. */
 const char* OpenAndVerify(Connection& connection, Clock::time_point deadline, bool local_only = false) {
+    const auto started = Clock::now();
     connection.proof_stage = "manager-location";
     if (!rdx_macos_current_process_is_installed_manager()) return "service-identity-unverified";
     connection.proof_stage = "installation-policy";
     PeerPolicy policy;
     if (!VerifyInstalledPolicy(policy, local_only)) return "service-identity-unverified";
+    connection.policy_ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - started).count();
     connection.proof_stage = "endpoint-protection";
     if (!rdx_macos_endpoint_path_is_protected()) return "service-not-installed";
     if (connection.cancelled.load() || Clock::now() >= deadline) return "service-exited";
@@ -175,6 +179,7 @@ const char* OpenAndVerify(Connection& connection, Clock::time_point deadline, bo
     }
     // launchd creates the listener. Wait for accept() to attach the helper's
     // audit token; never send an application handshake to solicit that identity.
+    const auto peer_started = Clock::now();
     connection.proof_stage = "peer-proof";
     while (!connection.cancelled.load() && Clock::now() < deadline) {
         connection.proof_attempts += 1;
@@ -182,6 +187,7 @@ const char* OpenAndVerify(Connection& connection, Clock::time_point deadline, bo
         if (rdx_macos_peer_identity_matches(fd, policy.requirement.c_str(), policy.helper, 0, &uid)) {
             std::lock_guard<std::mutex> lock(connection.mutex);
             if (connection.cancelled.load() || Clock::now() >= deadline) return "service-exited";
+            connection.peer_ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - peer_started).count();
             connection.verified = true;
             return nullptr;
         }
@@ -189,6 +195,7 @@ const char* OpenAndVerify(Connection& connection, Clock::time_point deadline, bo
         if (poll(&descriptor, 1, 20) < 0 && errno != EINTR) break;
         if (descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) break;
     }
+    connection.peer_ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - peer_started).count();
     return "service-identity-unverified";
 }
 /** Cancel retained native IO when the Node environment is closing. */
@@ -205,12 +212,14 @@ void Execute(napi_env, void* raw) {
         const auto detail = rdx_macos_last_identity_diagnostic();
         // One bounded terminal record per attempt. Fixed phase strings/numeric
         // codes only; no raw paths, code hashes, protocol bytes or inventory.
-        std::fprintf(stderr, "OpenRDXManager native identity failure: phase=%s identity=%s code=%d peer-pid=%d peer-uid=%u trust-phase=%u attempts=%zu\n",
+        std::fprintf(stderr, "OpenRDXManager native identity failure: phase=%s identity=%s code=%d peer-pid=%d peer-uid=%u trust-phase=%u attempts=%zu policy-ms=%lld peer-ms=%lld\n",
             connection.proof_stage, detail.stage, detail.code, detail.peer_pid, detail.peer_uid,
-            rdx_macos_client_last_trust_stage(), connection.proof_attempts);
+            rdx_macos_client_last_trust_stage(), connection.proof_attempts, static_cast<long long>(connection.policy_ms), static_cast<long long>(connection.peer_ms));
         Emit(connection, {"error", failure, {}, {}});
     }
     else if (Emit(connection, {"connect", {}, {}, {}})) {
+        std::fprintf(stderr, "OpenRDXManager native identity verified: policy-ms=%lld peer-ms=%lld attempts=%zu\n",
+            static_cast<long long>(connection.policy_ms), static_cast<long long>(connection.peer_ms), connection.proof_attempts);
         while (!connection.cancelled.load()) {
             if (!Wait(connection, POLLIN, Clock::now() + std::chrono::milliseconds(100))) {
                 pollfd descriptor{connection.fd, 0, 0};

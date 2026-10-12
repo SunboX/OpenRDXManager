@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path -LiteralPath $ScriptPath).Path, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'acceptance-script-syntax-error' }
-foreach ($name in @('Invoke-CapturedProgram', 'Invoke-LocalAction', 'Assert-RemovedRuntime')) {
+foreach ($name in @('Invoke-CapturedProgram', 'Invoke-LocalAction', 'Assert-RemovedRuntime', 'Read-SetupDiagnostic', 'Invoke-Setup')) {
     $function = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     if (-not $function) { throw "acceptance-script-function-missing: $name" }
     Invoke-Expression $function.Extent.Text
@@ -23,6 +23,25 @@ $rejected = $false
 try { Invoke-LocalAction -Arguments @('/d', '/c', 'echo expected-native-denial 1>&2 & exit /b 3') }
 catch { $rejected = $_.Exception.Message -match 'native-action-failed: /c code=3' }
 if (-not $rejected) { throw 'failing-native-action-was-accepted' }
+# The real setup process boundary preserves a denial's public diagnostics and
+# still enforces a deadline when a program never exits. No installer is run here.
+$runDirectory = Join-Path $env:TEMP ('openrdx-setup-capture-' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $runDirectory | Out-Null
+try {
+    Invoke-Setup -Executable $env:ComSpec -Arguments '/d /c "echo setup-success & exit /b 0"'
+    $rejected = $false
+    try { Invoke-Setup -Executable $env:ComSpec -Arguments '/d /c "echo stage=prepare native-reason=AccessDenied 1>&2 & exit /b 3"' }
+    catch { $rejected = $_.Exception.Message -match 'installer-failed: 3 diagnostics=.*stage=prepare native-reason=AccessDenied' }
+    if (-not $rejected) { throw 'setup-native-denial-diagnostic-was-lost' }
+    $rejected = $false
+    try { Invoke-Setup -Executable $env:ComSpec -Arguments '/d /c "echo timeout-marker & ping -n 10 127.0.0.1 >nul"' -TimeoutMilliseconds 100 }
+    catch { $rejected = $_.Exception.Message -match 'installer-timeout: diagnostics=.*timeout-marker' }
+    if (-not $rejected) { throw 'setup-timeout-diagnostic-was-lost' }
+    $large = Join-Path $runDirectory 'large-output'
+    [IO.File]::WriteAllText($large, ('x' * 70000))
+    $bounded = Read-SetupDiagnostic $large
+    if ($bounded.Length -gt 65600 -or -not $bounded.EndsWith('[diagnostic-output-truncated]')) { throw 'setup-output-was-unbounded' }
+} finally { Remove-Item -LiteralPath $runDirectory -Recurse -Force -ErrorAction SilentlyContinue }
 Write-Output 'Windows installer script native boundary passed'
 
 # The complete custom script must initialize NSIS's readonly temp variable using

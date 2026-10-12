@@ -70,6 +70,22 @@ int main(void) {
         rdx_macos_test_socket_owner_mode_is_protected(501, 20, 0660) ||
         rdx_macos_test_socket_owner_mode_is_protected(0, 20, 0666) ||
         rdx_macos_test_socket_owner_mode_is_protected(0, 20, 01660)) { return 32; }
+    if (!rdx_macos_test_listener_address_is_valid("/var/run/openrdx-hardware.sock") ||
+        !rdx_macos_test_listener_address_is_valid("/var/run/com.apple.launchd.Pm7rWcU5b7/Listener")) { return 35; }
+    const char *bad_addresses[] = {"/tmp/openrdx-hardware.sock", "/var/run/com.apple.launchd.Pm7rWcU5b7/WrongLabel", "/var/run/com.apple.launchd.Pm7rWcU5b/Listener", "/var/run/com.apple.launchd.Pm7rWcU5b77/Listener", "/var/run/com.apple.launchd.Pm7rWcU5../Listener", "/var/run/com.apple.launchd.Pm7rWcU5b7/Listener/extra"};
+    for (size_t index = 0; index < sizeof(bad_addresses) / sizeof(bad_addresses[0]); index += 1) {
+        if (rdx_macos_test_listener_address_is_valid(bad_addresses[index])) { return 36; }
+    }
+    if (!rdx_macos_test_listener_state_is_valid(AF_UNIX, SOCK_STREAM, SO_ACCEPTCONN) ||
+        rdx_macos_test_listener_state_is_valid(AF_INET, SOCK_STREAM, SO_ACCEPTCONN) ||
+        rdx_macos_test_listener_state_is_valid(AF_UNIX, SOCK_DGRAM, SO_ACCEPTCONN) ||
+        rdx_macos_test_listener_state_is_valid(AF_UNIX, SOCK_STREAM, 0)) { return 38; }
+    // A matching-looking address cannot admit a datagram or non-listener.
+    int datagram = socket(AF_UNIX, SOCK_DGRAM, 0);
+    int stream = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (datagram < 0 || stream < 0 || rdx_macos_test_listener_descriptor_is_valid(datagram) ||
+        rdx_macos_test_listener_descriptor_is_valid(stream)) { return 37; }
+    close(datagram); close(stream);
     int dispatched = 0;
     if (rdx_macos_verify_selected_mode(RDX_INSTALLATION_LOCAL, false, deny_local_hash, accept_signed_proof, &dispatched) || dispatched != 1) { return 28; }
     dispatched = 0;

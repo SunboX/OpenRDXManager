@@ -65,7 +65,7 @@ pub use counters::{ResourceCounters, resource_counters};
 pub use endpoint::{
     LaunchdEndpointContract, LaunchdManagerEndpointListener, ManagerEndpointConnection,
     accept_launchd_manager_endpoint, activate_launchd_manager_endpoint, launchd_endpoint_contract,
-    local_manager_requirement, manager_requirement_is_pinned,
+    local_manager_requirement, log_endpoint_phase, manager_requirement_is_pinned,
 };
 pub use migration_usb::observe_migration_usb;
 pub use outcomes::{FileTestOutcome, HostOperationOutcome, MountedFilesystem};
