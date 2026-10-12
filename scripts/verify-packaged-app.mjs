@@ -14,6 +14,15 @@ import { resolveWindowsMcpAddonPath } from '../src/main/mcp/windows-addon-path.m
 const execute = promisify(execFile)
 
 /**
+ * Keeps the external process watchdog above installed macOS's 75s smoke gate.
+ * @param {{platform: string, installed: boolean, requireService: boolean}} options - Verifier-owned launch state.
+ * @returns {number} Fixed watchdog; all other verification stays at 60 seconds.
+ */
+export function resolvePackagedSmokeProcessTimeout(options) {
+    return options.platform === 'darwin' && options.installed === true && options.requireService === true ? 90_000 : 60_000
+}
+
+/**
  * Selects the exact installer-owned path or native build output.
  * @param {{platform?: string, arch?: string, installed?: boolean}} [options] - Verification host and installation state.
  * @returns {string} Native executable path matching the service identity contract.
@@ -106,7 +115,7 @@ async function verifyPackagedApplication() {
     const environment = { ...process.env }
     delete environment.ELECTRON_RUN_AS_NODE
     try {
-        const result = await execute(executable, [requireService ? '--service-auth-test' : '--smoke-test', `--user-data-dir=${profile}`], { env: environment, timeout: 60_000, maxBuffer: 8 * 1024 * 1024, windowsHide: true })
+        const result = await execute(executable, [requireService ? '--service-auth-test' : '--smoke-test', `--user-data-dir=${profile}`], { env: environment, timeout: resolvePackagedSmokeProcessTimeout({ platform: process.platform, installed, requireService }), maxBuffer: 8 * 1024 * 1024, windowsHide: true })
         const output = `${result.stdout}${result.stderr}`
         if (!output.includes('OpenRDXManager smoke test passed: renderer=mounted')) throw new Error(`packaged-smoke-marker-missing: ${output}`)
         if (requireService && !output.includes(`OpenRDXManager installed service authentication passed: platform=${process.platform}`)) throw new Error(`installed-service-authentication-marker-missing: ${output}`)

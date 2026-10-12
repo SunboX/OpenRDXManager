@@ -6,7 +6,18 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { resolvePackagedExecutable, verifyPackagedElectronFuses } from '../scripts/verify-packaged-app.mjs'
+import { resolvePackagedExecutable, resolvePackagedSmokeProcessTimeout, verifyPackagedElectronFuses } from '../scripts/verify-packaged-app.mjs'
+
+test('the external installed macOS auth verifier outlives its bounded smoke gate', () => {
+    assert.equal(resolvePackagedSmokeProcessTimeout({ platform: 'darwin', installed: true, requireService: true }), 90_000)
+    for (const options of [
+        { platform: 'darwin', installed: true, requireService: false },
+        { platform: 'darwin', installed: false, requireService: true },
+        { platform: 'win32', installed: true, requireService: true },
+        { platform: 'linux', installed: true, requireService: true }
+    ])
+        assert.equal(resolvePackagedSmokeProcessTimeout(options), 60_000)
+})
 
 test('installed verification selects the native fixed enrollment paths for both architectures', () => {
     for (const arch of ['arm64', 'x64']) {

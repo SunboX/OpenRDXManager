@@ -211,17 +211,17 @@ export function createPrivilegedEndpointTransportFactory(options = {}) {
     const nativeWindowsConnector = platform === 'win32' && options.connectEndpoint === undefined ? createWindowsNativeEndpointConnector({ addonPath: options.windowsClientAddonPath }) : null
     const nativeMacOsConnector = platform === 'darwin' && options.connectEndpoint === undefined ? createMacOsNativeEndpointConnector({ addonPath: options.macosClientAddonPath }) : null
     const connectEndpoint = options.connectEndpoint ?? nativeWindowsConnector ?? nativeMacOsConnector ?? connectSocket
-    // The native connectors own one absolute seven-second activation/proof
-    // deadline. Windows also starts the fixed SCM service within that bound.
-    // Keep a deterministic one-second outer watchdog margin; the separate
-    // protocol deadline is armed only after verified transport readiness.
-    const connectTimeoutMs = options.connectTimeoutMs ?? (platform === 'linux' ? 2_000 : 8_000)
+    // macOS freshly verifies its entire installed runtime (45s), then owns a
+    // separate seven-second endpoint/peer proof. Windows owns one seven-second
+    // activation/proof bound. Preserve one second of outer watchdog margin;
+    // the protocol deadline starts only after verified transport readiness.
+    const connectTimeoutMs = options.connectTimeoutMs ?? (platform === 'darwin' ? 53_000 : platform === 'linux' ? 2_000 : 8_000)
     const teardownTimeoutMs = options.teardownTimeoutMs ?? 1_000
     const maxBufferedBytes = options.maxBufferedBytes ?? 1_048_576
     const timers = options.timers ?? Object.freeze({ setTimeout, clearTimeout })
     const verifyWindowsServerIdentity = options.verifyWindowsServerIdentity ?? (nativeWindowsConnector === null ? undefined : (socket) => socket.serverIdentityVerified())
     const path = resolvePrivilegedServiceEndpoint(platform)
-    if (typeof connectEndpoint !== 'function' || (verifyWindowsServerIdentity !== undefined && typeof verifyWindowsServerIdentity !== 'function') || !Number.isInteger(connectTimeoutMs) || connectTimeoutMs < 1 || connectTimeoutMs > 10_000 || !Number.isInteger(teardownTimeoutMs) || teardownTimeoutMs < 1 || teardownTimeoutMs > 10_000 || !Number.isInteger(maxBufferedBytes) || maxBufferedBytes < 64 || maxBufferedBytes > 16_777_216 || typeof timers.setTimeout !== 'function' || typeof timers.clearTimeout !== 'function') {
+    if (typeof connectEndpoint !== 'function' || (verifyWindowsServerIdentity !== undefined && typeof verifyWindowsServerIdentity !== 'function') || !Number.isInteger(connectTimeoutMs) || connectTimeoutMs < 1 || connectTimeoutMs > (platform === 'darwin' ? 53_000 : 10_000) || !Number.isInteger(teardownTimeoutMs) || teardownTimeoutMs < 1 || teardownTimeoutMs > 10_000 || !Number.isInteger(maxBufferedBytes) || maxBufferedBytes < 64 || maxBufferedBytes > 16_777_216 || typeof timers.setTimeout !== 'function' || typeof timers.clearTimeout !== 'function') {
         throw new TypeError('service-endpoint-bounds-invalid')
     }
 

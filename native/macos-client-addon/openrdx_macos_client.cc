@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include <node_api.h>
 #include "rdx_endpoint_identity.h"
+#include "verification_budget.h"
 #include <atomic>
 #include <chrono>
 #include <cstring>
@@ -145,15 +146,9 @@ bool VerifyInstalledPolicy(PeerPolicy& policy, bool local_only = false) {
             return true;
         }, &policy);
 }
-/** Open only the fixed root-protected Unix socket before auditing its peer. */
-const char* OpenAndVerify(Connection& connection, Clock::time_point deadline, bool local_only = false) {
-    const auto started = Clock::now();
-    connection.proof_stage = "manager-location";
-    if (!rdx_macos_current_process_is_installed_manager()) return "service-identity-unverified";
-    connection.proof_stage = "installation-policy";
-    PeerPolicy policy;
-    if (!VerifyInstalledPolicy(policy, local_only)) return "service-identity-unverified";
-    connection.policy_ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - started).count();
+/** Consume only this operation's verified policy; never repeat/cache it or reset its peer budget. */
+const char* OpenVerifiedEndpoint(Connection& connection, const PeerPolicy& policy, const openrdx::VerificationBudget& budget) {
+    const auto deadline = budget.peer_deadline();
     connection.proof_stage = "endpoint-protection";
     if (!rdx_macos_endpoint_path_is_protected()) return "service-not-installed";
     if (connection.cancelled.load() || Clock::now() >= deadline) return "service-exited";
@@ -198,6 +193,19 @@ const char* OpenAndVerify(Connection& connection, Clock::time_point deadline, bo
     connection.peer_ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - peer_started).count();
     return "service-identity-unverified";
 }
+/** Fresh full own-policy proof has its measured bound, independently of endpoint/peer proof. */
+const char* OpenAndVerify(Connection& connection) {
+    const auto started = Clock::now();
+    openrdx::VerificationBudget budget(started);
+    connection.proof_stage = "manager-location";
+    if (!rdx_macos_current_process_is_installed_manager()) return "service-identity-unverified";
+    connection.proof_stage = "installation-policy";
+    PeerPolicy policy;
+    if (!VerifyInstalledPolicy(policy)) return "service-identity-unverified";
+    connection.policy_ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - started).count();
+    if (!budget.complete_policy(Clock::now(), connection.cancelled.load())) return "service-exited";
+    return OpenVerifiedEndpoint(connection, policy, budget);
+}
 /** Cancel retained native IO when the Node environment is closing. */
 void Cleanup(void* raw) {
     auto& work = *static_cast<Work*>(raw);
@@ -207,7 +215,7 @@ void Cleanup(void* raw) {
 /** Authenticate before connect/data events and retain socket through the read loop. */
 void Execute(napi_env, void* raw) {
     auto& connection = *static_cast<Work*>(raw)->connection;
-    const char* failure = OpenAndVerify(connection, Clock::now() + std::chrono::seconds(7));
+    const char* failure = OpenAndVerify(connection);
     if (failure) {
         const auto detail = rdx_macos_last_identity_diagnostic();
         // One bounded terminal record per attempt. Fixed phase strings/numeric
@@ -337,13 +345,16 @@ struct StatusWork { napi_async_work work = nullptr; napi_deferred deferred = nul
 /** Verify current process and installed endpoint without sending protocol bytes. */
 void StatusExecute(napi_env, void* raw) {
     auto& task = *static_cast<StatusWork*>(raw);
+    openrdx::VerificationBudget budget(Clock::now());
     if (!rdx_macos_current_process_is_installed_manager()) { task.status = "installer-required"; return; }
     if (access("/Library/Application Support/OpenRDXManager/LocalTrust/runtime.json", F_OK) != 0 && errno == ENOENT) {
         task.status = "installer-required"; return;
     }
-    const auto deadline = Clock::now() + std::chrono::seconds(7);
     PeerPolicy policy;
-    if (!VerifyInstalledPolicy(policy, true)) { task.status = "repair-required"; return; }
+    if (!VerifyInstalledPolicy(policy, true) || !budget.complete_policy(Clock::now(), false)) {
+        task.status = "repair-required"; return;
+    }
+    const auto deadline = budget.peer_deadline();
     // The service deliberately serializes sessions. Re-prove its current
     // retained connection instead of queueing another accept behind it.
     while (Clock::now() < deadline) {
@@ -354,7 +365,8 @@ void StatusExecute(napi_env, void* raw) {
             if (!retained->verified) { pending = true; continue; }
             uint32_t uid = 0;
             task.status = retained->fd >= 0 && rdx_macos_endpoint_path_is_protected() &&
-                rdx_macos_peer_identity_matches(retained->fd, policy.requirement.c_str(), policy.helper, 0, &uid) ? "enabled" : "repair-required";
+                rdx_macos_peer_identity_matches(retained->fd, policy.requirement.c_str(), policy.helper, 0, &uid) &&
+                budget.peer_pending(Clock::now(), retained->cancelled.load()) ? "enabled" : "repair-required";
             return;
         }
         if (!pending) break;
@@ -363,7 +375,9 @@ void StatusExecute(napi_env, void* raw) {
     if (Clock::now() >= deadline) { task.status = "repair-required"; return; }
     Connection connection;
     task.consumed = true;
-    const char* failure = OpenAndVerify(connection, deadline, true);
+    // This same status operation already performed fresh complete policy proof.
+    // Reuse its private stack policy, preserving the remaining peer deadline.
+    const char* failure = OpenVerifiedEndpoint(connection, policy, budget);
     task.status = failure == nullptr ? "enabled" : "repair-required";
     Cancel(connection);
 }

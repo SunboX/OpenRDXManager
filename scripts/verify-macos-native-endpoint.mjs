@@ -40,6 +40,9 @@ export async function verifyMacOsNativeEndpoint() {
     })
     await execFileAsync('/usr/bin/codesign', ['--force', '--sign', '-', '--identifier', 'com.openrdx.manager', output])
     const result = await execFileAsync(output, [], { timeout: 10_000, maxBuffer: 1024 * 1024 })
+    const budgetFixture = join(root, 'out/verification/macos-native/verification-budget-test')
+    await execFileAsync('/usr/bin/xcrun', ['clang++', '-std=c++20', '-Wall', '-Wextra', '-Werror', join(root, 'native/macos-client-addon/verification_budget_test.cc'), '-o', budgetFixture], { env: { ...process.env, SDKROOT: sdk } })
+    const budget = await execFileAsync(budgetFixture, [], { timeout: 5_000, maxBuffer: 1024 * 1024 })
     const inheritedHelper = join(root, 'out/verification/macos-native/inherited-listener-helper')
     const inheritedTest = join(root, 'out/verification/macos-native/inherited-listener-test')
     const environment = { ...process.env, SDKROOT: sdk }
@@ -49,7 +52,7 @@ export async function verifyMacOsNativeEndpoint() {
     await execFileAsync('/usr/bin/codesign', ['--force', '--sign', '-', '--identifier', 'com.openrdx.manager', inheritedTest])
     const inherited = await execFileAsync(inheritedTest, [inheritedHelper], { timeout: 10_000, maxBuffer: 1024 * 1024 })
     const launchd = await verifyActualLaunchdListener(root, environment)
-    return { skipped: false, output: `${result.stdout.trim()}; ${inherited.stdout.trim()}; ${launchd}` }
+    return { skipped: false, output: `${result.stdout.trim()}; ${budget.stdout.trim()}; ${inherited.stdout.trim()}; ${launchd}` }
 }
 
 /**

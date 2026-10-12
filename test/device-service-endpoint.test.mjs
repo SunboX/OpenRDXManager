@@ -291,6 +291,47 @@ test('Windows activation receives a bounded margin before one post-readiness han
     await startup
 })
 
+test('macOS gives full policy verification its own budget before the unchanged post-proof handshake deadline', async () => {
+    const socket = createSocket()
+    const scheduled = []
+    const writes = []
+    const callbacks = new Map()
+    let id = 0
+    const timers = {
+        /** @param {Function} callback - Bounded callback. @param {number} delay - Budget. @returns {number} Timer identity. */
+        setTimeout(callback, delay) {
+            scheduled.push(delay)
+            callbacks.set(++id, callback)
+            return id
+        },
+        /** @param {number} timer - Timer identity. @returns {void} Cancels the timer. */
+        clearTimeout(timer) {
+            callbacks.delete(timer)
+        }
+    }
+    socket.serverIdentityVerified = () => true
+    socket.write = (frame) => {
+        writes.push(frame)
+        return true
+    }
+    const client = new DeviceServiceClient({
+        executable: '/Library/PrivilegedHelperTools/openrdx-hardware',
+        platform: 'darwin',
+        maxRestarts: 0,
+        handshakeTimeoutMs: 10_000,
+        timers,
+        transportFactory: createDeviceServiceTransportFactory({ platform: 'darwin', isPackaged: true, connectEndpoint: () => socket, timers })
+    })
+    const startup = client.start()
+    assert.deepEqual(scheduled, [53_000], '45s own proof plus 7s endpoint proof and 1s watchdog margin')
+    assert.deepEqual(writes, [])
+    socket.emit('connect')
+    assert.deepEqual(scheduled, [53_000, 10_000])
+    assert.equal(writes.length, 1)
+    socket.emit('error', new Error('controlled shutdown'))
+    await startup
+})
+
 test('Windows activation timeout wins error and late-ready races without writing', async () => {
     const socket = createSocket()
     const writes = []

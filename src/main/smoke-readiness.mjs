@@ -5,6 +5,16 @@ const DEFAULT_TIMEOUT_MS = 15_000
 const LIFECYCLE_FAILURE_CODES = Object.freeze(new Set(['smoke-renderer-destroyed', 'smoke-renderer-load-failed', 'smoke-renderer-process-gone']))
 
 /**
+ * Allows measured full-runtime verification only for installed macOS auth smoke.
+ * The 53s transport bound and 10s handshake retain 12s for renderer/cleanup work.
+ * @param {{platform: string, isPackaged: boolean, serviceAuthentication: boolean}} options - Main-owned launch state.
+ * @returns {number} Fixed smoke deadline; other launches retain their 15s bound.
+ */
+export function resolveSmokeReadinessTimeout(options) {
+    return options.platform === 'darwin' && options.isPackaged === true && options.serviceAuthentication === true ? 75_000 : DEFAULT_TIMEOUT_MS
+}
+
+/**
  * Requires an authenticated native handshake for installed-service acceptance.
  * Zero attached devices can pass authentication; physical access is separate.
  * @param {object} readiness - Validated service readiness state.
@@ -157,7 +167,10 @@ export class SmokeReadinessGate {
             this.#service = Object.freeze({
                 status: 'ready',
                 mode: readiness.mode,
-                hardwareReady: readiness.hardwareReady
+                hardwareReady: readiness.hardwareReady,
+                // Installed acceptance consumes this native handshake evidence;
+                // retain booleans without manufacturing authority from truthy values.
+                ...(typeof readiness.privileged === 'boolean' ? { privileged: readiness.privileged } : {})
             })
         } else if (readiness?.status === 'unavailable' && typeof readiness.reason === 'string' && readiness.reason.length > 0) {
             this.#service = Object.freeze({

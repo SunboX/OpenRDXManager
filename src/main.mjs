@@ -28,7 +28,7 @@ import { scheduleAfterMcpResponse } from './main/mcp/response-actions.mjs'
 import { resolveStartupLanguage, SettingsService } from './main/settings-service.mjs'
 import { ShutdownController } from './main/shutdown-controller.mjs'
 import { containBrokenConsolePipes } from './main/process-output.mjs'
-import { assertAuthenticatedServiceReadiness, attachSmokeReadinessListeners, getServiceReadinessFailureReason, SmokeReadinessError, SmokeReadinessGate } from './main/smoke-readiness.mjs'
+import { assertAuthenticatedServiceReadiness, attachSmokeReadinessListeners, getServiceReadinessFailureReason, resolveSmokeReadinessTimeout, SmokeReadinessError, SmokeReadinessGate } from './main/smoke-readiness.mjs'
 import { createSupportRuntimeServices, runStartupUpdateCheck } from './main/support-runtime.mjs'
 import { AutoScanController, DesktopLifecycleController, TrayController } from './main/tray-controller.mjs'
 import { createTranslator } from './renderer/i18n.mjs'
@@ -58,7 +58,7 @@ let trayController = null
 let traySelectedDeviceId = null
 let privilegedServiceController = null
 let desktopTranslator = createTranslator(englishCatalog, englishCatalog)
-const smokeReadiness = isSmokeTest ? new SmokeReadinessGate() : null
+const smokeReadiness = isSmokeTest ? new SmokeReadinessGate({ timeoutMs: resolveSmokeReadinessTimeout({ platform: process.platform, isPackaged: isPackagedRuntime, serviceAuthentication: isServiceAuthenticationTest }) }) : null
 let smokeWebContents = null
 
 if (process.platform === 'win32') app.setAppUserModelId('OpenRDX.OpenRDXManager')

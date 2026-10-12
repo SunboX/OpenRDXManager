@@ -19,6 +19,14 @@ use windows::core::{PCWSTR, PWSTR};
 
 const SERVICE_NAME: &str = "OpenRDXHardwareService";
 const DISPLAY_NAME: &str = "OpenRDX Hardware Service";
+// Both SCM query APIs document an 8 KiB buffer limit, measured in bytes.
+// https://learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-queryserviceconfigw
+// https://learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-queryserviceobjectsecurity
+const MAX_SERVICE_QUERY_BYTES: usize = 8_192;
+/// Allocates aligned storage for configuration and owner-security SCM queries.
+fn service_query_storage() -> Vec<usize> {
+    vec![0usize; MAX_SERVICE_QUERY_BYTES / size_of::<usize>()]
+}
 /// Terminates a Rust string for a synchronous Win32 call.
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain([0]).collect()
@@ -63,7 +71,7 @@ fn installer_sid() -> Result<String, NativeError> {
 }
 /// Proves exact configuration using bounded pointers before ownership-sensitive changes.
 fn configuration(service: &Service) -> Result<(), NativeError> {
-    let mut storage = vec![0usize; 8192];
+    let mut storage = service_query_storage();
     let mut needed = 0;
     let raw = storage.as_mut_ptr().cast::<QUERY_SERVICE_CONFIGW>();
     unsafe {
@@ -423,7 +431,7 @@ fn verify_service_sid(service: &Service) -> Result<(), NativeError> {
 /// Checks a service object's actual owner instead of inferring ownership from its name.
 fn verify_service_owner(service: &Service, newly_created: bool) -> Result<(), NativeError> {
     use windows::Win32::Security::*;
-    let mut storage = vec![0usize; 8192];
+    let mut storage = service_query_storage();
     let mut needed = 0;
     let sd = PSECURITY_DESCRIPTOR(storage.as_mut_ptr().cast());
     unsafe {
@@ -475,4 +483,55 @@ fn verify_service_owner(service: &Service, newly_created: bool) -> Result<(), Na
         return verify_service_owner(service, false);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::Security::{OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR};
+
+    /// Exercises the production allocator against read-only APIs on the Windows
+    /// core RPC service. No service configuration or security policy is changed.
+    #[test]
+    fn service_query_storage_satisfies_both_scm_rpc_limits() {
+        let manager = Service(
+            unsafe { OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), SC_MANAGER_CONNECT) }
+                .expect("read-only SCM query must be available"),
+        );
+        let name = wide("RpcSs");
+        let service = Service(
+            unsafe {
+                OpenServiceW(
+                    manager.0,
+                    PCWSTR(name.as_ptr()),
+                    SERVICE_QUERY_CONFIG | 0x00020000,
+                )
+            }
+            .expect("core RPC service must allow configuration and owner queries"),
+        );
+        let mut storage = service_query_storage();
+        let capacity = storage.len() * size_of::<usize>();
+        let mut needed = 0;
+        let config = storage.as_mut_ptr().cast::<QUERY_SERVICE_CONFIGW>();
+        // SAFETY: storage is aligned, writable, and retained for the whole call.
+        let result =
+            unsafe { QueryServiceConfigW(service.0, Some(config), capacity as u32, &mut needed) };
+        assert!(result.is_ok(), "configuration RPC query failed: {result:?}");
+        let descriptor = PSECURITY_DESCRIPTOR(storage.as_mut_ptr().cast());
+        // SAFETY: the same aligned storage is sufficient for the bounded descriptor.
+        let result = unsafe {
+            QueryServiceObjectSecurity(
+                service.0,
+                OWNER_SECURITY_INFORMATION.0,
+                Some(descriptor),
+                capacity as u32,
+                &mut needed,
+            )
+        };
+        assert!(
+            result.is_ok(),
+            "owner-security RPC query failed: {result:?}"
+        );
+        assert!(capacity <= MAX_SERVICE_QUERY_BYTES);
+    }
 }
