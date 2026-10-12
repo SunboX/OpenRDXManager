@@ -80,10 +80,10 @@ export function createInstallerConfiguration(platform) {
             extendInfo: { OpenRDXInstallationMode: 'local' },
             minimumSystemVersion: '13.0',
             target: ['dmg', 'zip'],
-            extraFiles: [
-                { from: 'out/native/macos/openrdx-hardware', to: 'Library/LaunchServices/openrdx-hardware' },
-                { from: 'native/rdx-service/resources/macos/com.openrdx.hardware.plist', to: 'Library/LaunchDaemons/com.openrdx.hardware.plist' }
-            ]
+            // Local packages use the standalone root daemon from the PKG.
+            // Do not advertise unused SMAppService activation with the same
+            // label as that standalone daemon.
+            extraFiles: [{ from: 'out/native/macos/openrdx-hardware', to: 'Library/LaunchServices/openrdx-hardware' }]
         },
         dmg: { contents: [{ x: 250, y: 220, type: 'file', path: resolve(`dist/installers/OpenRDXManager-${version}-mac-${process.arch}.pkg`) }] },
         win: { icon: 'resources/icons/app-icon.ico', target: ['nsis', 'zip'], signAndEditExecutable: true, signExecutable: false },

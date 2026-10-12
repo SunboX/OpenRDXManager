@@ -255,6 +255,7 @@ pub(crate) struct ScsiLease {
 // SAFETY: declarations mirror the compiler-checked C header; the safe wrapper
 // validates the complete ABI layout before tests and owns every pointer result.
 unsafe extern "C" {
+    pub(crate) fn rdx_macos_log_endpoint_native_code(phase: *const std::ffi::c_char, code: i32);
     pub(crate) fn rdx_macos_log_endpoint_phase(
         phase: *const std::ffi::c_char,
         result: *const std::ffi::c_char,

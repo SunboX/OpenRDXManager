@@ -15,6 +15,29 @@ pub const HELPER_PATH: &str = "/Library/PrivilegedHelperTools/openrdx-hardware";
 /// Enrolled app copy used to authenticate the installed standalone helper bytes.
 pub const HELPER_INVENTORY_PATH: &str = "Contents/Library/LaunchServices/openrdx-hardware";
 
+/// Reads only the fixed protected enrollment used to bootstrap the listener policy.
+///
+/// This validates the manifest's schema, pins, root ownership, permissions, ACLs,
+/// ancestor protection and replacement identity. It does not authorize a session:
+/// the listener must freshly verify all runtime and helper bytes before accepting.
+///
+/// # Errors
+/// Returns access denied for absent, malformed or weakly protected enrollment.
+pub fn read_installed_enrollment() -> Result<RuntimeInventory, NativeError> {
+    #[cfg(target_os = "macos")]
+    {
+        rdx_local_trust::verify_enrollment(
+            Path::new(rdx_local_trust::MACOS_ENROLLMENT_PATH),
+            "macos",
+        )
+        .map_err(|_| NativeError::AccessDenied)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err(NativeError::UnsupportedPlatform)
+    }
+}
+
 /// Verifies fixed enrollment, complete protected runtime, and root helper bytes.
 ///
 /// # Errors
@@ -23,11 +46,7 @@ pub const HELPER_INVENTORY_PATH: &str = "Contents/Library/LaunchServices/openrdx
 pub fn verify_installed_local_trust() -> Result<RuntimeInventory, NativeError> {
     #[cfg(target_os = "macos")]
     {
-        let inventory = rdx_local_trust::verify_enrollment(
-            Path::new(rdx_local_trust::MACOS_ENROLLMENT_PATH),
-            "macos",
-        )
-        .map_err(|_| NativeError::AccessDenied)?;
+        let inventory = read_installed_enrollment()?;
         rdx_local_trust::verify_protected_runtime(Path::new(MANAGER_ROOT), &inventory)
             .map_err(|_| NativeError::AccessDenied)?;
         let helper = inventory

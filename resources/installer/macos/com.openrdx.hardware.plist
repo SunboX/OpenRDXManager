@@ -22,7 +22,8 @@
   </dict></dict>
   <key>RunAtLoad</key><false/>
   <key>KeepAlive</key><false/>
-  <key>ProcessType</key><string>Background</string>
+  <!-- Full pre-accept byte verification requires normal I/O scheduling. -->
+  <key>ProcessType</key><string>Standard</string>
   <key>SoftResourceLimits</key><dict><key>NumberOfFiles</key><integer>8192</integer></dict>
 </dict>
 </plist>

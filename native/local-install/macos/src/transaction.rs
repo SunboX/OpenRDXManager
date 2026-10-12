@@ -272,31 +272,42 @@ fn reserve_missing_standard_descriptors() -> Result<Vec<File>, String> {
 /// Await one private fork-channel response under the parent's existing timeout.
 /// Any malformed or incomplete response refuses privileged payload replacement.
 fn read_preparation_result(parent: &mut UnixStream) -> Result<(), String> {
+    read_supervisor_result(parent, "quiescence", "replacement is refused")
+}
+
+/// Read the retained supervisor's registration result under the caller's timeout.
+pub(super) fn read_registration_result(channel: &mut UnixStream) -> Result<(), String> {
+    read_supervisor_result(channel, "registration", "privileged access remains disabled, rerun the package installer")
+}
+
+/// Decode one bounded private supervisor frame; only Y permits the fixed phase.
+/// Invalid UTF-8, framing, lengths or transport remain failures with phase guidance.
+fn read_supervisor_result(channel: &mut UnixStream, phase: &str, refusal: &str) -> Result<(), String> {
     let mut result = [0];
-    parent
+    channel
         .read_exact(&mut result)
-        .map_err(|_| "setup supervisor did not quiesce service; replacement is refused")?;
+        .map_err(|_| format!("setup supervisor did not confirm {phase}; {refusal}"))?;
     if result == [b'Y'] {
         return Ok(());
     }
     if result != [b'N'] {
-        return Err("setup supervisor refused quiescence; replacement is refused".into());
+        return Err(format!("setup supervisor refused {phase}; {refusal}"));
     }
     let mut length = [0_u8; 2];
-    parent.read_exact(&mut length).map_err(|_| "setup supervisor failure detail is incomplete; replacement is refused")?;
+    channel.read_exact(&mut length).map_err(|_| format!("setup supervisor {phase} failure detail is incomplete; {refusal}"))?;
     let length = usize::from(u16::from_be_bytes(length));
     if length == 0 || length > MAX_PREPARATION_ERROR_BYTES {
-        return Err("setup supervisor failure detail exceeds its bound; replacement is refused".into());
+        return Err(format!("setup supervisor {phase} failure detail exceeds its bound; {refusal}"));
     }
     let mut bytes = vec![0; length];
-    parent.read_exact(&mut bytes).map_err(|_| "setup supervisor failure detail is incomplete; replacement is refused")?;
-    let detail = String::from_utf8(bytes).map_err(|_| "setup supervisor failure detail is not UTF-8; replacement is refused")?;
-    Err(format!("setup supervisor refused quiescence: {detail}; replacement is refused"))
+    channel.read_exact(&mut bytes).map_err(|_| format!("setup supervisor {phase} failure detail is incomplete; {refusal}"))?;
+    let detail = String::from_utf8(bytes).map_err(|_| format!("setup supervisor {phase} failure detail is not UTF-8; {refusal}"))?;
+    Err(format!("setup supervisor refused {phase}: {detail}; {refusal}"))
 }
 
-/// Send at most 1,024 UTF-8 bytes over the private fork channel, never Installer stdio.
+/// Send at most 1,024 UTF-8 bytes over a private supervisor channel, never Installer stdio.
 /// Retains character boundaries and emits a fixed N/u16-length frame; write failure
-/// cannot authorize payload replacement and the child exits immediately afterward.
+/// cannot authorize preparation or registration and the caller closes the channel.
 fn write_preparation_failure(child: &mut UnixStream, error: &str) -> Result<(), String> {
     let mut length = error.len().min(MAX_PREPARATION_ERROR_BYTES);
     while !error.is_char_boundary(length) {
@@ -345,20 +356,22 @@ fn supervise(
                 }
                 let result =
                     install::verify_installed().and_then(|_| hardware.recheck(HARDWARE_LOCK));
-                if result.is_err() {
-                    let _ = channel.write_all(b"N");
+                if let Err(error) = result {
+                    let _ = write_preparation_failure(&mut channel, &format!("new generation was not verified: {error}"));
                     clear_socket()?;
                     return Err("new generation was not verified".into());
                 }
                 // The old daemon is gone, the new generation is fully enrolled and
                 // setup ownership remains retained through registration.
                 drop(hardware);
-                let result =
-                    install::fixed_command("/bin/launchctl", &["bootstrap", "system", DAEMON]);
-                let _ = channel.write_all(if result.is_ok() { b"Y" } else { b"N" });
+                let result = bootstrap_owned_registration();
+                match &result {
+                    Ok(()) => { let _ = channel.write_all(b"Y"); }
+                    Err(error) => { let _ = write_preparation_failure(&mut channel, error); }
+                }
                 clear_socket()?;
                 drop(setup);
-                return result.map(|_| ());
+                return result;
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(100))
@@ -371,6 +384,30 @@ fn supervise(
     }
     clear_socket()?;
     Err("installer transaction expired; service remains stopped".into())
+}
+
+/// Bootstrap only while the fixed label remains absent, then prove exact ownership.
+/// A concurrent foreign or legacy job is refused without bootout or BTM changes;
+/// successful tool exit alone never confirms the newly installed registration.
+fn bootstrap_owned_registration() -> Result<(), String> {
+    if registered()? {
+        let evidence = install::fixed_command("/bin/launchctl", &["print", LABEL])?;
+        let reason = if openrdx_macos_local_install::registration_is_owned(&evidence) {
+            "fixed local registration reappeared during installation"
+        } else {
+            "foreign or legacy signed registration reappeared during installation; unregister it using its original app"
+        };
+        return Err(reason.into());
+    }
+    install::fixed_command("/bin/launchctl", &["bootstrap", "system", DAEMON])?;
+    if !registered()? {
+        return Err("launchctl bootstrap returned success but the fixed daemon is absent".into());
+    }
+    let evidence = install::fixed_command("/bin/launchctl", &["print", LABEL])?;
+    if !openrdx_macos_local_install::registration_is_owned(&evidence) {
+        return Err("registration after bootstrap is foreign or changed; unregister the legacy service using its original app".into());
+    }
+    Ok(())
 }
 
 /// Await only the fixed commit byte under the existing verification timeout.
@@ -512,6 +549,60 @@ fn revoke_enrollment() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Exact foreign-label bootstrap failures must survive the private socket response.
+    #[test]
+    fn registration_response_preserves_foreign_job_failure() {
+        let (mut client, mut supervisor) = UnixStream::pair().unwrap();
+        let detail = "foreign or legacy signed registration reappeared during installation";
+        write_preparation_failure(&mut supervisor, detail).unwrap();
+        drop(supervisor);
+        let error = read_registration_result(&mut client).unwrap_err();
+        assert!(error.contains(detail), "{error}");
+        assert!(error.contains("privileged access remains disabled"), "{error}");
+    }
+
+    /// Unknown, empty, truncated, oversized or malformed frames cannot confirm registration.
+    #[test]
+    fn registration_response_refuses_invalid_failure_frames() {
+        for bytes in [
+            vec![b'N', 4, 1],
+            vec![b'N', 0, 1, 0xff],
+            vec![b'N', 0, 3, b'x'],
+            vec![b'N', 0],
+            vec![b'N', 0, 0],
+            vec![b'N'],
+            vec![b'Z'],
+            vec![],
+        ] {
+            let (mut client, mut supervisor) = UnixStream::pair().unwrap();
+            supervisor.write_all(&bytes).unwrap();
+            drop(supervisor);
+            let error = read_registration_result(&mut client).unwrap_err();
+            assert!(error.contains("registration"), "{error}");
+            assert!(error.contains("privileged access remains disabled"), "{error}");
+        }
+    }
+
+    /// Long Unicode diagnostics remain valid and bounded while registration stays refused.
+    #[test]
+    fn registration_response_bounds_overlong_utf8_diagnostics() {
+        let (mut client, mut supervisor) = UnixStream::pair().unwrap();
+        write_preparation_failure(&mut supervisor, &"α".repeat(1100)).unwrap();
+        drop(supervisor);
+        let error = read_registration_result(&mut client).unwrap_err();
+        assert!(error.contains(&"α".repeat(512)), "{error}");
+        assert!(!error.contains(&"α".repeat(513)), "{error}");
+    }
+
+    /// Registration keeps the single-byte Y success response without waiting for EOF.
+    #[test]
+    fn registration_response_keeps_single_byte_success() {
+        let (mut client, mut supervisor) = UnixStream::pair().unwrap();
+        client.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
+        supervisor.write_all(b"Y").unwrap();
+        read_registration_result(&mut client).unwrap();
+    }
 
     /// Missing Installer stdio must never place ownership/protocol handles below fd3.
     #[test]

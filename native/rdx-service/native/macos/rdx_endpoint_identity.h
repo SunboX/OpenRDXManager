@@ -13,6 +13,8 @@ typedef struct { const char *stage; int32_t code; int32_t peer_pid; uint32_t pee
 rdx_macos_identity_diagnostic rdx_macos_last_identity_diagnostic(void);
 /** Internal service-only bounded unified log; inputs come from fixed Rust phase/error strings. */
 void rdx_macos_log_endpoint_phase(const char *phase, const char *result);
+/** Internal fixed phase plus numeric native failure; no OS messages or paths. */
+void rdx_macos_log_endpoint_native_code(const char *phase, int32_t code);
 #if defined(RDX_MACOS_ENDPOINT_TEST_HOOKS)
 /** Native test-only validation of fixed public/private launchd address grammar. */
 bool rdx_macos_test_listener_address_is_valid(const char *address);

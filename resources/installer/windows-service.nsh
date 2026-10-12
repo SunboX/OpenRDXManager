@@ -217,7 +217,9 @@ ${StrStr}
   ${EndIf}
   StrCpy $R3 0
   openrdx_manager_retry:
-    nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "$$p=@(Get-CimInstance Win32_Process -Filter $\"Name='OpenRDXManager.exe'$\" | Where-Object { $$_.ExecutablePath -eq '${OPENRDX_FIXED_ROOT}\OpenRDXManager.exe' -and $$_.CommandLine -notmatch '--type=' }); if($$p.Count -eq 1){[Console]::Write($$p[0].ProcessId)}else{exit 3}"`
+    ; Single-quoted PowerShell predicates survive Windows argument parsing.
+    ; Nested raw double quotes would strip WQL literals and make every query fail.
+    nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "$$p=@(Get-CimInstance Win32_Process | Where-Object { $$_.Name -eq 'OpenRDXManager.exe' -and $$_.ExecutablePath -eq '${OPENRDX_FIXED_ROOT}\OpenRDXManager.exe' -and $$_.CommandLine -notmatch '--type=' }); if($$p.Count -eq 1){[Console]::Write($$p[0].ProcessId)}else{exit 3}"`
     Pop $0
     Pop $R2
     ${If} $0 == 0

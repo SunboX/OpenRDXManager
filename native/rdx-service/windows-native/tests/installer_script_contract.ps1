@@ -34,9 +34,13 @@ try {
     catch { $rejected = $_.Exception.Message -match 'installer-failed: 3 diagnostics=.*stage=prepare native-reason=AccessDenied' }
     if (-not $rejected) { throw 'setup-native-denial-diagnostic-was-lost' }
     $rejected = $false
-    try { Invoke-Setup -Executable $env:ComSpec -Arguments '/d /c "echo timeout-marker & ping -n 10 127.0.0.1 >nul"' -TimeoutMilliseconds 100 }
-    catch { $rejected = $_.Exception.Message -match 'installer-timeout: diagnostics=.*timeout-marker' }
-    if (-not $rejected) { throw 'setup-timeout-diagnostic-was-lost' }
+    # The deadline includes process startup: no output is required before it.
+    # Native-denial capture above separately proves emitted diagnostics survive.
+    # Use one process so termination leaves no ping/sleep child behind.
+    $sleeper = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
+    try { Invoke-Setup -Executable $sleeper -Arguments '-NoProfile -NonInteractive -Command "[Console]::WriteLine(''timeout-marker''); Start-Sleep -Seconds 10"' -TimeoutMilliseconds 100 }
+    catch { $rejected = $_.Exception.Message -match '^installer-timeout: diagnostics=' }
+    if (-not $rejected) { throw 'setup-deadline-was-not-enforced' }
     $large = Join-Path $runDirectory 'large-output'
     [IO.File]::WriteAllText($large, ('x' * 70000))
     $bounded = Read-SetupDiagnostic $large

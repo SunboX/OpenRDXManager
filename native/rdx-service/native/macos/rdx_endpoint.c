@@ -98,6 +98,11 @@ void rdx_macos_log_endpoint_phase(const char *phase, const char *result) {
         "OpenRDXManager service endpoint: phase=%{public}s result=%{public}s", phase, result);
 }
 
+void rdx_macos_log_endpoint_native_code(const char *phase, int32_t code) {
+    os_log_error(OS_LOG_DEFAULT,
+        "OpenRDXManager service native failure: phase=%{public}s code=%{public}d", phase, code);
+}
+
 static bool rdx_monotonic_milliseconds(int64_t *out_milliseconds) {
     struct timespec current;
     memset(&current, 0, sizeof(current));
@@ -196,11 +201,13 @@ rdx_macos_status rdx_macos_accept_launchd_manager_from_listener(
         return idle_timeout ? RDX_MACOS_STATUS_TIMED_OUT : RDX_MACOS_STATUS_TRANSPORT_UNAVAILABLE;
     }
     if (fcntl(peer, F_SETFD, FD_CLOEXEC) != 0) {
+        rdx_macos_log_endpoint_native_code("accepted-peer-cloexec", errno);
         (void)close(peer);
         return RDX_MACOS_STATUS_NATIVE_FAILURE;
     }
     int enabled = 1;
     if (setsockopt(peer, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof(enabled)) != 0) {
+        rdx_macos_log_endpoint_native_code("accepted-peer-nosigpipe", errno);
         (void)close(peer);
         return RDX_MACOS_STATUS_NATIVE_FAILURE;
     }

@@ -122,3 +122,15 @@ test('Linux idle socket-activation retirement is successful and cannot enter Res
     assert.match(service, /^SuccessExitStatus=0$/m)
     assert.match(service, /^# Idle accept timeout retires cleanly; the socket unit owns future activation\.$/m)
 })
+
+test('Both macOS authenticated helpers avoid Background I/O throttling without changing endpoint authority', async () => {
+    const policies = await Promise.all([readResource('macos', 'com.openrdx.hardware.plist'), readFile(new URL('../resources/installer/macos/com.openrdx.hardware.plist', import.meta.url), 'utf8')])
+    for (const policy of policies) {
+        assert.match(policy, /<key>ProcessType<\/key>\s*<string>Standard<\/string>/)
+        assert.match(policy, /<key>UserName<\/key>\s*<string>root<\/string>/)
+        assert.match(policy, /<key>SockPathOwner<\/key>\s*<integer>0<\/integer>/)
+        assert.match(policy, /<key>SockPathGroup<\/key>\s*<integer>20<\/integer>/)
+        assert.match(policy, /<key>SockPathMode<\/key>\s*<integer>432<\/integer>/)
+        assert.match(policy, /<string>\/var\/run\/openrdx-hardware\.sock<\/string>/)
+    }
+})

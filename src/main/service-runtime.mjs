@@ -14,6 +14,10 @@ import { WindowsLogSecurityAdapter } from './windows-log-security-adapter.mjs'
 import { OperationCoordinator } from './operation-coordinator.mjs'
 import { SptiDiagnosticLog } from './spti-diagnostics.mjs'
 
+// The native transport proves the installed helper before becoming ready. Its
+// service then completes fresh runtime and peer checks before replying.
+const MACOS_INSTALLED_HANDSHAKE_TIMEOUT_MS = 10_000
+
 /**
  * Registers and dispatches one firmware operation without exposing local paths.
  * @param {{client: {registerFirmwareImage: Function, startOperation: Function}, firmwareFileService?: {claimFirmwareFile: Function}, operation: object}} options - Main-owned firmware boundaries.
@@ -100,7 +104,7 @@ export function createApplicationServiceRuntime(options) {
     // Tests may inject an explicit fake. Packaged production connects only to
     // the privileged endpoint; a missing endpoint never falls back to a child.
     const transportFactory = typeof options.transportFactory === 'function' ? options.transportFactory : createDeviceServiceTransportFactory({ elevateDevelopmentService: options.elevateDevelopmentService, isPackaged: options.isPackaged, platform: options.platform, windowsClientAddonPath, macosClientAddonPath, sptiDiagnostics: sptiEnabled, onSptiDiagnostic: sptiLog?.record.bind(sptiLog) })
-    client = new DeviceServiceClient({ executable, logger, platform: options.platform, transportFactory })
+    client = new DeviceServiceClient({ executable, logger, platform: options.platform, transportFactory, handshakeTimeoutMs: options.isPackaged === true && options.platform === 'darwin' ? MACOS_INSTALLED_HANDSHAKE_TIMEOUT_MS : undefined })
 
     /**
      * Sends one coordinator-owned operation through the supervised client.

@@ -9,7 +9,7 @@ use rdx_local_trust::{
 use sha2::{Digest, Sha256};
 use std::{
     fs,
-    io::{Read, Write},
+    io::Write,
     os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::Path,
     process::Command,
@@ -206,17 +206,26 @@ pub(super) fn fixed_command(program: &str, arguments: &[&str]) -> Result<String,
         .env_clear()
         .env("LANG", "C")
         .output()
-        .map_err(|_| "required system setup tool is unavailable")?;
+        .map_err(|error| format!("required system setup tool {program} is unavailable: {error}"))?;
+    if output.stdout.len().saturating_add(output.stderr.len()) > 65536 {
+        return Err("system setup evidence exceeded its bound".into());
+    }
     if !output.status.success() {
+        let status = output.status.code().map(|code| format!("exit={code}")).unwrap_or_else(|| output.status.to_string());
+        // Diagnostic output is never identity evidence. Bound it and preserve
+        // UTF-8 boundaries before passing it over the supervisor's private frame.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let mut end = stderr.len().min(1024);
+        while !stderr.is_char_boundary(end) {
+            end -= 1;
+        }
         return Err(format!(
-            "{program} rejected fixed setup action; run the package installer to repair"
+            "{program} rejected fixed setup action ({status}): {}{}; run the package installer to repair",
+            &stderr[..end], if end < stderr.len() { " [truncated]" } else { "" }
         ));
     }
     let mut bytes = output.stdout;
     bytes.extend_from_slice(&output.stderr);
-    if bytes.len() > 65536 {
-        return Err("system setup evidence exceeded its bound".into());
-    }
     String::from_utf8(bytes).map_err(|_| "system setup evidence was not UTF-8".into())
 }
 
@@ -253,15 +262,7 @@ pub(super) fn commit() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     verify_installed()?;
     channel.write_all(b"C").map_err(|error| error.to_string())?;
-    let mut result = [0];
-    channel.read_exact(&mut result).map_err(|_| "setup supervisor did not confirm registration; privileged access remains disabled, rerun the package installer")?;
-    if result != [b'Y'] {
-        return Err(
-            "registration failed; privileged access remains disabled, rerun the package installer"
-                .into(),
-        );
-    }
-    Ok(())
+    super::transaction::read_registration_result(&mut channel)
 }
 
 /// Ensure publication still names the exact root-protected retained candidate inode.
@@ -278,4 +279,28 @@ fn assert_candidate_namespace(candidate: &fs::File, path: &str) -> Result<(), St
         return Err("verified enrollment candidate was replaced before publication".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Real fixed-tool failure must retain both exit status and bounded stderr evidence.
+    #[test]
+    fn fixed_tool_failure_reports_exit_status_and_stderr() {
+        let error = fixed_command("/bin/sh", &["-c", "printf 'bootstrap fixture rejected' >&2; exit 7"]).unwrap_err();
+        assert!(error.contains("exit=7"), "{error}");
+        assert!(error.contains("bootstrap fixture rejected"), "{error}");
+    }
+
+    /// Oversized stderr is truncated for diagnostics or refused at the full evidence bound.
+    #[test]
+    fn fixed_tool_failure_bounds_stderr_and_evidence() {
+        let error = fixed_command("/bin/sh", &["-c", "printf '%01025d' 1 >&2; exit 7"]).unwrap_err();
+        assert!(error.contains("exit=7"), "{error}");
+        assert!(error.contains("[truncated]"), "{error}");
+        assert!(error.len() < 1200);
+        let excessive = fixed_command("/bin/sh", &["-c", "printf '%066000d' 1 >&2; exit 7"]).unwrap_err();
+        assert_eq!(excessive, "system setup evidence exceeded its bound");
+    }
 }

@@ -63,3 +63,16 @@ test('native installer denials emit a stage and terminate silent setup with fail
     assert.doesNotMatch(remover, /MessageBox/u)
     assert.match(remover, /!insertmacro OpenRDXFail "removal-files"/u)
 })
+
+test('NSIS Manager queries keep exact process predicates inside one Windows command argument', async () => {
+    for (const name of ['windows-service.nsh', 'windows-remover.nsi']) {
+        const text = await source(name)
+        const query = text.split('\n').find((line) => line.includes('Get-CimInstance Win32_Process'))
+        assert.ok(query, name)
+        // NSIS's escaped quote becomes an unescaped Windows argument quote.
+        // PowerShell then strips WQL string quotes and rejects the query.
+        assert.doesNotMatch(query, /\$\\"/u)
+        assert.match(query, /\$\$_\.Name -eq 'OpenRDXManager\.exe'/u)
+        assert.match(query, /\$\$_\.ExecutablePath -eq '\$\{OPENRDX_FIXED_ROOT\}\\OpenRDXManager\.exe'/u)
+    }
+})

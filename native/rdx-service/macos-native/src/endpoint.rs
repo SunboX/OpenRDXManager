@@ -79,6 +79,7 @@ impl LaunchdManagerEndpointListener {
     pub fn accept(&self) -> Result<ManagerEndpointConnection, NativeError> {
         #[cfg(target_os = "macos")]
         {
+            log_endpoint_phase("session-runtime-verification-start", None);
             if self
                 .requirement
                 .to_bytes()
@@ -98,6 +99,7 @@ impl LaunchdManagerEndpointListener {
                 rdx_local_trust::verify_protected_signed_macos_runtime()
                     .map_err(|_| NativeError::AccessDenied)?;
             }
+            log_endpoint_phase("session-runtime-verification-ok", None);
             let mut socket = -1;
             let mut user_id = 0_u32;
             // SAFETY: the listener and requirement are owned and live, and C
@@ -286,19 +288,27 @@ fn connection_from_status(
     user_id: u32,
 ) -> Result<ManagerEndpointConnection, NativeError> {
     if status != crate::ffi::STATUS_OK {
+        log_endpoint_native_code("accepted-native-status", status as i32);
         return Err(crate::status_error(status));
     }
     if socket < 0 {
+        log_endpoint_native_code("accepted-invalid-descriptor", socket);
         return Err(NativeError::Other);
     }
     // SAFETY: successful C accept transfers sole ownership of this descriptor.
     let stream = unsafe { UnixStream::from_raw_fd(socket) };
     stream
         .set_read_timeout(Some(Duration::from_secs(300)))
-        .map_err(|_| NativeError::Other)?;
+        .map_err(|error| {
+            log_endpoint_native_code("accepted-read-timeout", error.raw_os_error().unwrap_or(-1));
+            NativeError::Other
+        })?;
     stream
         .set_write_timeout(Some(Duration::from_secs(30)))
-        .map_err(|_| NativeError::Other)?;
+        .map_err(|error| {
+            log_endpoint_native_code("accepted-write-timeout", error.raw_os_error().unwrap_or(-1));
+            NativeError::Other
+        })?;
     Ok(ManagerEndpointConnection { stream, user_id })
 }
 
@@ -367,5 +377,20 @@ pub fn log_endpoint_phase(phase: &str, error: Option<NativeError>) {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (phase, error);
+    }
+}
+
+/// Record numeric native failures without leaking raw operating-system messages.
+#[cfg(target_os = "macos")]
+fn log_endpoint_native_code(phase: &str, code: i32) {
+    if phase.len() > 64 {
+        return;
+    }
+    let Ok(phase) = CString::new(phase) else {
+        return;
+    };
+    // SAFETY: the bounded internal string remains owned until the log returns.
+    unsafe {
+        crate::ffi::rdx_macos_log_endpoint_native_code(phase.as_ptr(), code);
     }
 }

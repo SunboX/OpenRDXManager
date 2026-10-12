@@ -397,8 +397,10 @@ impl std::error::Error for EndpointAccessError {}
 
 /// Loads canonical local manager identity only after fixed protected enrollment verification.
 ///
-/// The inventory and complete installed app are verified with the shared retained-file
-/// verifier. No caller-authored requirement text or arbitrary path is accepted.
+/// Bootstrap reads only the protected enrollment pins. The retained listener then
+/// freshly verifies the complete app and helper and compares the enrolled manager
+/// generation before every native accept. Avoid scanning the same runtime twice
+/// before the first accept. No caller-authored requirement or path is accepted.
 ///
 /// # Errors
 ///
@@ -406,7 +408,7 @@ impl std::error::Error for EndpointAccessError {}
 /// non-UTF-8, or weakly protected requirement evidence.
 #[cfg(target_os = "macos")]
 pub fn load_macos_manager_designated_requirement() -> Result<String, EndpointAccessError> {
-    let inventory = rdx_macos_native::local_trust::verify_installed_local_trust()
+    let inventory = rdx_macos_native::local_trust::read_installed_enrollment()
         .map_err(|_| EndpointAccessError::InsufficientPermission)?;
     rdx_macos_native::local_manager_requirement(&inventory.manager_cd_hash)
         .map_err(|_| EndpointAccessError::InsufficientPermission)

@@ -37,7 +37,7 @@ Function .onInit
   ${EndIf}
   ; Native ownership and quiescence precede every process or filesystem action.
   !insertmacro OpenRDXPrepareRemoval
-  nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "$$p=@(Get-CimInstance Win32_Process -Filter $\"Name='OpenRDXManager.exe'$\" | Where-Object { -not $$_.ExecutablePath -or $$_.ExecutablePath -eq '${OPENRDX_FIXED_ROOT}\OpenRDXManager.exe' }); if($$p.Count -ne 0){exit 3}"`
+  nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "$$p=@(Get-CimInstance Win32_Process | Where-Object { $$_.Name -eq 'OpenRDXManager.exe' -and (-not $$_.ExecutablePath -or $$_.ExecutablePath -eq '${OPENRDX_FIXED_ROOT}\OpenRDXManager.exe') }); if($$p.Count -ne 0){exit 3}"`
   Pop $0
   Pop $1
   ${If} $0 != 0

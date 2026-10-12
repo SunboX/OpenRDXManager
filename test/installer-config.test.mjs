@@ -92,3 +92,21 @@ test('macOS packages only maintained runtime helpers even if native build output
         await rm(root, { recursive: true, force: true })
     }
 })
+
+test('local macOS bundle cannot advertise an SMAppService daemon alongside the standalone PKG service', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'openrdx-local-bundle-service-'))
+    try {
+        const contents = join(root, 'app/Contents')
+        const { FileMatcher, copyFiles } = createRequire(import.meta.url)('app-builder-lib/out/fileMatcher.js')
+        for (const entry of createInstallerConfiguration('darwin').mac.extraFiles) {
+            const source = join(root, entry.from)
+            await mkdir(join(source, '..'), { recursive: true })
+            await writeFile(source, 'controlled-runtime-resource')
+            await copyFiles([new FileMatcher(source, join(contents, entry.to), (value) => value)], undefined, false)
+        }
+        assert.deepEqual(await readdir(join(contents, 'Library')), ['LaunchServices'])
+        assert.equal(await readFile(join(contents, 'Library/LaunchServices/openrdx-hardware'), 'utf8'), 'controlled-runtime-resource')
+    } finally {
+        await rm(root, { recursive: true, force: true })
+    }
+})
