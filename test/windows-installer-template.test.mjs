@@ -91,10 +91,26 @@ test('installed runtime diagnostics remain closed and select the specific native
 test('manager diagnostics preserve closed specific phases after their enclosing denial', async () => {
     const native = await readFile(new URL('../native/rdx-service/windows-native/src/installer/diagnostics.rs', import.meta.url), 'utf8')
     const hook = await source('windows-service.nsh')
-    for (const phase of ['runtime', 'process', 'user', 'configuration', 'dacl', 'registry', 'revalidation', 'user-elevation', 'user-session', 'user-principal', 'user-query']) {
+    for (const phase of ['runtime', 'process', 'user', 'configuration', 'dacl', 'registry', 'revalidation', 'user-elevation', 'user-elevation-size', 'user-session', 'user-principal', 'user-query']) {
         const token = `manager-${phase}`
         assert.ok(native.includes(`=> "${token}"`), token)
         assert.ok(hook.includes(`"phase=${token} reason="`), token)
         assert.ok(hook.indexOf(`"phase=${token} reason="`) > hook.indexOf('"phase=manager-access reason="'))
     }
+})
+
+test('Manager elevation size and elevated value keep separate fail-closed native denials', async () => {
+    const token = await readFile(new URL('../native/rdx-service/windows-native/src/service_acl/windows_impl/manager_token.rs', import.meta.url), 'utf8')
+    assert.match(token, /if returned_elevation as usize != size_of::<windows::Win32::Security::TOKEN_ELEVATION>\(\)\s*\{\s*return diagnostic\(\s*Stage::ManagerUserElevationSize,\s*Err\(NativeError::AccessDenied\),?\s*\);/u)
+    assert.match(token, /if elevation\.TokenIsElevated != 0\s*\{\s*return diagnostic\(Stage::ManagerUserElevation, Err\(NativeError::AccessDenied\)\);/u)
+})
+
+test('StdUtils launch diagnostics reconstruct closed result tokens without forwarding arbitrary plugin output', async () => {
+    const hook = await source('windows-service.nsh')
+    const start = hook.indexOf('!macro OpenRDXSanitizeLaunchResult')
+    assert.ok(start >= 0)
+    const sanitizer = hook.slice(start, hook.indexOf('!macroend', start))
+    for (const result of ['ok', 'fallback', 'unsupported', 'error', 'einval', 'timeout', 'not_found', 'unknown']) assert.ok(sanitizer.includes(`"${result}"`), result)
+    assert.doesNotMatch(sanitizer, /StrCpy \$\{OUTPUT\} "?\$\{INPUT\}/u)
+    assert.match(hook, /ExecShellAsUser[^\n]*\n\s*!insertmacro OpenRDXSanitizeLaunchResult "\$0" \$R4\s*\n\s*!insertmacro OpenRDXWriteDiagnostic "OpenRDX Manager launch: result=\$R4"/u)
 })

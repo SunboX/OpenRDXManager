@@ -4,6 +4,7 @@
 //! Focused checks for native discovery identity and capacity guards.
 
 use super::*;
+use crate::protocol::{InquiryPage, inquiry};
 use crate::transport::TransportResponse;
 
 /// The production backend allows bounded manual USB reattachment after activation.

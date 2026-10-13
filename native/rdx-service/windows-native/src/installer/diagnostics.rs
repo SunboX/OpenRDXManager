@@ -68,6 +68,8 @@ pub(crate) enum InstallStage {
     ManagerRevalidation,
     /// Sanitized manager user elevation checkpoint.
     ManagerUserElevation,
+    /// Sanitized manager elevation output-size checkpoint.
+    ManagerUserElevationSize,
     /// Sanitized manager user session checkpoint.
     ManagerUserSession,
     /// Sanitized manager user principal checkpoint.
@@ -115,6 +117,7 @@ impl InstallStage {
             Self::ManagerRegistry => "manager-registry",
             Self::ManagerRevalidation => "manager-revalidation",
             Self::ManagerUserElevation => "manager-user-elevation",
+            Self::ManagerUserElevationSize => "manager-user-elevation-size",
             Self::ManagerUserSession => "manager-user-session",
             Self::ManagerUserPrincipal => "manager-user-principal",
             Self::ManagerUserQuery => "manager-user-query",
@@ -144,6 +147,26 @@ pub(crate) fn diagnostic<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Proves the new size denial cannot be mistaken for a nonzero elevation value.
+    #[test]
+    fn manager_elevation_denials_are_distinct_and_preserve_access_denied() {
+        for (stage, expected) in [
+            (
+                InstallStage::ManagerUserElevationSize,
+                "manager-user-elevation-size",
+            ),
+            (InstallStage::ManagerUserElevation, "manager-user-elevation"),
+        ] {
+            assert_eq!(
+                failure(stage, NativeError::AccessDenied),
+                format!("OpenRDX native failure: phase={expected} reason=AccessDenied")
+            );
+            assert_eq!(
+                diagnostic::<()>(stage, Err(NativeError::AccessDenied)),
+                Err(NativeError::AccessDenied)
+            );
+        }
+    }
     /// Confirms diagnostics cannot incorporate an external path, SID or payload.
     #[test]
     fn diagnostics_have_closed_public_fields_and_preserve_results() {
@@ -179,6 +202,7 @@ mod tests {
             InstallStage::ManagerRegistry,
             InstallStage::ManagerRevalidation,
             InstallStage::ManagerUserElevation,
+            InstallStage::ManagerUserElevationSize,
             InstallStage::ManagerUserSession,
             InstallStage::ManagerUserPrincipal,
             InstallStage::ManagerUserQuery,

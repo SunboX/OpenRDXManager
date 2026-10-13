@@ -8,6 +8,7 @@ import test from 'node:test'
 const hostAdapterUrl = new URL('../native/rdx-service/src/platform/macos/host.rs', import.meta.url)
 const nativeAdapterUrl = new URL('../native/rdx-service/macos-native/src/lib.rs', import.meta.url)
 const platformAdapterUrl = new URL('../native/rdx-service/src/platform/macos.rs', import.meta.url)
+const candidateAdapterUrl = new URL('../native/rdx-service/src/platform/macos/open_candidate.rs', import.meta.url)
 const workerAdapterUrl = new URL('../native/rdx-service/macos-native/src/scsi_worker.rs', import.meta.url)
 const serviceBinaryUrl = new URL('../native/rdx-service/src/bin/openrdx-hardware.rs', import.meta.url)
 const iokitAdapterUrl = new URL('../native/rdx-service/native/macos/rdx_iokit.c', import.meta.url)
@@ -85,6 +86,7 @@ async function testSafeEjectUsesValidatedAppleFallback() {
  */
 async function testMacOsServiceUsesDisposableScsiWorker() {
     const source = await readFile(platformAdapterUrl, 'utf8')
+    const candidateSource = await readFile(candidateAdapterUrl, 'utf8')
     const workerSource = await readFile(workerAdapterUrl, 'utf8')
     const binarySource = await readFile(serviceBinaryUrl, 'utf8')
     const start = source.indexOf('struct MacOsDeviceHandle')
@@ -93,7 +95,9 @@ async function testMacOsServiceUsesDisposableScsiWorker() {
 
     assert.match(implementation, /Option<rdx_macos_native::MacScsiWorkerLease>/u, 'the service handle must own only the disposable worker proxy')
     assert.doesNotMatch(implementation, /Option<rdx_macos_native::MacScsiLease>/u, 'the long-lived service must not own DeviceCapture directly')
-    assert.match(source, /invalidate_media_mapping_for_rematch\(\);\s*drop\(authority\);\s*let scsi = rdx_macos_native::MacScsiWorkerLease::spawn[\s\S]*?_authority: None/u, 'the parent must release every IOKit device client before the worker captures USB')
+    assert.match(source, /fn open_candidate\([\s\S]*?self\.open_registry_candidate\(candidate\)/u, 'the backend must delegate to the checked candidate acquisition module')
+    // The extracted handoff permits only the inert diagnostic assignment between release and spawn.
+    assert.match(candidateSource, /invalidate_media_mapping_for_rematch\(\);\s*drop\(authority\);\s*failure_stage = DiscoveryFailure::WorkerAcquisition;\s*let scsi = rdx_macos_native::MacScsiWorkerLease::spawn[\s\S]*?_authority: None/u, 'the parent must release every IOKit device client before the worker captures USB')
     assert.match(workerSource, /Command::new\(executable\)[\s\S]*?\.arg\("--openrdx-internal-macos-scsi-worker"\)/u, 'the proxy must spawn only the current executable in its fixed hidden mode')
     assert.match(binarySource, /--openrdx-internal-macos-scsi-worker[\s\S]*?arguments\.next\(\)\.is_none\(\)[\s\S]*?current_process_is_authorized\(\)[\s\S]*?run_scsi_worker/u, 'the hidden mode must reject extra arguments and require inherited privileged authority')
 }

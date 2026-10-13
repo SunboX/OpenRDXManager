@@ -209,6 +209,10 @@ ${StrStr}
   ${If} $R5 != ""
     StrCpy $R3 "manager-user-elevation"
   ${EndIf}
+  ${StrStr} $R5 "$1" "phase=manager-user-elevation-size reason="
+  ${If} $R5 != ""
+    StrCpy $R3 "manager-user-elevation-size"
+  ${EndIf}
   ${StrStr} $R5 "$1" "phase=manager-user-session reason="
   ${If} $R5 != ""
     StrCpy $R3 "manager-user-session"
@@ -227,8 +231,9 @@ ${StrStr}
 ; All denials fail closed in both assisted and silent setup. The fixed stage and
 ; native exit code go to inherited stderr, so automation can diagnose a GUI PE.
 ; Callers provide only fixed public errors and allowlisted native tokens.
-!macro OpenRDXFail STAGE CODE MESSAGE
-  StrCpy $R7 "OpenRDX setup failure: stage=${STAGE} code=${CODE} ${MESSAGE}$\r$\n"
+; Writes only caller-reconstructed public diagnostics; failure never changes control flow.
+!macro OpenRDXWriteDiagnostic MESSAGE
+  StrCpy $R7 "${MESSAGE}$\r$\n"
   DetailPrint "$R7"
   System::Call 'kernel32::WideCharToMultiByte(i 65001, i 0, w R7, i -1, p 0, i 0, p 0, p 0)i .R8'
   ${If} $R8 > 0
@@ -244,6 +249,30 @@ ${StrStr}
       System::Free $R9
     ${EndIf}
   ${EndIf}
+!macroend
+
+; Reconstruct the plugin's closed API results. Never forward its input string.
+!macro OpenRDXSanitizeLaunchResult INPUT OUTPUT
+  StrCpy ${OUTPUT} "unknown"
+  ${If} "${INPUT}" == "ok"
+    StrCpy ${OUTPUT} "ok"
+  ${ElseIf} "${INPUT}" == "fallback"
+    StrCpy ${OUTPUT} "fallback"
+  ${ElseIf} "${INPUT}" == "unsupported"
+    StrCpy ${OUTPUT} "unsupported"
+  ${ElseIf} "${INPUT}" == "error"
+    StrCpy ${OUTPUT} "error"
+  ${ElseIf} "${INPUT}" == "einval"
+    StrCpy ${OUTPUT} "einval"
+  ${ElseIf} "${INPUT}" == "timeout"
+    StrCpy ${OUTPUT} "timeout"
+  ${ElseIf} "${INPUT}" == "not_found"
+    StrCpy ${OUTPUT} "not_found"
+  ${EndIf}
+!macroend
+
+!macro OpenRDXFail STAGE CODE MESSAGE
+  !insertmacro OpenRDXWriteDiagnostic "OpenRDX setup failure: stage=${STAGE} code=${CODE} ${MESSAGE}"
   ${IfNot} ${Silent}
     MessageBox MB_ICONSTOP "$R7"
   ${EndIf}
@@ -292,6 +321,8 @@ ${StrStr}
   ; Native token/session/principal checks decide whether Manager can be enrolled.
   ; https://muldersoft.com/docs/stdutils_readme.html
   ${StdUtils.ExecShellAsUser} $0 "${OPENRDX_FIXED_ROOT}\OpenRDXManager.exe" "open" ""
+  !insertmacro OpenRDXSanitizeLaunchResult "$0" $R4
+  !insertmacro OpenRDXWriteDiagnostic "OpenRDX Manager launch: result=$R4"
   ${If} $0 != "ok"
     DetailPrint "Launch the installed Manager as the active console user to complete setup."
   ${EndIf}

@@ -30,9 +30,13 @@ pub(super) fn manager_sid(process: &OwnedHandle, process_id: u32) -> Result<Owne
         }
         .map_err(map_native_error),
     )?;
-    if returned_elevation as usize != size_of::<windows::Win32::Security::TOKEN_ELEVATION>()
-        || elevation.TokenIsElevated != 0
-    {
+    if returned_elevation as usize != size_of::<windows::Win32::Security::TOKEN_ELEVATION>() {
+        return diagnostic(
+            Stage::ManagerUserElevationSize,
+            Err(NativeError::AccessDenied),
+        );
+    }
+    if elevation.TokenIsElevated != 0 {
         return diagnostic(Stage::ManagerUserElevation, Err(NativeError::AccessDenied));
     }
     let mut token_session = u32::MAX;

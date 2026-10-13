@@ -45,6 +45,7 @@ use refresh::{
 #[cfg(target_os = "macos")]
 use semantic::native_operation;
 use semantic::{MacOsSemanticCommand, classify};
+mod open_candidate;
 
 /// Apple task-interface response proving target processing is complete.
 pub const SCSI_SERVICE_RESPONSE_TASK_COMPLETE: u8 = 2;
@@ -195,6 +196,7 @@ pub fn evaluate_macos_readiness(facts: MacOsReadinessFacts) -> MacOsReadinessRep
 
 /// Service-owned IOKit candidate and synchronous SCSI-task backend.
 pub struct MacOsBackend {
+    last_open_failure: Option<super::DiscoveryFailure>,
     backup_owner: Option<u32>,
     report: MacOsReadinessReport,
     native_active: bool,
@@ -216,6 +218,7 @@ impl MacOsBackend {
             MacOsReadinessFacts::unavailable()
         };
         Self {
+            last_open_failure: None,
             backup_owner: None,
             report: evaluate_macos_readiness(facts),
             native_active,
@@ -358,123 +361,17 @@ impl PlatformBackend for MacOsBackend {
         }
     }
 
-    /// Reopens one generation recipe and revalidates the exact registry service.
+    /// Reopens the exact candidate through the unchanged native acquisition sequence.
     fn open_candidate(
         &mut self,
         candidate: &CandidateDevice,
     ) -> Result<CandidateLease, PlatformError> {
-        if !self.native_active {
-            return Err(PlatformError::TransportUnavailable);
-        }
-        #[cfg(target_os = "macos")]
-        {
-            let staged = self
-                .staged
-                .as_ref()
-                .and_then(|recipes| recipes.reopen(&candidate.locator));
-            let probing_staged_candidate = staged.is_some();
-            let mut prefilter_rejected = false;
-            let opened = (|| {
-                let retained = staged
-                    .or_else(|| self.pending.reopen(&candidate.locator))
-                    .ok_or(PlatformError::DeviceRemoved)?;
-                if retained.token() != candidate.token() {
-                    return Err(PlatformError::DeviceRemoved);
-                }
-                if !retained.matches_rdx_identity_hint() {
-                    prefilter_rejected = true;
-                    return Err(PlatformError::DeviceUnavailable);
-                }
-                let mut authority = rdx_macos_native::MacDevice::open(retained)
-                    .map_err(map_native_platform_error)?;
-                let rematch_identity = retained.rematch_identity();
-                let cached_host_facts = {
-                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-                    let mut pending_capacity_confirmation = None;
-                    loop {
-                        let mut mapping = match authority.pin_media() {
-                            Ok(mapping) => mapping,
-                            Err(error)
-                                if std::time::Instant::now() < deadline
-                                    && transient_storage_rematch_error(error) =>
-                            {
-                                std::thread::sleep(std::time::Duration::from_millis(100));
-                                continue;
-                            }
-                            Err(error) => return Err(map_native_platform_error(error)),
-                        };
-                        if !initial_mapping_complete(
-                            mapping.whole_media_present(),
-                            mapping.media_count(),
-                        ) && std::time::Instant::now() < deadline
-                        {
-                            drop(mapping);
-                            std::thread::sleep(std::time::Duration::from_millis(100));
-                            continue;
-                        }
-                        let facts = host_facts_from_mapping(&mapping);
-                        if capacity_refresh_requires_confirmation(
-                            None,
-                            facts,
-                            pending_capacity_confirmation,
-                        ) && std::time::Instant::now() < deadline
-                        {
-                            pending_capacity_confirmation = Some(facts);
-                            drop(mapping);
-                            std::thread::sleep(std::time::Duration::from_millis(100));
-                            continue;
-                        }
-                        if mapping.mounted_media_count() > 0 {
-                            match mapping.unmount(30_000) {
-                                rdx_macos_native::HostOperationOutcome::Succeeded => {}
-                                rdx_macos_native::HostOperationOutcome::NotAttempted(error)
-                                | rdx_macos_native::HostOperationOutcome::DefinitelyRejected(
-                                    error,
-                                )
-                                | rdx_macos_native::HostOperationOutcome::CompletionUnknown(
-                                    error,
-                                ) => {
-                                    // An ambiguous DA failure does not prove device removal.
-                                    return Err(map_native_platform_error(error));
-                                }
-                            }
-                        }
-                        break facts;
-                    }
-                };
-                authority.invalidate_media_mapping_for_rematch();
-                drop(authority);
-                let scsi = rdx_macos_native::MacScsiWorkerLease::spawn(&rematch_identity)
-                    .map_err(map_native_platform_error)?;
-                Ok(CandidateLease::new(MacOsDeviceHandle {
-                    _authority: None,
-                    rematch_identity,
-                    scsi: Some(scsi),
-                    cached_host_facts: Some(cached_host_facts),
-                    storage_unmounted_for_format: false,
-                    safe_eject_dispatched: false,
-                    pending_format: None,
-                    format_passphrase: None,
-                    combined_format_complete: false,
-                }))
-            })();
-            if probing_staged_candidate {
-                if prefilter_rejected {
-                    self.record_staged_prefilter_rejection(candidate.token());
-                } else {
-                    self.record_staged_candidate_outcome(
-                        candidate.token(),
-                        opened.as_ref().err().copied(),
-                    );
-                }
-            }
-            opened
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = candidate;
-            Err(PlatformError::TransportUnavailable)
-        }
+        self.open_registry_candidate(candidate)
+    }
+
+    /// Reads only the preceding open's fixed stage; no native call or probing.
+    fn last_candidate_open_failure(&self) -> Option<super::DiscoveryFailure> {
+        self.last_open_failure
     }
 
     /// Refreshes Disk Arbitration facts without unmounting or acquiring SCSI.
@@ -973,5 +870,30 @@ mod tests {
                 .expect_err("the injected matcher allocation must be reached"),
             PlatformError::TooManyCandidates
         );
+    }
+    /// Closed stage reads are inert and every open replaces stale evidence.
+    #[test]
+    fn closed_open_stage_is_current_and_read_only() {
+        use crate::platform::{CandidateMetadata, DiscoveryFailure};
+        let mut backend = MacOsBackend::from_readiness(MacOsReadinessFacts::unavailable(), false);
+        let candidate = CandidateDevice::new(
+            "private-token",
+            "/private/recipe",
+            CandidateMetadata::new(None, None, None, None),
+        )
+        .unwrap();
+        assert_eq!(backend.last_candidate_open_failure(), None);
+        backend.last_open_failure = Some(DiscoveryFailure::Unmount);
+        assert!(matches!(
+            backend.open_candidate(&candidate),
+            Err(PlatformError::TransportUnavailable)
+        ));
+        for _ in 0..2 {
+            assert_eq!(
+                backend.last_candidate_open_failure(),
+                Some(DiscoveryFailure::RegistryOpen)
+            );
+            assert!(backend.candidate_probe_outcomes().is_empty());
+        }
     }
 }

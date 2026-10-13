@@ -9,9 +9,10 @@ use serde::ser::{Serialize, SerializeSeq, SerializeStruct, Serializer};
 
 use crate::model::{DeviceId, DeviceSnapshot};
 
+use super::validation::diagnose_candidate_lease;
 use super::{
-    CandidateLease, DeviceRegistry, PlatformBackend, PlatformError, ValidatedCandidate,
-    metadata_is_sane, reject_duplicate_candidates, revalidate_candidate_lease,
+    CandidateLease, DeviceRegistry, DiscoveryFailure, PlatformBackend, PlatformError,
+    ValidatedCandidate, metadata_is_sane, reject_duplicate_candidates,
 };
 
 /// Aggregated candidate outcomes safe to publish outside the native boundary.
@@ -319,7 +320,7 @@ fn validate_backend_candidates<B: PlatformBackend>(
     }
     for candidate in candidates {
         if !metadata_is_sane(&candidate.metadata) {
-            reject(&mut rejections, "candidate-validation-failed");
+            reject(&mut rejections, DiscoveryFailure::Metadata.code());
             continue;
         }
         if let Some(evidence) =
@@ -339,13 +340,21 @@ fn validate_backend_candidates<B: PlatformBackend>(
                 continue;
             }
             Err(_) => {
-                reject(&mut rejections, "candidate-validation-failed");
+                reject(
+                    &mut rejections,
+                    backend
+                        .last_candidate_open_failure()
+                        .map_or("candidate-validation-failed", DiscoveryFailure::code),
+                );
                 continue;
             }
         };
-        let Some(evidence) = revalidate_candidate_lease(&mut lease, &candidate, platform) else {
-            reject(&mut rejections, "candidate-validation-failed");
-            continue;
+        let evidence = match diagnose_candidate_lease(&mut lease, &candidate, platform) {
+            Ok(evidence) => evidence,
+            Err(stage) => {
+                reject(&mut rejections, stage.code());
+                continue;
+            }
         };
         if let Some(retained) = retained_lease.as_deref_mut()
             && let Some(device_id) = fresh_device

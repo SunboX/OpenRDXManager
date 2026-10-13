@@ -33,7 +33,89 @@ public static class OpenRDXConsole {
  [DllImport("wtsapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern bool WTSQuerySessionInformationW(IntPtr server, UInt32 session, int kind, out IntPtr value, out UInt32 bytes);
  [DllImport("wtsapi32.dll")] public static extern void WTSFreeMemory(IntPtr value);
 }
+/// <summary>Read-only process/token facts; every public field is a boolean.</summary>
+public sealed class OpenRDXTokenFacts {
+ public bool ElevationQueryOk, ElevationSizeMatch, Elevated;
+ public bool SessionQueryOk, SessionSizeMatch, ProcessSessionQueryOk;
+ public bool TokenMatchesProcessSession, TokenMatchesConsole, ProcessMatchesConsole;
+}
+/// <summary>Queries the exact selected process without granting or modifying access.</summary>
+public static class OpenRDXTokenDiagnostics {
+ /// <summary>Opens only a read-only query handle for the existing PID.</summary>
+ [DllImport("kernel32.dll", SetLastError=true)] private static extern IntPtr OpenProcess(UInt32 access, bool inherit, UInt32 pid);
+ /// <summary>Opens only TOKEN_QUERY access on that pinned process.</summary>
+ [DllImport("advapi32.dll", SetLastError=true)] private static extern bool OpenProcessToken(IntPtr process, UInt32 access, out IntPtr token);
+ /// <summary>Reads an exact four-byte elevation or session output.</summary>
+ [DllImport("advapi32.dll", SetLastError=true)] private static extern bool GetTokenInformation(IntPtr token, int kind, out UInt32 value, UInt32 length, out UInt32 returned);
+ /// <summary>Queries the existing process session without changing it.</summary>
+ [DllImport("kernel32.dll", SetLastError=true)] private static extern bool ProcessIdToSessionId(UInt32 pid, out UInt32 session);
+ /// <summary>Releases only handles opened by this diagnostic.</summary>
+ [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
+ /// <summary>Returns bounded facts only; query failures remain false and cannot authorize a process.</summary>
+ public static OpenRDXTokenFacts Read(UInt32 pid) {
+  var facts = new OpenRDXTokenFacts();
+  IntPtr process = IntPtr.Zero, token = IntPtr.Zero;
+  try {
+   process = OpenProcess(0x1000, false, pid); // PROCESS_QUERY_LIMITED_INFORMATION
+   if (process == IntPtr.Zero || !OpenProcessToken(process, 8, out token)) return facts; // TOKEN_QUERY
+   UInt32 elevation, returned, tokenSession, processSession;
+   facts.ElevationQueryOk = GetTokenInformation(token, 20, out elevation, 4, out returned); // TokenElevation
+   facts.ElevationSizeMatch = facts.ElevationQueryOk && returned == 4;
+   facts.Elevated = facts.ElevationSizeMatch && elevation != 0;
+   facts.SessionQueryOk = GetTokenInformation(token, 12, out tokenSession, 4, out returned); // TokenSessionId
+   facts.SessionSizeMatch = facts.SessionQueryOk && returned == 4;
+   facts.ProcessSessionQueryOk = ProcessIdToSessionId(pid, out processSession);
+   UInt32 console = OpenRDXConsole.WTSGetActiveConsoleSessionId();
+   facts.TokenMatchesProcessSession = facts.SessionSizeMatch && facts.ProcessSessionQueryOk && tokenSession == processSession;
+   facts.TokenMatchesConsole = facts.SessionSizeMatch && console != UInt32.MaxValue && tokenSession == console;
+   facts.ProcessMatchesConsole = facts.ProcessSessionQueryOk && console != UInt32.MaxValue && processSession == console;
+   return facts;
+  } catch { return facts; }
+  finally { if (token != IntPtr.Zero) CloseHandle(token); if (process != IntPtr.Zero) CloseHandle(process); }
+ }
+}
 '@
+
+<# .SYNOPSIS Reads boolean-only facts for an exact PID; never selects, launches, enrolls or authorizes it. .PARAMETER ProcessId Process already selected by the existing lifecycle. #>
+function Get-TokenDiagnostic([UInt32]$ProcessId) {
+    return [OpenRDXTokenDiagnostics]::Read($ProcessId)
+}
+
+<# .SYNOPSIS Prints only reconstructed prerequisite tokens and boolean token facts, including on setup failure. .PARAMETER Path Exact owned worker result, read without waiting on failure. .PARAMETER Result Previously bounded worker result on success. #>
+function Write-ManagerWorkerDiagnostic([string]$Path, $Result) {
+    try {
+        if ($null -eq $Result) {
+            if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { Write-Output 'OpenRDX Manager worker: result=not-observed'; return }
+            if ((Get-Item -LiteralPath $Path).Length -gt 65536) { Write-Output 'OpenRDX Manager worker: result=unbounded'; return }
+            $Result = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
+        }
+        $prerequisite = 'unknown'
+        if ($Result.workerDiagnostic.prerequisite -cin @('not-checked', 'console-mismatch', 'not-unelevated', 'ready')) { $prerequisite = $Result.workerDiagnostic.prerequisite }
+        $worker = $Result.workerDiagnostic.facts
+        Write-Output ('OpenRDX Manager worker: prerequisite={0} elevation-query={1} elevation-size-match={2} elevated={3} token-process-session-match={4} token-console-match={5}' -f
+            $prerequisite, [bool]$worker.ElevationQueryOk, [bool]$worker.ElevationSizeMatch, [bool]$worker.Elevated, [bool]$worker.TokenMatchesProcessSession, [bool]$worker.TokenMatchesConsole)
+        if ($null -eq $Result.managerDiagnostic) { Write-Output 'OpenRDX worker-selected Manager: token=not-observed'; return }
+        $facts = $Result.managerDiagnostic
+        Write-Output ('OpenRDX worker-selected Manager: elevation-query={0} elevation-size-match={1} elevated={2} session-query={3} session-size-match={4} process-session-query={5} token-process-session-match={6} token-console-match={7} process-console-match={8}' -f
+            [bool]$facts.ElevationQueryOk, [bool]$facts.ElevationSizeMatch, [bool]$facts.Elevated, [bool]$facts.SessionQueryOk, [bool]$facts.SessionSizeMatch, [bool]$facts.ProcessSessionQueryOk, [bool]$facts.TokenMatchesProcessSession, [bool]$facts.TokenMatchesConsole, [bool]$facts.ProcessMatchesConsole)
+    } catch { Write-Output 'OpenRDX Manager worker: result=unavailable' }
+}
+
+<# .SYNOPSIS Runs the existing setup then existing worker wait; diagnostic failures never replace a setup exception. .PARAMETER ResultPath Exact Manager worker result. #>
+function Invoke-ManagerSetup([string]$ResultPath) {
+    try {
+        Invoke-Setup | Write-Host
+        $managerResult = Wait-Worker $ResultPath
+        Write-ManagerWorkerDiagnostic -Result $managerResult | Write-Host
+        return $managerResult
+    }
+    catch {
+        $setupFailure = $_
+        # Diagnostic IO is best-effort and cannot mask the original setup/worker error.
+        try { Write-ManagerWorkerDiagnostic -Path $ResultPath | Write-Host } catch {}
+        throw $setupFailure
+    }
+}
 
 <# .SYNOPSIS Accepts complete removal or only the protected running remover scheduled for deletion at reboot. .PARAMETER RuntimeRoot Exact verification-owned runtime. .PARAMETER PendingDeletes Test-only captured OS rename operations; production reads the Session Manager journal. #>
 function Assert-RemovedRuntime([string]$RuntimeRoot, [string[]]$PendingDeletes) {
@@ -104,10 +186,13 @@ function Invoke-CapturedProgram([string]$Executable, [string[]]$Arguments) {
 if ($WorkerMode) {
     # Task Scheduler must supply the actual interactive limited token. A SYSTEM
     # session or elevated GUI cannot count as installed Manager authentication.
-    if ([Diagnostics.Process]::GetCurrentProcess().SessionId -ne [OpenRDXConsole]::WTSGetActiveConsoleSessionId()) { throw 'worker-console-mismatch' }
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    if ((New-Object Security.Principal.WindowsPrincipal($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'worker-must-be-unelevated' }
+    $workerDiagnostic = @{ prerequisite = 'not-checked'; facts = Get-TokenDiagnostic -ProcessId $PID }
+    $managerDiagnostic = $null
     try {
+        if ([Diagnostics.Process]::GetCurrentProcess().SessionId -ne [OpenRDXConsole]::WTSGetActiveConsoleSessionId()) { $workerDiagnostic.prerequisite = 'console-mismatch'; throw 'worker-console-mismatch' }
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+        if ((New-Object Security.Principal.WindowsPrincipal($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { $workerDiagnostic.prerequisite = 'not-unelevated'; throw 'worker-must-be-unelevated' }
+        $workerDiagnostic.prerequisite = 'ready'
         if ($WorkerMode -eq 'Manager') {
             $deadline = [DateTime]::UtcNow.AddSeconds(120)
             while (-not (Test-Path -LiteralPath $manager) -or -not (Test-Path -LiteralPath $provisioner) -or -not (Test-Path -LiteralPath "$fixedRoot\resources\local-trust\runtime.json")) {
@@ -121,7 +206,8 @@ if ($WorkerMode) {
                 $candidates = @(Get-CimInstance Win32_Process -Filter "Name='OpenRDXManager.exe'" | Where-Object { $_.ExecutablePath -eq $manager -and $_.CommandLine -notmatch '--type=' })
                 if ([DateTime]::UtcNow -ge $deadline) { throw 'stable-installed-manager-pid-timeout' }
             } while ($candidates.Count -ne 1)
-            @{ ok = $true; pid = $candidates[0].ProcessId } | ConvertTo-Json -Compress | Set-Content -LiteralPath $ResultPath -Encoding UTF8
+            $managerDiagnostic = Get-TokenDiagnostic -ProcessId $candidates[0].ProcessId
+            @{ ok = $true; pid = $candidates[0].ProcessId; workerDiagnostic = $workerDiagnostic; managerDiagnostic = $managerDiagnostic } | ConvertTo-Json -Depth 4 -Compress | Set-Content -LiteralPath $ResultPath -Encoding UTF8
         } elseif ($WorkerMode -eq 'Portable') {
             Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
             $copy = Join-Path (Split-Path -Parent $ResultPath) 'portable\OpenRDXManager\OpenRDXManager.exe'
@@ -142,7 +228,7 @@ try { let output=''; try { const result=await promisify(execFile)(process.argv[1
             @{ ok = $true; output = $output } | ConvertTo-Json -Compress | Set-Content -LiteralPath $ResultPath -Encoding UTF8
         }
     } catch {
-        @{ ok = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress | Set-Content -LiteralPath $ResultPath -Encoding UTF8
+        @{ ok = $false; error = $_.Exception.Message; workerDiagnostic = $workerDiagnostic; managerDiagnostic = $managerDiagnostic } | ConvertTo-Json -Depth 4 -Compress | Set-Content -LiteralPath $ResultPath -Encoding UTF8
         exit 1
     }
     exit 0
@@ -236,8 +322,7 @@ try {
     # The limited console task waits for NSIS file placement, allowing the
     # elevated installer to pin a real Manager without selecting a raw SID.
     $resultPath = Start-Worker 'Manager'
-    Invoke-Setup
-    $managerPid = (Wait-Worker $resultPath).pid
+    $managerPid = (Invoke-ManagerSetup -ResultPath $resultPath).pid
     Invoke-LocalAction -Arguments @('--action', 'verify', '--manager-process-id', "$managerPid")
     Stop-Process -Id $managerPid -ErrorAction Stop
     $managerPid = $null
@@ -271,8 +356,7 @@ try {
     # Repair uses incoming administrator-selected setup to replace corrupt files;
     # original bytes are restored only on failure, never to make Repair pass.
     $resultPath = Start-Worker 'Manager'
-    Invoke-Setup
-    $managerPid = (Wait-Worker $resultPath).pid
+    $managerPid = (Invoke-ManagerSetup -ResultPath $resultPath).pid
     if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($target)) -ne [Convert]::ToBase64String($backup)) { throw 'installer-repair-did-not-restore-final-content' }
     $backup = $null
     Invoke-LocalAction -Arguments @('--action', 'repair', '--manager-process-id', "$managerPid")
@@ -283,8 +367,7 @@ try {
     Invoke-LocalAction -Arguments @('--action', 'prepare')
 
     $resultPath = Start-Worker 'Manager'
-    Invoke-Setup
-    $managerPid = (Wait-Worker $resultPath).pid
+    $managerPid = (Invoke-ManagerSetup -ResultPath $resultPath).pid
     Invoke-LocalAction -Arguments @('--action', 'verify', '--manager-process-id', "$managerPid")
     Stop-Process -Id $managerPid -ErrorAction Stop
     $managerPid = $null
