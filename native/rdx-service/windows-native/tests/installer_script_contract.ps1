@@ -77,6 +77,7 @@ if (-not $rejected) { throw 'failing-native-action-was-accepted' }
 # still enforces a deadline when a program never exits. No installer is run here.
 $runDirectory = Join-Path $env:TEMP ('openrdx-setup-capture-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $runDirectory | Out-Null
+$previousNsisDirectory = $env:NSISDIR
 try {
     Invoke-Setup -Executable $env:ComSpec -Arguments '/d /c "echo setup-success & exit /b 0"'
     $rejected = $false
@@ -117,13 +118,17 @@ try {
     Push-Location (Join-Path $PSScriptRoot '../../../..')
     try {
         # Downloads can log to stdout; keep the resolved path in an exact owned file.
-        & node --input-type=module -e "import {getMakeNsisPath} from 'app-builder-lib/out/toolsets/windows.js'; import {writeFile} from 'node:fs/promises'; await writeFile(process.argv[1],await getMakeNsisPath('1.2.1'),'utf8')" $compilerPath
+        # The resolver returns {path,env}, with a .cmd entrypoint on Windows.
+        # Match the production remover: real PE compiler and that bundle's data.
+        & node --input-type=module -e "import {getMakeNsisPath} from 'app-builder-lib/out/toolsets/windows.js'; import {writeFile} from 'node:fs/promises'; import {dirname,join} from 'node:path'; const tool=await getMakeNsisPath('1.2.1'); const nsisDir=join(dirname(tool.path),'windows'); await writeFile(process.argv[1],JSON.stringify({path:join(nsisDir,'makensis.exe'),env:{...tool.env,NSISDIR:nsisDir}}),'utf8')" $compilerPath
         $compilerExit = $LASTEXITCODE
     }
     finally { Pop-Location }
     if ($compilerExit -ne 0 -or -not (Test-Path -LiteralPath $compilerPath)) { throw 'pinned-fixture-compiler-unavailable' }
-    $compiler = [IO.File]::ReadAllText($compilerPath)
-    if (-not (Test-Path -LiteralPath $compiler)) { throw 'pinned-fixture-compiler-unavailable' }
+    $compilerInfo = [IO.File]::ReadAllText($compilerPath) | ConvertFrom-Json
+    $compiler = $compilerInfo.path
+    if (-not (Test-Path -LiteralPath $compiler -PathType Leaf) -or -not (Test-Path -LiteralPath $compilerInfo.env.NSISDIR -PathType Container)) { throw 'pinned-fixture-compiler-unavailable' }
+    $env:NSISDIR = $compilerInfo.env.NSISDIR
     $nativeParser = Get-DiagnosticMacro 'OpenRDXNativeFail'
     $sizeBlock = [regex]::Match($nativeParser, '(?ms)^  \$\{StrStr\} \$R5 "\$1" "phase=manager-user-elevation-size reason=".*?^  \$\{EndIf\}').Value
     if (-not $sizeBlock) { throw 'specific-elevation-size-parser-missing' }
@@ -167,7 +172,10 @@ try {
     $returned = Invoke-ManagerSetup -ResultPath $resultPath
     if ($returned -is [array] -or $returned.pid -ne 424242) { throw 'diagnostic-output-contaminated-worker-result' }
     Write-Output 'Windows compiled diagnostic parser mutation baseline and final passed; original setup failure preserved'
-} finally { Remove-Item -LiteralPath $runDirectory -Recurse -Force -ErrorAction SilentlyContinue }
+} finally {
+    $env:NSISDIR = $previousNsisDirectory
+    Remove-Item -LiteralPath $runDirectory -Recurse -Force -ErrorAction SilentlyContinue
+}
 Write-Output 'Windows installer script native boundary passed'
 
 # The complete custom script must initialize NSIS's readonly temp variable using
