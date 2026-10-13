@@ -7,9 +7,13 @@
 //! Installer's log. The package does NOT call the production prepare/install.
 //! Review the diagnostic before explicit privileged execution. Never ship
 //! this target in the normal app/runtime inventory or LocalTrust directory.
-//! Fork reads and reap share one absolute ten-second deadline.
+//! Each readonly command has three seconds and 64 KiB of combined output.
+//! Fork reads/reap share ten seconds; child-only SIGKILL cleanup adds at most one second.
 //! Only existing fixed leases, readonly probes and a private disposable root
 //! temp fixture are used. No enrollment/payload/launchd/device action is taken.
+
+#[cfg(target_os = "macos")]
+mod bounded_process;
 
 #[cfg(target_os = "macos")]
 mod diagnostic {
@@ -25,7 +29,6 @@ mod diagnostic {
         },
         path::Path,
         process::Command,
-        thread,
         time::{Duration, Instant},
     };
 
@@ -216,16 +219,15 @@ mod diagnostic {
             "system/com.openrdx.hardware.local",
             "system/com.openrdx.hardware",
         ] {
-            let output = Command::new("/bin/launchctl")
-                .args(["print", label])
-                .env_clear()
-                .output()
-                .map_err(|error| error.to_string())?;
-            if output.stdout.len().saturating_add(output.stderr.len()) > 65536 {
-                return Err("readonly registration evidence exceeds its bound".into());
-            }
-            eprintln!("readonly {label} exit={:?}", output.status.code());
-            if !output.status.success() && output.status.code() != Some(113) {
+            let status = super::bounded_process::capture(
+                Command::new("/bin/launchctl")
+                    .args(["print", label])
+                    .env_clear(),
+                Instant::now() + Duration::from_secs(3),
+                65536,
+            )?;
+            eprintln!("readonly {label} exit={:?}", status.code());
+            if !status.success() && status.code() != Some(113) {
                 return Err("readonly launchctl probe failed".into());
             }
         }
@@ -340,39 +342,26 @@ mod diagnostic {
         if let Err(error) = &received {
             eprintln!("diagnostic evidence read failed: {error}");
         }
-        if evidence.len() > 16384 || received.is_err() {
-            // Kill only our own diagnostic child; never target a daemon or PID
-            // received from another process. Locks remain retained by parent.
-            unsafe {
-                libc::kill(pid, libc::SIGKILL);
-            }
-        }
-        let mut status = 0;
-        loop {
-            let waited = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
-            if waited == pid {
-                break;
-            }
-            if waited < 0 {
-                return Err("cannot reap diagnostic child".into());
-            }
-            if Instant::now() >= deadline {
-                unsafe {
-                    libc::kill(pid, libc::SIGKILL);
-                    libc::waitpid(pid, &mut status, 0);
+        let reaped = if received.is_err() {
+            super::bounded_process::stop_fork(pid)
+        } else {
+            super::bounded_process::reap_fork(pid, deadline)
+        };
+        let status = match reaped {
+            Ok(status) => status,
+            Err(error) => {
+                if let Err(original) = received {
+                    eprintln!("secondary diagnostic child cleanup: {error}");
+                    return Err(original);
                 }
-                return Err(received
-                    .as_ref()
-                    .err()
-                    .cloned()
-                    .unwrap_or_else(|| "diagnostic child exceeded deadline".into()));
+                return Err(error);
             }
-            thread::sleep(Duration::from_millis(10));
-        }
+        };
+        received?;
         recheck(&hardware, Path::new(HARDWARE))?;
         recheck(&setup, Path::new(SETUP))?;
         recheck(&temporary.file, &temporary.file_path)?;
-        if received.is_err() || evidence.len() > 16384 || status != 0 {
+        if status != 0 {
             return Err("postfork diagnostic failed; original stage evidence above; no setup changes were made".into());
         }
         Ok(())

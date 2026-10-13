@@ -179,6 +179,7 @@ mod windows_impl {
         SERVICE_NAME,
     };
     use crate::NativeError;
+    use crate::installer::diagnostics::{InstallStage as Stage, diagnostic};
     use crate::registry_acl::{provision_registry_acl, registry_acl_ready};
     use std::ffi::{OsStr, OsString};
     use std::fs::File;
@@ -199,8 +200,9 @@ mod windows_impl {
         GetSecurityDescriptorDacl, GetTokenInformation, InitializeAcl,
         InitializeSecurityDescriptor, IsValidAcl, IsValidSid, PROTECTED_DACL_SECURITY_INFORMATION,
         PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED, SECURITY_DESCRIPTOR, SECURITY_MAX_SID_SIZE,
-        SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER, TokenSessionId, TokenUser,
-        WinBuiltinAdministratorsSid, WinLocalServiceSid, WinLocalSystemSid, WinNetworkServiceSid,
+        SetSecurityDescriptorControl, SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER,
+        TokenSessionId, TokenUser, WinBuiltinAdministratorsSid, WinLocalServiceSid,
+        WinLocalSystemSid, WinNetworkServiceSid,
     };
     use windows::Win32::Storage::FileSystem::{
         BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle, READ_CONTROL, WRITE_DAC,
@@ -223,6 +225,9 @@ mod windows_impl {
     use super::windows_helpers::{
         bounded_multi_wide, bounded_wide, is_error, map_native_error, wide_null,
     };
+    mod queries;
+    use queries::{query_service_configuration, read_service_security};
+
     const MAX_SECURITY_DESCRIPTOR_BYTES: usize = 65_536;
     const MAX_SERVICE_CONFIG_BYTES: usize = 65_536;
     const MAX_TOKEN_BYTES: usize = 4_096;
@@ -295,39 +300,63 @@ mod windows_impl {
         candidate: bool,
     ) -> Result<ManagerServiceAccessOutcome, NativeError> {
         let (expected_binary, expected_identity, expected_manager, expected_manager_identity) =
-            expected_package_binaries(candidate)?;
-        let manager_process = open_manager_process(command.manager_process_id())?;
-        validate_manager_process(
-            &manager_process,
-            command.manager_process_id(),
-            &expected_manager,
-            expected_manager_identity,
+            diagnostic(Stage::ManagerRuntime, expected_package_binaries(candidate))?;
+        let manager_process = diagnostic(
+            Stage::ManagerProcess,
+            open_manager_process(command.manager_process_id()),
         )?;
-        let manager_user_sid = manager_sid(&manager_process, command.manager_process_id())?;
-        let service = open_fixed_service()?;
-        let baseline = query_service_configuration(&service)?;
-        validate_service_configuration(&baseline, &expected_binary, expected_identity)?;
-        validate_existing_dacl(&read_service_security(&service)?)?;
+        diagnostic(
+            Stage::ManagerProcess,
+            validate_manager_process(
+                &manager_process,
+                command.manager_process_id(),
+                &expected_manager,
+                expected_manager_identity,
+            ),
+        )?;
+        let manager_user_sid = diagnostic(
+            Stage::ManagerUser,
+            manager_sid(&manager_process, command.manager_process_id()),
+        )?;
+        let service = diagnostic(Stage::ManagerConfiguration, open_fixed_service())?;
+        let baseline = diagnostic(
+            Stage::ManagerConfiguration,
+            query_service_configuration(&service),
+        )?;
+        diagnostic(
+            Stage::ManagerConfiguration,
+            validate_service_configuration(&baseline, &expected_binary, expected_identity),
+        )?;
+        diagnostic(
+            Stage::ManagerDacl,
+            (|| validate_existing_dacl(&read_service_security(&service)?))(),
+        )?;
 
         // The exact registry root is created with its final descriptor in one
         // kernel call before the paired service DACL changes. A newly created
         // empty root is rolled back unless every service/registry recheck passes.
         let registry_provisioning = match command.action() {
-            ManagerServiceAccessAction::Provision => Some(provision_registry_acl()?),
+            ManagerServiceAccessAction::Provision => Some(diagnostic(
+                Stage::ManagerRegistry,
+                provision_registry_acl(),
+            )?),
             ManagerServiceAccessAction::Verify | ManagerServiceAccessAction::Remove => {
                 if !registry_acl_ready() {
-                    return Err(NativeError::AccessDenied);
+                    return diagnostic(Stage::ManagerRegistry, Err(NativeError::AccessDenied));
                 }
                 None
             }
         };
 
         let include_manager = command.action() != ManagerServiceAccessAction::Remove;
-        let already_exact = exact_dacl_matches(&service, &manager_user_sid, include_manager)?;
+        let already_exact = diagnostic(
+            Stage::ManagerDacl,
+            exact_dacl_matches(&service, &manager_user_sid, include_manager),
+        )?;
         let outcome = match command.action() {
             ManagerServiceAccessAction::Verify => {
                 if !already_exact {
-                    return Err(NativeError::AccessDenied);
+                    return diagnostic(Stage::ManagerDacl, Err(NativeError::AccessDenied));
                 }
                 ManagerServiceAccessOutcome::Verified
             }
@@ -338,9 +367,15 @@ mod windows_impl {
                 ManagerServiceAccessOutcome::Removed
             }
             ManagerServiceAccessAction::Provision | ManagerServiceAccessAction::Remove => {
-                set_exact_dacl(&service, &manager_user_sid, include_manager)?;
-                if !exact_dacl_matches(&service, &manager_user_sid, include_manager)? {
-                    return Err(NativeError::AccessDenied);
+                diagnostic(
+                    Stage::ManagerDacl,
+                    set_exact_dacl(&service, &manager_user_sid, include_manager),
+                )?;
+                if !diagnostic(
+                    Stage::ManagerDacl,
+                    exact_dacl_matches(&service, &manager_user_sid, include_manager),
+                )? {
+                    return diagnostic(Stage::ManagerDacl, Err(NativeError::AccessDenied));
                 }
                 if include_manager {
                     ManagerServiceAccessOutcome::Changed
@@ -350,22 +385,31 @@ mod windows_impl {
             }
         };
 
-        let confirmed = query_service_configuration(&service)?;
-        validate_service_configuration(&confirmed, &expected_binary, expected_identity)?;
-        validate_manager_process(
-            &manager_process,
-            command.manager_process_id(),
-            &expected_manager,
-            expected_manager_identity,
+        let confirmed = diagnostic(
+            Stage::ManagerConfiguration,
+            query_service_configuration(&service),
+        )?;
+        diagnostic(
+            Stage::ManagerConfiguration,
+            validate_service_configuration(&confirmed, &expected_binary, expected_identity),
+        )?;
+        diagnostic(
+            Stage::ManagerProcess,
+            validate_manager_process(
+                &manager_process,
+                command.manager_process_id(),
+                &expected_manager,
+                expected_manager_identity,
+            ),
         )?;
         if baseline != confirmed
             || manager_sid(&manager_process, command.manager_process_id())?.bytes()
                 != manager_user_sid.bytes()
         {
-            return Err(NativeError::AccessDenied);
+            return diagnostic(Stage::ManagerRevalidation, Err(NativeError::AccessDenied));
         }
         if !registry_acl_ready() {
-            return Err(NativeError::AccessDenied);
+            return diagnostic(Stage::ManagerRegistry, Err(NativeError::AccessDenied));
         }
         if let Some(provisioning) = registry_provisioning {
             provisioning.commit();
@@ -708,41 +752,6 @@ mod windows_impl {
             .map_err(map_native_error)
     }
 
-    /// Queries one bounded service configuration with validated embedded pointers.
-    fn query_service_configuration(
-        service: &OwnedService,
-    ) -> Result<ServiceConfiguration, NativeError> {
-        let mut needed = 0_u32;
-        // SAFETY: null output with zero length is the documented sizing query.
-        let sizing = unsafe { QueryServiceConfigW(service.0, None, 0, &mut needed) };
-        if !is_error(&sizing, ERROR_INSUFFICIENT_BUFFER)
-            || !(size_of::<QUERY_SERVICE_CONFIGW>()..=MAX_SERVICE_CONFIG_BYTES)
-                .contains(&(needed as usize))
-        {
-            return Err(NativeError::Other);
-        }
-        let mut storage = vec![0_usize; (needed as usize).div_ceil(size_of::<usize>())];
-        let capacity = storage.len() * size_of::<usize>();
-        let pointer = storage.as_mut_ptr().cast::<QUERY_SERVICE_CONFIGW>();
-        // SAFETY: aligned storage is writable and remains live for pointer validation.
-        unsafe { QueryServiceConfigW(service.0, Some(pointer), capacity as u32, &mut needed) }
-            .map_err(map_native_error)?;
-        if !(size_of::<QUERY_SERVICE_CONFIGW>()..=capacity).contains(&(needed as usize)) {
-            return Err(NativeError::Other);
-        }
-        // SAFETY: successful query initialized the aligned leading configuration.
-        let config = unsafe { pointer.read() };
-        Ok(ServiceConfiguration {
-            service_type: config.dwServiceType.0,
-            start_type: config.dwStartType.0,
-            error_control: config.dwErrorControl.0,
-            binary_command: bounded_wide(&storage, needed as usize, config.lpBinaryPathName.0)?,
-            account: bounded_wide(&storage, needed as usize, config.lpServiceStartName.0)?,
-            dependencies: bounded_multi_wide(&storage, needed as usize, config.lpDependencies.0)?,
-            load_order_group: bounded_wide(&storage, needed as usize, config.lpLoadOrderGroup.0)?,
-        })
-    }
-
     /// Validates the immutable service identity and exact sibling binary file.
     fn validate_service_configuration(
         config: &ServiceConfiguration,
@@ -773,44 +782,6 @@ mod windows_impl {
             return Err(NativeError::AccessDenied);
         }
         Ok(())
-    }
-
-    /// Reads one bounded service security descriptor.
-    fn read_service_security(service: &OwnedService) -> Result<Vec<usize>, NativeError> {
-        let mut needed = 0_u32;
-        // SAFETY: null output with zero length is the documented sizing query.
-        let sizing = unsafe {
-            windows::Win32::System::Services::QueryServiceObjectSecurity(
-                service.0,
-                DACL_SECURITY_INFORMATION.0,
-                None,
-                0,
-                &mut needed,
-            )
-        };
-        if !is_error(&sizing, ERROR_INSUFFICIENT_BUFFER)
-            || !(size_of::<SECURITY_DESCRIPTOR>()..=MAX_SECURITY_DESCRIPTOR_BYTES)
-                .contains(&(needed as usize))
-        {
-            return Err(NativeError::Other);
-        }
-        let mut storage = vec![0_usize; (needed as usize).div_ceil(size_of::<usize>())];
-        let capacity = storage.len() * size_of::<usize>();
-        // SAFETY: aligned storage is writable for its bounded exact capacity.
-        unsafe {
-            windows::Win32::System::Services::QueryServiceObjectSecurity(
-                service.0,
-                DACL_SECURITY_INFORMATION.0,
-                Some(PSECURITY_DESCRIPTOR(storage.as_mut_ptr().cast())),
-                capacity as u32,
-                &mut needed,
-            )
-        }
-        .map_err(map_native_error)?;
-        if !(size_of::<SECURITY_DESCRIPTOR>()..=capacity).contains(&(needed as usize)) {
-            return Err(NativeError::Other);
-        }
-        Ok(storage)
     }
 
     /// Requires the existing service DACL to be present and structurally valid.
@@ -954,6 +925,14 @@ mod windows_impl {
         // SAFETY: descriptor and ACL remain live throughout the synchronous setter.
         unsafe { SetSecurityDescriptorDacl(descriptor_pointer, true, Some(acl), false) }
             .map_err(map_native_error)?;
+        // SetServiceObjectSecurity ignores unsupported security-information flags.
+        // Encode protection in the descriptor itself, matching the exact readback policy.
+        // https://learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-setserviceobjectsecurity
+        // https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-setsecuritydescriptorcontrol
+        unsafe {
+            SetSecurityDescriptorControl(descriptor_pointer, SE_DACL_PROTECTED, SE_DACL_PROTECTED)
+        }
+        .map_err(map_native_error)?;
         // SAFETY: service is the fixed query/WRITE_DAC handle and descriptor owns exact ACL.
         unsafe {
             SetServiceObjectSecurity(
@@ -990,4 +969,6 @@ mod windows_impl {
         // SAFETY: complete SID bytes are bounded inside live descriptor storage.
         Ok(unsafe { std::slice::from_raw_parts(address as *const u8, sid_length) })
     }
+    #[cfg(test)]
+    mod tests;
 }

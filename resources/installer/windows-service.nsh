@@ -175,6 +175,35 @@ ${StrStr}
   ${If} $R5 != ""
     StrCpy $R3 "runtime-history"
   ${EndIf}
+  ; Specific manager checkpoints override enclosing manager-access diagnostics.
+  ${StrStr} $R5 "$1" "phase=manager-runtime reason="
+  ${If} $R5 != ""
+    StrCpy $R3 "manager-runtime"
+  ${EndIf}
+  ${StrStr} $R5 "$1" "phase=manager-process reason="
+  ${If} $R5 != ""
+    StrCpy $R3 "manager-process"
+  ${EndIf}
+  ${StrStr} $R5 "$1" "phase=manager-user reason="
+  ${If} $R5 != ""
+    StrCpy $R3 "manager-user"
+  ${EndIf}
+  ${StrStr} $R5 "$1" "phase=manager-configuration reason="
+  ${If} $R5 != ""
+    StrCpy $R3 "manager-configuration"
+  ${EndIf}
+  ${StrStr} $R5 "$1" "phase=manager-dacl reason="
+  ${If} $R5 != ""
+    StrCpy $R3 "manager-dacl"
+  ${EndIf}
+  ${StrStr} $R5 "$1" "phase=manager-registry reason="
+  ${If} $R5 != ""
+    StrCpy $R3 "manager-registry"
+  ${EndIf}
+  ${StrStr} $R5 "$1" "phase=manager-revalidation reason="
+  ${If} $R5 != ""
+    StrCpy $R3 "manager-revalidation"
+  ${EndIf}
   !insertmacro OpenRDXFail "${STAGE}" "$0" "${MESSAGE} native-phase=$R3 native-reason=$R4"
 !macroend
 

@@ -52,6 +52,20 @@ pub(crate) enum InstallStage {
     RuntimeHistory,
     /// Sanitized manager-access checkpoint.
     ManagerAccess,
+    /// Sanitized manager runtime checkpoint.
+    ManagerRuntime,
+    /// Sanitized manager process checkpoint.
+    ManagerProcess,
+    /// Sanitized manager user checkpoint.
+    ManagerUser,
+    /// Sanitized manager configuration checkpoint.
+    ManagerConfiguration,
+    /// Sanitized manager dacl checkpoint.
+    ManagerDacl,
+    /// Sanitized manager registry checkpoint.
+    ManagerRegistry,
+    /// Sanitized manager revalidation checkpoint.
+    ManagerRevalidation,
     /// Sanitized device-access checkpoint.
     DeviceAccess,
     /// Sanitized commit-enrollment checkpoint.
@@ -85,6 +99,13 @@ impl InstallStage {
             Self::RuntimeArtifacts => "runtime-artifacts",
             Self::RuntimeHistory => "runtime-history",
             Self::ManagerAccess => "manager-access",
+            Self::ManagerRuntime => "manager-runtime",
+            Self::ManagerProcess => "manager-process",
+            Self::ManagerUser => "manager-user",
+            Self::ManagerConfiguration => "manager-configuration",
+            Self::ManagerDacl => "manager-dacl",
+            Self::ManagerRegistry => "manager-registry",
+            Self::ManagerRevalidation => "manager-revalidation",
             Self::DeviceAccess => "device-access",
             Self::CommitEnrollment => "commit-enrollment",
             Self::VerifyEnrollment => "verify-enrollment",
@@ -130,6 +151,24 @@ mod tests {
         ] {
             let message = failure(stage, NativeError::AccessDenied);
             assert!(message.starts_with("OpenRDX native failure: phase=runtime-"));
+            assert!(message.ends_with(" reason=AccessDenied"));
+            assert!(message.len() < 100);
+            assert_eq!(
+                diagnostic::<()>(stage, Err(NativeError::AccessDenied)),
+                Err(NativeError::AccessDenied)
+            );
+        }
+        for stage in [
+            InstallStage::ManagerRuntime,
+            InstallStage::ManagerProcess,
+            InstallStage::ManagerUser,
+            InstallStage::ManagerConfiguration,
+            InstallStage::ManagerDacl,
+            InstallStage::ManagerRegistry,
+            InstallStage::ManagerRevalidation,
+        ] {
+            let message = failure(stage, NativeError::AccessDenied);
+            assert!(message.starts_with("OpenRDX native failure: phase=manager-"));
             assert!(message.ends_with(" reason=AccessDenied"));
             assert!(message.len() < 100);
             assert_eq!(

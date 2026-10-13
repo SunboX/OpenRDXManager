@@ -65,6 +65,9 @@ jobs:
             - name: Verify Windows native security and installer policy
               if: matrix.platform == 'win'
               run: cargo test --manifest-path native/rdx-service/windows-native/Cargo.toml --locked
+            - name: Verify protected Windows service descriptor on disposable runner
+              if: matrix.platform == 'win'
+              run: cargo test --manifest-path native/rdx-service/windows-native/Cargo.toml --locked --lib service_acl::windows_impl::tests::native_service_setter_retains_exact_protected_dacl -- --ignored --exact --nocapture
             - name: Verify Windows PowerShell installer boundary
               if: matrix.platform == 'win'
               run: powershell -NoProfile -ExecutionPolicy Bypass -File native/rdx-service/windows-native/tests/installer_script_contract.ps1

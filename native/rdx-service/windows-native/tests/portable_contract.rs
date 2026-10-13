@@ -201,6 +201,7 @@ fn windows_boot_protection_source_contract_is_fail_closed() {
     assert!(source.contains("HostOperationOutcome::CompletionUnknown(error)"));
 }
 
+/// Requires final protected registry creation and readiness through sanitized diagnostics.
 #[test]
 fn registry_acl_is_created_final_and_gates_readiness() {
     let acl = include_str!("../src/registry_acl.rs");
@@ -214,6 +215,7 @@ fn registry_acl_is_created_final_and_gates_readiness() {
     assert!(acl.contains("RegQueryInfoKeyW"));
     assert!(acl.contains("rollback_new_empty_root"));
     assert!(readiness.contains("registry_acl_ready()"));
-    assert!(provisioning.contains("provision_registry_acl()?"));
+    assert!(provisioning.contains("provision_registry_acl()"));
+    assert!(provisioning.contains("Stage::ManagerRegistry"));
     assert!(provisioning.contains("registry_acl_ready()"));
 }
