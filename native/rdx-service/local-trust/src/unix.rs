@@ -83,13 +83,18 @@ pub fn verify_protected_directory(path: &Path) -> Result<(), TrustError> {
 /// This does not prove pathname/ancestor protection: callers must independently
 /// retain and verify their fixed namespace (for example a hardware/setup lease).
 pub fn verify_protected_descriptor(file: &File) -> Result<(), TrustError> {
-    let metadata = file.metadata()?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| syscall_error("retained descriptor metadata", error))?;
     if !metadata.is_file() {
         return Err(deny("protected descriptor is not a regular file"));
     }
     reject_hardlink(&metadata)?;
     check_protected(file, &metadata)?;
-    assert_same(&metadata, &file.metadata()?)
+    let current = file
+        .metadata()
+        .map_err(|error| syscall_error("retained descriptor metadata recheck", error))?;
+    assert_same(&metadata, &current)
 }
 
 /// Verify one protected helper outside the app using its enrolled digest/size.
@@ -212,6 +217,12 @@ pub fn verify_descriptor_acl(file: &File) -> Result<(), TrustError> {
     check_acl(file)
 }
 
+/// Label a captured original IO failure once, without rereading errno, retrying
+/// a syscall or including paths/content. The IO display retains its OS code.
+fn syscall_error(operation: &'static str, original: std::io::Error) -> TrustError {
+    TrustError(format!("{operation}: {original}"))
+}
+
 /// Admit only the OS-standard /Applications admin-write ancestor. The admin
 /// group is already the installation authority; app objects still require
 /// root ownership and no group/other writes. This never admits foreign ACLs.
@@ -263,7 +274,7 @@ fn check_acl(file: &File) -> Result<(), TrustError> {
         if error.raw_os_error() == Some(libc::ENOENT) {
             return Ok(());
         }
-        return Err(error.into());
+        return Err(syscall_error("acl_get_fd_np", error));
     }
     let result = inspect_acl(acl);
     // acl_get_fd_np returns one allocation owned by this call.
@@ -288,11 +299,12 @@ fn inspect_acl(acl: *mut libc::c_void) -> Result<(), TrustError> {
             if error.raw_os_error() == Some(libc::EINVAL) {
                 return Ok(());
             }
-            return Err(error.into());
+            return Err(syscall_error("acl_get_entry", error));
         }
         let mut tag = 0;
         if unsafe { acl_get_tag_type(entry, &mut tag) } != 0 {
-            return Err(std::io::Error::last_os_error().into());
+            let original = std::io::Error::last_os_error();
+            return Err(syscall_error("acl_get_tag_type", original));
         }
         if tag != 2 {
             return Err(deny("protected object has an extended allow ACL"));
@@ -329,6 +341,16 @@ use std::os::unix::ffi::OsStrExt;
 mod tests {
     use super::*;
 
+    #[test]
+    /// A diagnostic label preserves the captured original failure and OS code.
+    fn operation_label_preserves_original_error() {
+        let original = std::io::Error::from_raw_os_error(libc::EINVAL);
+        let text = original.to_string();
+        let error = syscall_error("acl_get_fd_np", original);
+        assert_eq!(error.to_string(), format!("acl_get_fd_np: {text}"));
+        assert!(error.to_string().contains("os error 22"));
+    }
+
     unsafe extern "C" {
         fn acl_from_text(text: *const libc::c_char) -> *mut libc::c_void;
         fn acl_set_fd(fd: libc::c_int, acl: *mut libc::c_void) -> libc::c_int;
@@ -357,7 +379,10 @@ mod tests {
             file.as_file(),
             c"!#acl 1\nuser:FFFFEEEE-DDDD-CCCC-BBBB-AAAA00000000:root:0:allow:write\n",
         );
-        assert!(check_acl(file.as_file()).is_err());
+        assert_eq!(
+            check_acl(file.as_file()).unwrap_err().to_string(),
+            "protected object has an extended allow ACL"
+        );
     }
 
     #[test]

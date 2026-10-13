@@ -215,3 +215,49 @@ fn native_runtime_preparation_accepts_packaged_payload_shape() {
     verify_runtime(&fixture.root, &parse_inventory(&bytes, "windows").unwrap()).unwrap();
     drop(pins);
 }
+
+/// Renews protected bootstrap history while retaining the same directory ancestors.
+#[test]
+fn native_runtime_history_renews_protected_first_install_intent() {
+    let root = Path::new(r"C:\ProgramData").join(format!(
+        "openrdx-history-fixture-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    create_protected_directory(&root).unwrap();
+    let fixture = Fixture { root, child: None };
+    let enrollment = fixture.root.join("LocalTrust");
+    create_protected_directory(&enrollment).unwrap();
+    write_policy_at(&enrollment, b"administrator-bootstrap-intent", "history")
+        .expect("bootstrap history creation");
+    write_policy_at(&enrollment, b"preflight-replacement", "history")
+        .expect("replacement before retained ancestors");
+    let sid = test_administrator_sid();
+    validate_runtime_acl(&evidence(&open(&fixture.root, false).unwrap()).unwrap())
+        .expect("parent validation");
+    protect(&fixture.root, &sid).expect("parent protection");
+    validate_runtime_acl(&evidence(&open(&enrollment, false).unwrap()).unwrap())
+        .expect("enrollment validation");
+    protect(&enrollment, &sid).expect("enrollment protection");
+    let _parents = ancestors(&enrollment).expect("history namespace ancestors");
+    assert!(
+        std::fs::rename(&enrollment, fixture.root.join("replacement")).is_err(),
+        "retained protected parent must prevent LocalTrust replacement"
+    );
+    write_pinned_policy_at(&enrollment, b"complete-final-runtime", "history")
+        .expect("final history publication");
+    assert_eq!(
+        std::fs::read(enrollment.join("history.json")).unwrap(),
+        b"complete-final-runtime"
+    );
+    assert!(!enrollment.join("history.new").exists());
+    let retained_history = open(&enrollment.join("history.json"), false).unwrap();
+    assert!(write_pinned_policy_at(&enrollment, b"rejected-replacement", "history").is_err());
+    assert_eq!(
+        std::fs::read(enrollment.join("history.json")).unwrap(),
+        b"complete-final-runtime"
+    );
+    assert!(!enrollment.join("history.new").exists());
+    drop(retained_history);
+    drop(_parents);
+}

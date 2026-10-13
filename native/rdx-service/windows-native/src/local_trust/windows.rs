@@ -525,7 +525,6 @@ pub(crate) fn prepare_runtime(administrator_sid: &str) -> Result<PreparedEnrollm
                 validate_runtime_acl(&evidence(&open(enrollment, false)?)?)?;
             }
             protect(enrollment, administrator_sid)?;
-            let _parents = ancestors(&enrollment.join("runtime.json"))?;
             write_policy_atomic(&bytes, "history", administrator_sid)?;
             Ok(())
         })(),
@@ -571,7 +570,15 @@ pub(super) fn write_policy_atomic(
         return Err(NativeError::InvalidRequest);
     }
     let enrollment = Path::new(LOCAL_ENROLLMENT_ROOT);
-    let _parents = ancestors(&enrollment.join(format!("{name}.json")))?;
+    write_pinned_policy_at(enrollment, bytes, name)
+}
+/// Pins the protected parent namespace while permitting atomic child-file replacement.
+/// A read-only lease on the enrollment directory itself blocks MoveFileExW. Its
+/// canonical ACL is checked by the writer; the retained parent prevents directory
+/// replacement without broadening any runtime or history-file sharing flags.
+/// Rename API: https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw
+fn write_pinned_policy_at(enrollment: &Path, bytes: &[u8], name: &str) -> Result<(), NativeError> {
+    let _parents = ancestors(enrollment)?;
     write_policy_at(enrollment, bytes, name)
 }
 /// Atomic writer shared with native filesystem fixtures; production selects its fixed parent.
@@ -580,7 +587,10 @@ pub(super) fn write_policy_at(
     bytes: &[u8],
     name: &str,
 ) -> Result<(), NativeError> {
-    validate_runtime_acl(&evidence(&open(enrollment, false)?)?)?;
+    let directory = open(enrollment, false)?;
+    validate_runtime_acl(&evidence(&directory)?)?;
+    let directory_identity = file_identity(&directory)?;
+    drop(directory);
     let destination = enrollment.join(format!("{name}.json"));
     if destination.exists() {
         validate_runtime_acl(&evidence(&open(&destination, false)?)?)?;
@@ -634,6 +644,14 @@ pub(super) fn write_policy_at(
     })();
     drop(output);
     let result = result.and_then(|()| {
+        // Reprove the canonical directory and retained namespace identity immediately
+        // before publication, then close its conflicting read lease for the rename.
+        let directory = open(enrollment, false)?;
+        validate_runtime_acl(&evidence(&directory)?)?;
+        if file_identity(&directory)? != directory_identity {
+            return Err(NativeError::AccessDenied);
+        }
+        drop(directory);
         unsafe {
             MoveFileExW(
                 PCWSTR(from.as_ptr()),

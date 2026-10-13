@@ -26,6 +26,10 @@ use openrdx_macos_local_install::namespace::{Registration, quiesce_plan, removal
 const MAX_TRANSACTION: Duration = Duration::from_secs(600);
 const MAX_PREPARATION_ERROR_BYTES: usize = 1024;
 
+#[cfg(test)]
+#[path = "postfork_tests.rs"]
+mod postfork_tests;
+
 /// Own one validated kernel flock; releasing the handle releases this exact lease.
 struct Lease(File);
 

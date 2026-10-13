@@ -6,6 +6,8 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 publish = false
+[features]
+postfork-diagnostic = []
 [dependencies]
 libc = "0.2.180"
 rdx-local-trust = { path = "../../rdx-service/local-trust" }
@@ -15,3 +17,7 @@ tempfile = "3.23.0"
 [[bin]]
 name = "openrdx-local-install"
 path = "src/main.rs"
+[[bin]]
+name = "openrdx-postfork-diagnostic"
+path = "diagnostics/postfork.rs"
+required-features = ["postfork-diagnostic"]
