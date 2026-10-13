@@ -46,6 +46,20 @@ static bool accept_signed_proof(void *context) { (*(int *)context) += 100; retur
 
 /** Authenticate the actual retained socketpair against this ad-hoc sealed test generation. */
 int main(void) {
+    const char *local = "identifier \"com.openrdx.manager\" and cdhash H\"0123456789abcdef0123456789abcdef01234567\"";
+    const char *signed_policy = "identifier \"com.openrdx.manager\" and anchor apple generic and certificate leaf[subject.OU] = \"ABCD123456\"";
+    if (strcmp(rdx_macos_endpoint_path(RDX_INSTALLATION_LOCAL), "/var/run/openrdx-hardware-local.sock") != 0 ||
+        strcmp(rdx_macos_endpoint_path(RDX_INSTALLATION_SIGNED), "/var/run/openrdx-hardware.sock") != 0 ||
+        rdx_macos_endpoint_path(RDX_INSTALLATION_DENIED) != NULL ||
+        rdx_macos_requirement_installation_mode(local) != RDX_INSTALLATION_LOCAL ||
+        rdx_macos_requirement_installation_mode(signed_policy) != RDX_INSTALLATION_SIGNED ||
+        rdx_macos_requirement_installation_mode("identifier \"com.openrdx.manager\" and cdhash H\"0000\" or true") != RDX_INSTALLATION_DENIED ||
+        rdx_macos_requirement_installation_mode("identifier \"com.openrdx.manager\" and anchor apple generic and certificate leaf[subject.OU] = \"abcd123456\"") != RDX_INSTALLATION_DENIED) { return 39; }
+    if (!rdx_macos_test_listener_mode_address_is_valid(RDX_INSTALLATION_LOCAL, "/var/run/openrdx-hardware-local.sock") ||
+        rdx_macos_test_listener_mode_address_is_valid(RDX_INSTALLATION_LOCAL, "/var/run/openrdx-hardware.sock") ||
+        !rdx_macos_test_listener_mode_address_is_valid(RDX_INSTALLATION_SIGNED, "/var/run/openrdx-hardware.sock") ||
+        rdx_macos_test_listener_mode_address_is_valid(RDX_INSTALLATION_SIGNED, "/var/run/openrdx-hardware-local.sock") ||
+        rdx_macos_test_listener_mode_address_is_valid(RDX_INSTALLATION_DENIED, "/var/run/com.apple.launchd.Pm7rWcU5b7/Listener")) { return 40; }
     const int acl_result = filesystem_acl_test();
     if (acl_result != 0) { (void)fprintf(stderr, "native ACL test failed: %d\n", acl_result); return acl_result; }
     // Mode selection cannot use missing local hashes as a reason to enter the

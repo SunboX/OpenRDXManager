@@ -18,6 +18,18 @@ test('both macOS socket registrations give the authenticated console user staff 
     }
 })
 
+test('local installer and CI target their own label while signed registration remains separate', async () => {
+    const local = await readFile(new URL('../resources/installer/macos/com.openrdx.hardware.plist', import.meta.url), 'utf8')
+    const signed = await readFile(new URL('../native/rdx-service/resources/macos/com.openrdx.hardware.plist', import.meta.url), 'utf8')
+    const gate = await readFile(new URL('../scripts/verify-macos-installation.sh', import.meta.url), 'utf8')
+    assert.match(local, /<key>Label<\/key>\s*<string>com\.openrdx\.hardware\.local<\/string>/u)
+    assert.match(local, /<key>SockPathName<\/key>\s*<string>\/var\/run\/openrdx-hardware-local\.sock<\/string>/u)
+    assert.match(signed, /<key>Label<\/key>\s*<string>com\.openrdx\.hardware<\/string>/u)
+    assert.match(signed, /<key>SockPathName<\/key>\s*<string>\/var\/run\/openrdx-hardware\.sock<\/string>/u)
+    assert.match(gate, /launchctl print system\/com\.openrdx\.hardware\.local/u)
+    assert.doesNotMatch(gate, /launchctl print system\/com\.openrdx\.hardware(?:\s|$)/u)
+})
+
 /**
  * Resolve one checked-in package script without depending on the working directory.
  * @param {string} name Checked-in script basename.

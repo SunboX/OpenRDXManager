@@ -89,11 +89,20 @@ bool rdx_macos_test_socket_owner_mode_is_protected(uint32_t uid, uint32_t gid, u
 }
 #endif
 
-bool rdx_macos_endpoint_path_is_protected(void) {
+const char *rdx_macos_endpoint_path(rdx_macos_installation_mode mode) {
+    if (mode == RDX_INSTALLATION_LOCAL) { return "/var/run/openrdx-hardware-local.sock"; }
+    if (mode == RDX_INSTALLATION_SIGNED) { return "/var/run/openrdx-hardware.sock"; }
+    return NULL;
+}
+
+bool rdx_macos_endpoint_path_is_protected(rdx_macos_installation_mode mode) {
+    const char *path = mode == RDX_INSTALLATION_LOCAL ? "/private/var/run/openrdx-hardware-local.sock" :
+        mode == RDX_INSTALLATION_SIGNED ? "/private/var/run/openrdx-hardware.sock" : NULL;
+    if (path == NULL) { return false; }
     if (!rdx_macos_run_directory_is_protected()) { return false; }
     struct stat status;
-    return lstat("/private/var/run/openrdx-hardware.sock", &status) == 0 &&
-        S_ISSOCK(status.st_mode) && rdx_socket_owner_mode_is_protected(status.st_uid, status.st_gid, status.st_mode) && rdx_acl_is_empty("/private/var/run/openrdx-hardware.sock");
+    return lstat(path, &status) == 0 &&
+        S_ISSOCK(status.st_mode) && rdx_socket_owner_mode_is_protected(status.st_uid, status.st_gid, status.st_mode) && rdx_acl_is_empty(path);
 }
 
 /** Sealed local metadata cannot be admitted through the signed server policy. */
@@ -299,6 +308,27 @@ static bool rdx_team_is_valid(const char *team) {
         if (!((team[index] >= 'A' && team[index] <= 'Z') || (team[index] >= '0' && team[index] <= '9'))) { return false; }
     }
     return true;
+}
+
+rdx_macos_installation_mode rdx_macos_requirement_installation_mode(const char *requirement) {
+    if (requirement == NULL) { return RDX_INSTALLATION_DENIED; }
+    const char *local = "identifier \"com.openrdx.manager\" and cdhash H\"";
+    const size_t local_length = strlen(local);
+    if (strlen(requirement) == local_length + 41 && strncmp(requirement, local, local_length) == 0 &&
+        requirement[local_length + 40] == '"') {
+        for (size_t index = 0; index < 40; index += 1) {
+            const char byte = requirement[local_length + index];
+            if (!((byte >= '0' && byte <= '9') || (byte >= 'a' && byte <= 'f'))) { return RDX_INSTALLATION_DENIED; }
+        }
+        return RDX_INSTALLATION_LOCAL;
+    }
+    const char *signed_prefix = "identifier \"com.openrdx.manager\" and anchor apple generic and certificate leaf[subject.OU] = \"";
+    const size_t signed_length = strlen(signed_prefix);
+    if (strlen(requirement) != signed_length + 11 || strncmp(requirement, signed_prefix, signed_length) != 0 ||
+        requirement[signed_length + 10] != '"') { return RDX_INSTALLATION_DENIED; }
+    char team[11];
+    memcpy(team, requirement + signed_length, 10); team[10] = '\0';
+    return rdx_team_is_valid(team) ? RDX_INSTALLATION_SIGNED : RDX_INSTALLATION_DENIED;
 }
 
 /** A local marker is authoritative selection even when a team is compiled in. */

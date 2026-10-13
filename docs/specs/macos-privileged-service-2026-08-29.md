@@ -5,6 +5,10 @@
 
 Historical design. This records the requirements and approach at the stated date; it does not establish current completion or hardware acceptance. See [verification](../verification/README.md) for recorded results.
 
+The signing and shared endpoint requirements below describe the original signed
+mode. The [locally trusted installation specification](../specs/locally-trusted-installation-2026-10-12.md)
+defines the later installer mode with its separate fixed service label and socket.
+
 ## Goal
 
 Make the packaged Electron application discover and control the connected RDX

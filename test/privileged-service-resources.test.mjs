@@ -131,6 +131,9 @@ test('Both macOS authenticated helpers avoid Background I/O throttling without c
         assert.match(policy, /<key>SockPathOwner<\/key>\s*<integer>0<\/integer>/)
         assert.match(policy, /<key>SockPathGroup<\/key>\s*<integer>20<\/integer>/)
         assert.match(policy, /<key>SockPathMode<\/key>\s*<integer>432<\/integer>/)
-        assert.match(policy, /<string>\/var\/run\/openrdx-hardware\.sock<\/string>/)
     }
+    assert.match(policies[0], /<key>Label<\/key>\s*<string>com\.openrdx\.hardware<\/string>/)
+    assert.match(policies[0], /<string>\/var\/run\/openrdx-hardware\.sock<\/string>/)
+    assert.match(policies[1], /<key>Label<\/key>\s*<string>com\.openrdx\.hardware\.local<\/string>/)
+    assert.match(policies[1], /<string>\/var\/run\/openrdx-hardware-local\.sock<\/string>/)
 })

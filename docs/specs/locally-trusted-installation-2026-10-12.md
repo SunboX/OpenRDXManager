@@ -120,8 +120,13 @@ Add an unsigned `.pkg` installer for the local mode. Install the complete,
 ad-hoc-sealed app at `/Applications/OpenRDXManager.app`, protected against
 ordinary-user modification, and the helper at a fixed protected system path.
 Install a root-owned launch daemon under `/Library/LaunchDaemons` with absolute
-helper paths and the existing launchd socket contract. Package setup registers
-it using the administrator-authorized system installation path. Do not assume
+helper paths. The local service uses the fixed label `com.openrdx.hardware.local`
+and socket `/var/run/openrdx-hardware-local.sock`; its standalone plist remains
+`/Library/LaunchDaemons/com.openrdx.hardware.plist`. The separately signed route
+retains `com.openrdx.hardware` and `/var/run/openrdx-hardware.sock`. Both routes
+retain strict protected socket and authenticated peer checks, and share the
+existing hardware mutation lease. Package setup registers the local service
+using the administrator-authorized system installation path. Do not assume
 ad-hoc signing works through the existing SMAppService registration flow.
 
 Store bounded root-owned enrollment under
@@ -140,9 +145,12 @@ Node socket transport does not perform this server-identity verification.
 
 The local-mode UI displays installed service status and directs missing or
 broken enrollment to the package installer. Keep the existing signed
-SMAppService mode distinct; do not register both modes for the same service.
-Migration must identify and retire the previous registration before installing
-the replacement. Respect OS denial and background-service controls.
+SMAppService mode distinct; each mode owns its separate registration and socket.
+An upgrade may retire a previous local registration under the old label only
+after protected historical ownership and exact standalone path/program checks,
+while retaining the setup and hardware leases. Preserve legacy signed or foreign
+registrations at the old label. A foreign registration at the new local label
+still blocks setup. Respect OS denial and background-service controls.
 
 Keep ad-hoc signing for executable seals. Evaluate hardened runtime and
 entitlements against Electron, its native addons and both architectures; do not

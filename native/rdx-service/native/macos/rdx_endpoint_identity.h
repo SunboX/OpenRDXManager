@@ -32,6 +32,13 @@ bool rdx_macos_current_process_is_installed_manager(void);
 bool rdx_macos_current_manager_matches(const char *requirement_text);
 /** Closed sealed installation mode: denied, explicit local, or compiled Apple team. */
 typedef enum { RDX_INSTALLATION_DENIED = 0, RDX_INSTALLATION_LOCAL = 1, RDX_INSTALLATION_SIGNED = 2 } rdx_macos_installation_mode;
+/** Fixed namespace selected only after successful policy verification; denied has no endpoint. */
+const char *rdx_macos_endpoint_path(rdx_macos_installation_mode mode);
+/** Classifies only canonical protected server requirements; grants no identity authority. */
+rdx_macos_installation_mode rdx_macos_requirement_installation_mode(const char *requirement);
+#if defined(RDX_MACOS_ENDPOINT_TEST_HOOKS)
+bool rdx_macos_test_listener_mode_address_is_valid(rdx_macos_installation_mode mode, const char *address);
+#endif
 rdx_macos_installation_mode rdx_macos_current_installation_mode(void);
 /** Internal native verifier dispatch: local failures cannot invoke signed proof. */
 typedef bool (*rdx_macos_policy_verifier)(void *context);
@@ -42,7 +49,7 @@ bool rdx_macos_signed_helper_requirement(char *output, uint32_t capacity);
 /** Verifies canonical retained-lease ancestor policy without requiring a socket. */
 bool rdx_macos_run_directory_is_protected(void);
 /** Checks root ownership, fixed endpoint address/mode and restrictive socket-parent ACLs. */
-bool rdx_macos_endpoint_path_is_protected(void);
+bool rdx_macos_endpoint_path_is_protected(rdx_macos_installation_mode mode);
 #if defined(RDX_MACOS_ENDPOINT_TEST_HOOKS)
 /** Test-only ACL predicate; never exposed by the production addon. */
 bool rdx_macos_test_path_acl_is_empty(const char *path);

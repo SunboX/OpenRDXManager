@@ -324,7 +324,10 @@ unsafe extern "C" {
         timeout_ms: u32,
         output: *mut *mut HostOperationResult,
     ) -> u32;
-    pub(crate) fn rdx_macos_activate_launchd_listener(listener: *mut std::ffi::c_int) -> u32;
+    pub(crate) fn rdx_macos_activate_launchd_listener(
+        requirement: *const std::ffi::c_char,
+        listener: *mut std::ffi::c_int,
+    ) -> u32;
     pub(crate) fn rdx_macos_accept_launchd_manager_from_listener(
         listener: std::ffi::c_int,
         requirement_text: *const std::ffi::c_char,

@@ -27,6 +27,7 @@ import { createMcpEventPublisher } from './main/mcp/application-integration.mjs'
 import { scheduleAfterMcpResponse } from './main/mcp/response-actions.mjs'
 import { resolveStartupLanguage, SettingsService } from './main/settings-service.mjs'
 import { ShutdownController } from './main/shutdown-controller.mjs'
+import { StartupFailureExitController } from './main/startup-failure-exit.mjs'
 import { containBrokenConsolePipes } from './main/process-output.mjs'
 import { assertAuthenticatedServiceReadiness, attachSmokeReadinessListeners, getServiceReadinessFailureReason, resolveSmokeReadinessTimeout, SmokeReadinessError, SmokeReadinessGate } from './main/smoke-readiness.mjs'
 import { createSupportRuntimeServices, runStartupUpdateCheck } from './main/support-runtime.mjs'
@@ -57,6 +58,13 @@ let desktopLifecycle = null
 let trayController = null
 let traySelectedDeviceId = null
 let privilegedServiceController = null
+const startupFailureExit = new StartupFailureExitController({
+    app,
+    /** @returns {object} Current ownership guard, including unresolved runtime recovery. */
+    getShutdownPolicy() {
+        return serviceRuntime === null ? { allowed: true } : serviceRuntime.coordinator.getShutdownPolicy()
+    }
+})
 let desktopTranslator = createTranslator(englishCatalog, englishCatalog)
 const smokeReadiness = isSmokeTest ? new SmokeReadinessGate({ timeoutMs: resolveSmokeReadinessTimeout({ platform: process.platform, isPackaged: isPackagedRuntime, serviceAuthentication: isServiceAuthenticationTest }) }) : null
 let smokeWebContents = null
@@ -569,6 +577,13 @@ function handleBeforeQuit(event) {
 
 app.on('before-quit', handleBeforeQuit)
 
+/** @param {object} event - Final Electron quit event. @returns {void} Preserves failed startup status after approved teardown. */
+function handleWillQuit(event) {
+    startupFailureExit.handleWillQuit(event)
+}
+
+app.on('will-quit', handleWillQuit)
+
 /** @returns {Promise<void>} Closes MCP protocol access before the owned native runtime during approved shutdown. */
 async function stopApplicationRuntime() {
     try {
@@ -598,8 +613,7 @@ async function handleStartupFailure(_error) {
     }
     const reason = _error instanceof SmokeReadinessError ? `: ${_error.code}` : ''
     console.error(`Failed to start OpenRDXManager${reason}`)
-    process.exitCode = 1
-    app.quit()
+    startupFailureExit.requestFailure()
 }
 
 /** @returns {Promise<void>} Owns the detached Electron startup task and awaits its failure cleanup. */

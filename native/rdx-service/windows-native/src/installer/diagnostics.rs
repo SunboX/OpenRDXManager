@@ -34,6 +34,22 @@ pub(crate) enum InstallStage {
     ServiceSid,
     /// Sanitized installed-runtime checkpoint.
     InstalledRuntime,
+    /// Sanitized installed runtime ancestors checkpoint.
+    RuntimeAncestors,
+    /// Sanitized installed runtime open checkpoint.
+    RuntimeOpen,
+    /// Sanitized installed runtime protection checkpoint.
+    RuntimeProtection,
+    /// Sanitized installed runtime pinning checkpoint.
+    RuntimePinning,
+    /// Sanitized installed runtime manifest checkpoint.
+    RuntimeManifest,
+    /// Sanitized installed runtime inventory checkpoint.
+    RuntimeInventory,
+    /// Sanitized installed runtime artifacts checkpoint.
+    RuntimeArtifacts,
+    /// Sanitized installed runtime history checkpoint.
+    RuntimeHistory,
     /// Sanitized manager-access checkpoint.
     ManagerAccess,
     /// Sanitized device-access checkpoint.
@@ -60,6 +76,14 @@ impl InstallStage {
             Self::ServiceQuiescence => "service-quiescence",
             Self::ServiceSid => "service-sid",
             Self::InstalledRuntime => "installed-runtime",
+            Self::RuntimeAncestors => "runtime-ancestors",
+            Self::RuntimeOpen => "runtime-open",
+            Self::RuntimeProtection => "runtime-protection",
+            Self::RuntimePinning => "runtime-pinning",
+            Self::RuntimeManifest => "runtime-manifest",
+            Self::RuntimeInventory => "runtime-inventory",
+            Self::RuntimeArtifacts => "runtime-artifacts",
+            Self::RuntimeHistory => "runtime-history",
             Self::ManagerAccess => "manager-access",
             Self::DeviceAccess => "device-access",
             Self::CommitEnrollment => "commit-enrollment",
@@ -94,6 +118,25 @@ mod tests {
             failure(InstallStage::IncomingSource, NativeError::AccessDenied),
             "OpenRDX native failure: phase=incoming-source reason=AccessDenied"
         );
+        for stage in [
+            InstallStage::RuntimeAncestors,
+            InstallStage::RuntimeOpen,
+            InstallStage::RuntimeProtection,
+            InstallStage::RuntimePinning,
+            InstallStage::RuntimeManifest,
+            InstallStage::RuntimeInventory,
+            InstallStage::RuntimeArtifacts,
+            InstallStage::RuntimeHistory,
+        ] {
+            let message = failure(stage, NativeError::AccessDenied);
+            assert!(message.starts_with("OpenRDX native failure: phase=runtime-"));
+            assert!(message.ends_with(" reason=AccessDenied"));
+            assert!(message.len() < 100);
+            assert_eq!(
+                diagnostic::<()>(stage, Err(NativeError::AccessDenied)),
+                Err(NativeError::AccessDenied)
+            );
+        }
         assert_eq!(diagnostic(InstallStage::InstalledRuntime, Ok(7)), Ok(7));
         assert_eq!(
             diagnostic::<()>(InstallStage::ManagerAccess, Err(NativeError::Busy)),

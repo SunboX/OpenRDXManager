@@ -13,6 +13,10 @@ Historical plan. This records the requirements and approach at the stated date; 
 
 **Spec:** `docs/specs/macos-privileged-service-2026-08-29.md`
 
+The signing and shared endpoint requirements below describe the original signed
+mode. The [locally trusted installation specification](../specs/locally-trusted-installation-2026-10-12.md)
+defines the later installer mode with its separate fixed service label and socket.
+
 ## Constraints
 
 - Work on `main` because the user explicitly rejected an isolated worktree.

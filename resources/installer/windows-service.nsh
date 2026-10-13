@@ -142,6 +142,39 @@ ${StrStr}
   ${If} $R5 != ""
     StrCpy $R3 "verify-enrollment"
   ${EndIf}
+  ; Specific runtime checkpoints override their enclosing installed-runtime token.
+  ${StrStr} $R5 "$1" "phase=runtime-ancestors reason="
+  ${If} $R5 != ""
+    StrCpy $R3 "runtime-ancestors"
+  ${EndIf}
+  ${StrStr} $R5 "$1" "phase=runtime-open reason="
+  ${If} $R5 != ""
+    StrCpy $R3 "runtime-open"
+  ${EndIf}
+  ${StrStr} $R5 "$1" "phase=runtime-protection reason="
+  ${If} $R5 != ""
+    StrCpy $R3 "runtime-protection"
+  ${EndIf}
+  ${StrStr} $R5 "$1" "phase=runtime-pinning reason="
+  ${If} $R5 != ""
+    StrCpy $R3 "runtime-pinning"
+  ${EndIf}
+  ${StrStr} $R5 "$1" "phase=runtime-manifest reason="
+  ${If} $R5 != ""
+    StrCpy $R3 "runtime-manifest"
+  ${EndIf}
+  ${StrStr} $R5 "$1" "phase=runtime-inventory reason="
+  ${If} $R5 != ""
+    StrCpy $R3 "runtime-inventory"
+  ${EndIf}
+  ${StrStr} $R5 "$1" "phase=runtime-artifacts reason="
+  ${If} $R5 != ""
+    StrCpy $R3 "runtime-artifacts"
+  ${EndIf}
+  ${StrStr} $R5 "$1" "phase=runtime-history reason="
+  ${If} $R5 != ""
+    StrCpy $R3 "runtime-history"
+  ${EndIf}
   !insertmacro OpenRDXFail "${STAGE}" "$0" "${MESSAGE} native-phase=$R3 native-reason=$R4"
 !macroend
 

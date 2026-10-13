@@ -32,7 +32,7 @@ function fixture() {
             }
         })
     })
-    const socket = connect({ path: '/var/run/openrdx-hardware.sock' })
+    const socket = connect({ endpoint: 'openrdx-macos-native' })
     return {
         socket,
         callback,
@@ -75,7 +75,7 @@ test('macOS native adapter closes on early data and never admits a late ready', 
 
 test('macOS native connector refuses caller paths and identity policy before addon load', () => {
     const connect = createMacOsNativeEndpointConnector({ addonPath: join(process.cwd(), 'missing.node') })
-    for (const options of [{ path: '/tmp/spoofed.sock' }, { path: '/var/run/openrdx-hardware.sock', requirement: 'true' }, { path: '/var/run/openrdx-hardware.sock', expectedExecutable: '/tmp/helper' }]) {
+    for (const options of [{ path: '/tmp/spoofed.sock' }, { path: '/var/run/openrdx-hardware.sock' }, { path: '/var/run/openrdx-hardware-local.sock' }, { endpoint: 'openrdx-macos-native', requirement: 'true' }, { endpoint: 'openrdx-macos-native', expectedExecutable: '/tmp/helper' }, { endpoint: 'openrdx-macos-native', mode: 'signed' }]) {
         assert.throws(() => connect(options), /macos-client-endpoint-invalid/u)
     }
 })

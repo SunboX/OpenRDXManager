@@ -205,7 +205,7 @@ test('packaged production selects the authenticated privileged endpoint without 
 
     assert.equal(transport.supportsGracefulShutdown, true)
     await once(transport, 'ready')
-    assert.deepEqual(endpointConnections, [{ path: '/var/run/openrdx-hardware.sock' }])
+    assert.deepEqual(endpointConnections, [{ endpoint: 'openrdx-macos-native' }])
     assert.equal(spawnCount, 0)
     assert.deepEqual(await transport.close(), { confirmed: true })
 })

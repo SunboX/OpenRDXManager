@@ -76,3 +76,14 @@ test('NSIS Manager queries keep exact process predicates inside one Windows comm
         assert.match(query, /\$\$_\.ExecutablePath -eq '\$\{OPENRDX_FIXED_ROOT\}\\OpenRDXManager\.exe'/u)
     }
 })
+
+test('installed runtime diagnostics remain closed and select the specific native boundary', async () => {
+    const native = await readFile(new URL('../native/rdx-service/windows-native/src/installer/diagnostics.rs', import.meta.url), 'utf8')
+    const hook = await source('windows-service.nsh')
+    for (const phase of ['ancestors', 'open', 'protection', 'pinning', 'manifest', 'inventory', 'artifacts', 'history']) {
+        const token = `runtime-${phase}`
+        assert.ok(native.includes(`=> "${token}"`), token)
+        assert.ok(hook.includes(`"phase=${token} reason="`), token)
+        assert.ok(hook.indexOf(`"phase=${token} reason="`) > hook.indexOf('"phase=installed-runtime reason="'))
+    }
+})

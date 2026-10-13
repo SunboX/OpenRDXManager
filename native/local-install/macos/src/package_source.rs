@@ -135,7 +135,11 @@ fn recheck_directory(node: &SourceNode) -> Result<(), String> {
         ) {
             return Err(format!(
                 "package source directory is foreign, writable or an alias: {} (uid={}, gid={}, mode={:#o}, immediate={})",
-                node.path.display(), metadata.uid(), metadata.gid(), metadata.mode(), node.immediate
+                node.path.display(),
+                metadata.uid(),
+                metadata.gid(),
+                metadata.mode(),
+                node.immediate
             ));
         }
         if metadata.dev() != node.original.dev()

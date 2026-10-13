@@ -107,15 +107,15 @@ class MacOsNativeEndpointSocket extends EventEmitter {
 /**
  * Creates the production macOS Unix-socket connector backed by N-API.
  * @param {{addonPath: string, loadAddon?: Function}} options - Fixed packaged addon path and optional test loader.
- * @returns {(options: {path: string}) => MacOsNativeEndpointSocket} Narrow connector.
+ * @returns {(options: {endpoint: 'openrdx-macos-native'}) => MacOsNativeEndpointSocket} Logical native connector; the sealed mode owns path selection.
  */
 export function createMacOsNativeEndpointConnector(options) {
     if (options === null || typeof options !== 'object' || !isAbsolute(options.addonPath) || (options.loadAddon !== undefined && typeof options.loadAddon !== 'function')) {
         throw new TypeError('macos-client-addon-path-invalid')
     }
-    /** @param {{path: string}} connection - Fixed endpoint and service identity. @returns {MacOsNativeEndpointSocket} Owned native adapter. */
+    /** @param {{endpoint: string}} connection - Main-owned logical identifier, never a filesystem path or mode. @returns {MacOsNativeEndpointSocket} Owned native adapter. */
     function connect(connection) {
-        if (connection?.path !== '/var/run/openrdx-hardware.sock' || Object.keys(connection).some((key) => key !== 'path')) {
+        if (connection?.endpoint !== 'openrdx-macos-native' || Object.keys(connection).some((key) => key !== 'endpoint')) {
             throw new TypeError('macos-client-endpoint-invalid')
         }
         return new MacOsNativeEndpointSocket({ addonPath: options.addonPath, loadAddon: options.loadAddon })

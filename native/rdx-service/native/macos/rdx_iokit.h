@@ -330,7 +330,7 @@ rdx_macos_status rdx_macos_accept_launchd_manager(
     int *out_socket,
     uint32_t *out_user_id
 );
-rdx_macos_status rdx_macos_activate_launchd_listener(int *out_listener);
+rdx_macos_status rdx_macos_activate_launchd_listener(const char *requirement_text, int *out_listener);
 rdx_macos_status rdx_macos_accept_launchd_manager_from_listener(
     int listener,
     const char *requirement_text,

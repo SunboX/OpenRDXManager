@@ -6,6 +6,7 @@ use super::{
     LOCAL_ENROLLMENT_ROOT, LOCAL_RUNTIME_ROOT, RuntimeAce, RuntimeAclEvidence, validate_runtime_acl,
 };
 use crate::NativeError;
+use crate::installer::diagnostics::{InstallStage as Stage, diagnostic};
 use rdx_local_trust::{MAX_INVENTORY_BYTES, RuntimeInventory, parse_inventory, verify_runtime};
 use std::fs::File;
 use std::io::{Read, Write};
@@ -415,84 +416,120 @@ pub(super) fn create_protected_directory(path: &Path) -> Result<(), NativeError>
         .map_err(|_| NativeError::AccessDenied)
 }
 /// Protects final installer files and prepares complete enrollment without publishing it.
-pub(crate) fn prepare_runtime(administrator_sid: &str) -> Result<PreparedEnrollment, NativeError> {
-    let runtime = Path::new(LOCAL_RUNTIME_ROOT);
-    let _parents = ancestors(runtime)?;
+fn prepare_runtime_files(
+    runtime: &Path,
+    administrator_sid: &str,
+) -> Result<(Vec<File>, Vec<u8>), NativeError> {
+    let _parents = diagnostic(Stage::RuntimeAncestors, ancestors(runtime))?;
     let mut pending = vec![runtime.to_path_buf()];
     let mut count = 0;
     while let Some(path) = pending.pop() {
-        let info = evidence(&open(&path, false)?)?;
-        protect(&path, administrator_sid)?;
+        let info = diagnostic(Stage::RuntimeOpen, (|| evidence(&open(&path, false)?))())?;
+        diagnostic(Stage::RuntimeProtection, protect(&path, administrator_sid))?;
         if info.directory {
-            for entry in std::fs::read_dir(&path).map_err(|_| NativeError::AccessDenied)? {
+            for entry in diagnostic(
+                Stage::RuntimeOpen,
+                std::fs::read_dir(&path).map_err(|_| NativeError::AccessDenied),
+            )? {
                 count += 1;
                 if count > 40000 {
                     return Err(NativeError::ResourceLimit);
                 }
-                pending.push(entry.map_err(|_| NativeError::AccessDenied)?.path());
+                pending.push(
+                    diagnostic(
+                        Stage::RuntimeOpen,
+                        entry.map_err(|_| NativeError::AccessDenied),
+                    )?
+                    .path(),
+                );
             }
         }
     }
-    let mut pins = ancestors(runtime)?;
-    pin_tree(runtime, &mut pins)?;
-    let packaged = runtime.join("resources/local-trust/runtime.json");
-    let packaged_file = open(&packaged, false)?;
-    let mut bytes = Vec::new();
-    packaged_file
-        .take(MAX_INVENTORY_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| NativeError::AccessDenied)?;
-    let mut inventory =
-        parse_inventory(&bytes, "windows").map_err(|_| NativeError::AccessDenied)?;
-    verify_runtime(runtime, &inventory).map_err(|_| NativeError::AccessDenied)?;
+    let mut pins = diagnostic(Stage::RuntimeAncestors, ancestors(runtime))?;
+    diagnostic(Stage::RuntimePinning, pin_tree(runtime, &mut pins))?;
+    let mut inventory = diagnostic(
+        Stage::RuntimeManifest,
+        (|| {
+            let packaged = runtime.join("resources/local-trust/runtime.json");
+            let packaged_file = open(&packaged, false)?;
+            let mut bytes = Vec::new();
+            packaged_file
+                .take(MAX_INVENTORY_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|_| NativeError::AccessDenied)?;
+            parse_inventory(&bytes, "windows").map_err(|_| NativeError::AccessDenied)
+        })(),
+    )?;
+    diagnostic(
+        Stage::RuntimeInventory,
+        verify_runtime(runtime, &inventory).map_err(|_| NativeError::AccessDenied),
+    )?;
     // NSIS emits these fixed files after packaging. Administrator-approved setup
     // pins their final generated contents rather than leaving runtime exclusions.
-    for name in ["Uninstall OpenRDXManager.exe", "uninstallerIcon.ico"] {
-        let path = runtime.join(name);
-        if path.exists() && !inventory.files.iter().any(|file| file.path == name) {
-            use sha2::{Digest, Sha256};
-            let mut file = open(&path, false)?;
-            let size = file
-                .metadata()
-                .map_err(|_| NativeError::AccessDenied)?
-                .len();
-            let mut hasher = Sha256::new();
-            let mut buffer = [0u8; 65536];
-            loop {
-                let read = file
-                    .read(&mut buffer)
-                    .map_err(|_| NativeError::AccessDenied)?;
-                if read == 0 {
-                    break;
+    let bytes = diagnostic(
+        Stage::RuntimeArtifacts,
+        (|| {
+            for name in ["Uninstall OpenRDXManager.exe", "uninstallerIcon.ico"] {
+                let path = runtime.join(name);
+                if path.exists() && !inventory.files.iter().any(|file| file.path == name) {
+                    use sha2::{Digest, Sha256};
+                    let mut file = open(&path, false)?;
+                    let size = file
+                        .metadata()
+                        .map_err(|_| NativeError::AccessDenied)?
+                        .len();
+                    let mut hasher = Sha256::new();
+                    let mut buffer = [0u8; 65536];
+                    loop {
+                        let read = file
+                            .read(&mut buffer)
+                            .map_err(|_| NativeError::AccessDenied)?;
+                        if read == 0 {
+                            break;
+                        }
+                        hasher.update(&buffer[..read]);
+                    }
+                    inventory.files.push(rdx_local_trust::RuntimeFile {
+                        path: name.to_owned(),
+                        size,
+                        sha256: format!("{:x}", hasher.finalize()),
+                    });
                 }
-                hasher.update(&buffer[..read]);
             }
-            inventory.files.push(rdx_local_trust::RuntimeFile {
-                path: name.to_owned(),
-                size,
-                sha256: format!("{:x}", hasher.finalize()),
-            });
-        }
-    }
-    let bytes = serde_json::to_vec(&inventory).map_err(|_| NativeError::AccessDenied)?;
-    let inventory = parse_inventory(&bytes, "windows").map_err(|_| NativeError::AccessDenied)?;
-    verify_runtime(runtime, &inventory).map_err(|_| NativeError::AccessDenied)?;
-    let parent = PathBuf::from(r"C:\ProgramData\OpenRDXManager");
-    if !parent.exists() {
-        create_protected_directory(&parent)?;
-    } else {
-        validate_runtime_acl(&evidence(&open(&parent, false)?)?)?;
-    }
-    protect(&parent, administrator_sid)?;
-    let enrollment = Path::new(LOCAL_ENROLLMENT_ROOT);
-    if !enrollment.exists() {
-        create_protected_directory(enrollment)?;
-    } else {
-        validate_runtime_acl(&evidence(&open(enrollment, false)?)?)?;
-    }
-    protect(enrollment, administrator_sid)?;
-    let _parents = ancestors(&enrollment.join("runtime.json"))?;
-    write_policy_atomic(&bytes, "history", administrator_sid)?;
+            let bytes = serde_json::to_vec(&inventory).map_err(|_| NativeError::AccessDenied)?;
+            let inventory =
+                parse_inventory(&bytes, "windows").map_err(|_| NativeError::AccessDenied)?;
+            verify_runtime(runtime, &inventory).map_err(|_| NativeError::AccessDenied)?;
+            Ok(bytes)
+        })(),
+    )?;
+    Ok((pins, bytes))
+}
+/// Prepares the sole fixed runtime and records privileged installation history.
+pub(crate) fn prepare_runtime(administrator_sid: &str) -> Result<PreparedEnrollment, NativeError> {
+    let (pins, bytes) = prepare_runtime_files(Path::new(LOCAL_RUNTIME_ROOT), administrator_sid)?;
+    diagnostic(
+        Stage::RuntimeHistory,
+        (|| {
+            let parent = PathBuf::from(r"C:\ProgramData\OpenRDXManager");
+            if !parent.exists() {
+                create_protected_directory(&parent)?;
+            } else {
+                validate_runtime_acl(&evidence(&open(&parent, false)?)?)?;
+            }
+            protect(&parent, administrator_sid)?;
+            let enrollment = Path::new(LOCAL_ENROLLMENT_ROOT);
+            if !enrollment.exists() {
+                create_protected_directory(enrollment)?;
+            } else {
+                validate_runtime_acl(&evidence(&open(enrollment, false)?)?)?;
+            }
+            protect(enrollment, administrator_sid)?;
+            let _parents = ancestors(&enrollment.join("runtime.json"))?;
+            write_policy_atomic(&bytes, "history", administrator_sid)?;
+            Ok(())
+        })(),
+    )?;
     Ok(PreparedEnrollment { _pins: pins, bytes })
 }
 /// Publishes the prepared generation only after service and device policy checks succeed.
@@ -878,3 +915,6 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 }
+
+#[cfg(test)]
+mod installation_tests;

@@ -211,7 +211,11 @@ pub(super) fn fixed_command(program: &str, arguments: &[&str]) -> Result<String,
         return Err("system setup evidence exceeded its bound".into());
     }
     if !output.status.success() {
-        let status = output.status.code().map(|code| format!("exit={code}")).unwrap_or_else(|| output.status.to_string());
+        let status = output
+            .status
+            .code()
+            .map(|code| format!("exit={code}"))
+            .unwrap_or_else(|| output.status.to_string());
         // Diagnostic output is never identity evidence. Bound it and preserve
         // UTF-8 boundaries before passing it over the supervisor's private frame.
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -221,7 +225,12 @@ pub(super) fn fixed_command(program: &str, arguments: &[&str]) -> Result<String,
         }
         return Err(format!(
             "{program} rejected fixed setup action ({status}): {}{}; run the package installer to repair",
-            &stderr[..end], if end < stderr.len() { " [truncated]" } else { "" }
+            &stderr[..end],
+            if end < stderr.len() {
+                " [truncated]"
+            } else {
+                ""
+            }
         ));
     }
     let mut bytes = output.stdout;
@@ -247,8 +256,12 @@ pub(super) fn commit() -> Result<(), String> {
     let verification = verify_pending();
     let verified = verification.is_ok();
     if !openrdx_macos_local_install::commit_allowed(true, verified) {
-        let cause = verification.err().unwrap_or_else(|| "transaction was not prepared".into());
-        return Err(format!("pending generation failed complete protection/content/code verification: {cause}; access remains disabled"));
+        let cause = verification
+            .err()
+            .unwrap_or_else(|| "transaction was not prepared".into());
+        return Err(format!(
+            "pending generation failed complete protection/content/code verification: {cause}; access remains disabled"
+        ));
     }
     assert_candidate_namespace(&candidate, PENDING)?;
     openrdx_macos_local_install::make_verified_enrollment_readable(&candidate, verified)?;
@@ -288,7 +301,11 @@ mod tests {
     /// Real fixed-tool failure must retain both exit status and bounded stderr evidence.
     #[test]
     fn fixed_tool_failure_reports_exit_status_and_stderr() {
-        let error = fixed_command("/bin/sh", &["-c", "printf 'bootstrap fixture rejected' >&2; exit 7"]).unwrap_err();
+        let error = fixed_command(
+            "/bin/sh",
+            &["-c", "printf 'bootstrap fixture rejected' >&2; exit 7"],
+        )
+        .unwrap_err();
         assert!(error.contains("exit=7"), "{error}");
         assert!(error.contains("bootstrap fixture rejected"), "{error}");
     }
@@ -296,11 +313,13 @@ mod tests {
     /// Oversized stderr is truncated for diagnostics or refused at the full evidence bound.
     #[test]
     fn fixed_tool_failure_bounds_stderr_and_evidence() {
-        let error = fixed_command("/bin/sh", &["-c", "printf '%01025d' 1 >&2; exit 7"]).unwrap_err();
+        let error =
+            fixed_command("/bin/sh", &["-c", "printf '%01025d' 1 >&2; exit 7"]).unwrap_err();
         assert!(error.contains("exit=7"), "{error}");
         assert!(error.contains("[truncated]"), "{error}");
         assert!(error.len() < 1200);
-        let excessive = fixed_command("/bin/sh", &["-c", "printf '%066000d' 1 >&2; exit 7"]).unwrap_err();
+        let excessive =
+            fixed_command("/bin/sh", &["-c", "printf '%066000d' 1 >&2; exit 7"]).unwrap_err();
         assert_eq!(excessive, "system setup evidence exceeded its bound");
     }
 }

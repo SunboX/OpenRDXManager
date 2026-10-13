@@ -26,7 +26,7 @@ cleanup() {
         # Keep bounded native service evidence when installed authentication or
         # repair fails, before any test-owned restoration. This disposable CI
         # host has no physical device or application secrets.
-        sudo /bin/launchctl print system/com.openrdx.hardware || true
+        sudo /bin/launchctl print system/com.openrdx.hardware.local || true
         sudo /usr/bin/log show --last 5m --style compact --predicate 'process == "openrdx-hardware"' 2>/dev/null | /usr/bin/tail -n 100 || true
     fi
     if [[ "$restoration_required" == true ]]; then
@@ -59,10 +59,12 @@ npm run verify:packaged-app -- --installed --require-service
 # An identical portable copy must not inherit the installed path's authority.
 /usr/bin/ditto "$app" "$evidence/OpenRDXManager.app"
 if "$evidence/OpenRDXManager.app/Contents/MacOS/OpenRDXManager" --service-auth-test --user-data-dir="$evidence/copied-profile" > "$evidence/copied.log" 2>&1; then
-    echo 'An unenrolled portable copy authenticated to the service.' >&2
+    /usr/bin/tail -n 100 "$evidence/copied.log" >&2
+    echo 'The portable-copy authentication check exited successfully; expected a failed exit. Its log must establish whether authentication occurred.' >&2
     exit 1
 fi
 if /usr/bin/grep -q 'installed service authentication passed' "$evidence/copied.log"; then
+    /usr/bin/tail -n 100 "$evidence/copied.log" >&2
     echo 'A copied application emitted authenticated readiness.' >&2
     exit 1
 fi
@@ -88,7 +90,7 @@ sudo "$cli" verify
 npm run verify:packaged-app -- --installed --require-service
 sudo "$cli" remove
 [[ ! -e "$app" && ! -e '/Library/PrivilegedHelperTools/openrdx-hardware' && ! -e '/Library/LaunchDaemons/com.openrdx.hardware.plist' ]]
-if /bin/launchctl print system/com.openrdx.hardware > /dev/null 2>&1; then
+if /bin/launchctl print system/com.openrdx.hardware.local > /dev/null 2>&1; then
     echo 'The removed service remains registered.' >&2
     exit 1
 fi

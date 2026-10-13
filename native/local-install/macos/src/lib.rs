@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Fixed, administrator-only installation policy.
 
+pub mod namespace;
 pub mod removal;
 
 /// Parse one fixed action, rejecting arbitrary arguments.
@@ -40,17 +41,7 @@ pub fn commit_allowed(prepared: bool, verified: bool) -> bool {
 
 /// Require exact top-level launchd path/program evidence before owned bootout.
 pub fn registration_is_owned(evidence: &str) -> bool {
-    let paths: Vec<&str> = evidence
-        .lines()
-        .filter_map(|line| line.strip_prefix("\tpath = "))
-        .collect();
-    let programs: Vec<&str> = evidence
-        .lines()
-        .filter_map(|line| line.strip_prefix("\tprogram = "))
-        .collect();
-    evidence.starts_with("system/com.openrdx.hardware = {\n")
-        && paths == ["/Library/LaunchDaemons/com.openrdx.hardware.plist"]
-        && programs == ["/Library/PrivilegedHelperTools/openrdx-hardware"]
+    namespace::Registration::Local.is_owned(evidence)
 }
 
 /// Separate administrator replacement authority from runtime authentication.
@@ -128,7 +119,7 @@ mod tests {
     /// A coincident label does not make a legacy/user-owned registration removable.
     #[test]
     fn registered_label_requires_exact_system_daemon_and_program() {
-        let owned = "system/com.openrdx.hardware = {\n\tpath = /Library/LaunchDaemons/com.openrdx.hardware.plist\n\tprogram = /Library/PrivilegedHelperTools/openrdx-hardware\n}";
+        let owned = "system/com.openrdx.hardware.local = {\n\tpath = /Library/LaunchDaemons/com.openrdx.hardware.plist\n\tprogram = /Library/PrivilegedHelperTools/openrdx-hardware\n}";
         assert!(registration_is_owned(owned));
         assert!(!registration_is_owned(&owned.replace(
             "/Library/PrivilegedHelperTools/openrdx-hardware",

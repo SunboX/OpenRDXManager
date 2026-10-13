@@ -22,7 +22,6 @@ extern "C" bool rdx_macos_client_verified_hashes(unsigned char*, unsigned char*,
 extern "C" bool rdx_macos_client_verify_signed_runtime();
 extern "C" uint32_t rdx_macos_client_last_trust_stage();
 namespace {
-constexpr char kEndpoint[] = "/var/run/openrdx-hardware.sock";
 constexpr char kHelper[] = "/Library/PrivilegedHelperTools/openrdx-hardware";
 constexpr char kSignedHelper[] = "/Applications/OpenRDXManager.app/Contents/Library/LaunchServices/openrdx-hardware";
 constexpr size_t kMaxFrame = 1'048'576;
@@ -120,7 +119,7 @@ bool Wait(Connection& connection, short events, Clock::time_point deadline) {
     return false;
 }
 /** One selected mode's immutable helper policy; never caller-authored input. */
-struct PeerPolicy { std::string requirement; const char* helper = nullptr; };
+struct PeerPolicy { std::string requirement; const char* helper = nullptr; rdx_macos_installation_mode mode = RDX_INSTALLATION_DENIED; };
 /** Select sealed mode once, with no fallback after any enrollment/code failure. */
 bool VerifyInstalledPolicy(PeerPolicy& policy, bool local_only = false) {
     return rdx_macos_verify_selected_mode(rdx_macos_current_installation_mode(), local_only,
@@ -133,6 +132,7 @@ bool VerifyInstalledPolicy(PeerPolicy& policy, bool local_only = false) {
                 rdx_macos_current_installation_mode() != RDX_INSTALLATION_LOCAL) return false;
             selected.requirement = "identifier \"com.openrdx.hardware\" and cdhash H\"" + std::string(reinterpret_cast<char*>(helper_hash)) + "\"";
             selected.helper = kHelper;
+            selected.mode = RDX_INSTALLATION_LOCAL;
             return true;
         },
         [](void* raw) -> bool {
@@ -143,14 +143,17 @@ bool VerifyInstalledPolicy(PeerPolicy& policy, bool local_only = false) {
                 rdx_macos_current_installation_mode() != RDX_INSTALLATION_SIGNED) return false;
             selected.requirement = requirement;
             selected.helper = kSignedHelper;
+            selected.mode = RDX_INSTALLATION_SIGNED;
             return true;
         }, &policy);
 }
 /** Consume only this operation's verified policy; never repeat/cache it or reset its peer budget. */
 const char* OpenVerifiedEndpoint(Connection& connection, const PeerPolicy& policy, const openrdx::VerificationBudget& budget) {
     const auto deadline = budget.peer_deadline();
+    const char* endpoint = rdx_macos_endpoint_path(policy.mode);
+    if (endpoint == nullptr) return "service-identity-unverified";
     connection.proof_stage = "endpoint-protection";
-    if (!rdx_macos_endpoint_path_is_protected()) return "service-not-installed";
+    if (!rdx_macos_endpoint_path_is_protected(policy.mode)) return "service-not-installed";
     if (connection.cancelled.load() || Clock::now() >= deadline) return "service-exited";
     connection.proof_stage = "endpoint-open";
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -164,7 +167,7 @@ const char* OpenVerifiedEndpoint(Connection& connection, const PeerPolicy& polic
     if (setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof(enabled)) != 0) return "service-exited";
     sockaddr_un address{};
     address.sun_family = AF_UNIX;
-    std::strcpy(address.sun_path, kEndpoint);
+    std::strcpy(address.sun_path, endpoint);
     connection.proof_stage = "endpoint-connect";
     if (connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
         if (errno != EINPROGRESS) return errno == EACCES ? "insufficient-permission" : "service-not-installed";
@@ -364,7 +367,7 @@ void StatusExecute(napi_env, void* raw) {
             if (retained->cancelled.load()) continue;
             if (!retained->verified) { pending = true; continue; }
             uint32_t uid = 0;
-            task.status = retained->fd >= 0 && rdx_macos_endpoint_path_is_protected() &&
+            task.status = retained->fd >= 0 && rdx_macos_endpoint_path_is_protected(policy.mode) &&
                 rdx_macos_peer_identity_matches(retained->fd, policy.requirement.c_str(), policy.helper, 0, &uid) &&
                 budget.peer_pending(Clock::now(), retained->cancelled.load()) ? "enabled" : "repair-required";
             return;

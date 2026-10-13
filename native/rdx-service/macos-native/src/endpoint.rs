@@ -35,7 +35,8 @@ pub struct LaunchdEndpointContract {
     pub handshake_timeout_ms: u32,
 }
 
-/// Returns the target-independent launchd endpoint contract.
+/// Returns the signed compatibility namespace and shared launchd lifecycle bounds.
+/// Local service activation selects its separate fixed socket from verified policy.
 #[must_use]
 pub const fn launchd_endpoint_contract() -> LaunchdEndpointContract {
     LaunchdEndpointContract {
@@ -259,9 +260,13 @@ pub fn activate_launchd_manager_endpoint(
         let requirement =
             CString::new(designated_requirement).map_err(|_| NativeError::InvalidRequest)?;
         let mut listener = -1;
-        // SAFETY: output references one initialized scalar; C transfers sole
-        // listener ownership only on STATUS_OK and closes all failure paths.
-        let status = unsafe { crate::ffi::rdx_macos_activate_launchd_listener(&mut listener) };
+        // SAFETY: canonical requirement is owned and live, output references
+        // one initialized scalar; C selects only its fixed local/signed socket.
+        // C transfers sole listener ownership only on STATUS_OK and closes
+        // all failure paths.
+        let status = unsafe {
+            crate::ffi::rdx_macos_activate_launchd_listener(requirement.as_ptr(), &mut listener)
+        };
         if status != crate::ffi::STATUS_OK {
             return Err(crate::status_error(status));
         }

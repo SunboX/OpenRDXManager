@@ -22,7 +22,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#define RDX_ENDPOINT_PATH "/var/run/openrdx-hardware.sock"
 #define RDX_ACCEPT_TIMEOUT_MS 10000
 
 static void rdx_close_activated_sockets(int *sockets, size_t count) {
@@ -38,8 +37,10 @@ static void rdx_close_activated_sockets(int *sockets, size_t count) {
 }
 
 /** The kernel retains launchd's pre-rename bind name, not SockPathName's alias. */
-static bool rdx_listener_address_is_valid(const char *address) {
-    if (strcmp(address, RDX_ENDPOINT_PATH) == 0) { return true; }
+static bool rdx_listener_address_is_valid(const char *address, rdx_macos_installation_mode mode) {
+    const char *endpoint = rdx_macos_endpoint_path(mode);
+    if (endpoint == NULL) { return false; }
+    if (strcmp(address, endpoint) == 0) { return true; }
     const char *prefix = "/var/run/com.apple.launchd.";
     const size_t prefix_length = strlen(prefix);
     if (strncmp(address, prefix, prefix_length) != 0) { return false; }
@@ -60,7 +61,7 @@ static bool rdx_listener_state_is_valid(int family, int type, int options) {
 }
 
 /** Validate only a retained listening Unix stream returned by own-job activation. */
-static bool rdx_listener_descriptor_is_valid(int listener) {
+static bool rdx_listener_descriptor_is_valid(int listener, rdx_macos_installation_mode mode) {
     struct sockaddr_un address;
     socklen_t address_length = (socklen_t)sizeof(address);
     memset(&address, 0, sizeof(address));
@@ -71,7 +72,7 @@ static bool rdx_listener_descriptor_is_valid(int listener) {
     return getsockname(listener, (struct sockaddr *)&address, &address_length) == 0 &&
         address_length <= sizeof(address) && address_length > offsetof(struct sockaddr_un, sun_path) &&
         address.sun_family == AF_UNIX && memchr(address.sun_path, '\0', sizeof(address.sun_path)) != NULL &&
-        rdx_listener_address_is_valid(address.sun_path) &&
+        rdx_listener_address_is_valid(address.sun_path, mode) &&
         getsockopt(listener, SOL_SOCKET, SO_TYPE, &type, &type_length) == 0 &&
         type_length == sizeof(type) && type == SOCK_STREAM &&
         // Darwin does not implement getsockopt(SO_ACCEPTCONN). Read the same
@@ -80,16 +81,17 @@ static bool rdx_listener_descriptor_is_valid(int listener) {
         rdx_listener_state_is_valid(information.psi.soi_family, information.psi.soi_type, information.psi.soi_options);
 }
 
-static bool rdx_listener_is_exact(int listener) {
+static bool rdx_listener_is_exact(int listener, rdx_macos_installation_mode mode) {
     // Provenance is established exclusively by launch_activate_socket("Listener")
     // below. Its private kernel bind name can survive launchd renaming the vnode
     // to the protected public alias. Namespace trust remains a separate proof.
-    return rdx_listener_descriptor_is_valid(listener) && rdx_macos_endpoint_path_is_protected();
+    return rdx_listener_descriptor_is_valid(listener, mode) && rdx_macos_endpoint_path_is_protected(mode);
 }
 
 #if defined(RDX_MACOS_ENDPOINT_TEST_HOOKS)
-bool rdx_macos_test_listener_address_is_valid(const char *address) { return rdx_listener_address_is_valid(address); }
-bool rdx_macos_test_listener_descriptor_is_valid(int listener) { return rdx_listener_descriptor_is_valid(listener); }
+bool rdx_macos_test_listener_address_is_valid(const char *address) { return rdx_listener_address_is_valid(address, RDX_INSTALLATION_SIGNED); }
+bool rdx_macos_test_listener_mode_address_is_valid(rdx_macos_installation_mode mode, const char *address) { return rdx_listener_address_is_valid(address, mode); }
+bool rdx_macos_test_listener_descriptor_is_valid(int listener) { return rdx_listener_descriptor_is_valid(listener, RDX_INSTALLATION_SIGNED); }
 bool rdx_macos_test_listener_state_is_valid(int family, int type, int options) { return rdx_listener_state_is_valid(family, type, options); }
 #endif
 
@@ -153,18 +155,20 @@ static int rdx_accept_bounded(int listener, bool *out_idle_timeout) {
     }
 }
 
-rdx_macos_status rdx_macos_activate_launchd_listener(int *out_listener) {
+rdx_macos_status rdx_macos_activate_launchd_listener(const char *requirement_text, int *out_listener) {
     if (out_listener == NULL) {
         return RDX_MACOS_STATUS_INVALID_ARGUMENT;
     }
     *out_listener = -1;
+    const rdx_macos_installation_mode mode = rdx_macos_requirement_installation_mode(requirement_text);
+    if (mode == RDX_INSTALLATION_DENIED) { return RDX_MACOS_STATUS_INVALID_ARGUMENT; }
     int *listeners = NULL;
     size_t listener_count = 0;
     const int activation = launch_activate_socket("Listener", &listeners, &listener_count);
     if (activation != 0) { os_log_error(OS_LOG_DEFAULT, "OpenRDXManager listener activation failed: code=%{public}d", activation); }
     if (activation != 0 ||
         listeners == NULL || listener_count != 1 ||
-        !rdx_listener_is_exact(listeners[0])) {
+        !rdx_listener_is_exact(listeners[0], mode)) {
         rdx_macos_log_endpoint_phase("listener-validation", "denied");
         rdx_close_activated_sockets(listeners, listener_count);
         return RDX_MACOS_STATUS_TRANSPORT_UNAVAILABLE;
@@ -192,7 +196,9 @@ rdx_macos_status rdx_macos_accept_launchd_manager_from_listener(
     }
     *out_socket = -1;
     *out_user_id = 0;
-    if (!rdx_listener_is_exact(listener)) {
+    const rdx_macos_installation_mode mode = rdx_macos_requirement_installation_mode(requirement_text);
+    if (mode == RDX_INSTALLATION_DENIED) { return RDX_MACOS_STATUS_INVALID_ARGUMENT; }
+    if (!rdx_listener_is_exact(listener, mode)) {
         return RDX_MACOS_STATUS_TRANSPORT_UNAVAILABLE;
     }
     bool idle_timeout = false;
@@ -230,7 +236,7 @@ rdx_macos_status rdx_macos_accept_launchd_manager(
 ) {
     int listener = -1;
     const rdx_macos_status activation =
-        rdx_macos_activate_launchd_listener(&listener);
+        rdx_macos_activate_launchd_listener(requirement_text, &listener);
     if (activation != RDX_MACOS_STATUS_OK) {
         return activation;
     }

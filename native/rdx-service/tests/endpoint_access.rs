@@ -112,7 +112,7 @@ fn production_endpoints_are_fixed_and_never_stdio() {
 
     assert_eq!(windows.address(), r"\\.\pipe\OpenRDXHardwareService");
     assert_eq!(linux.address(), "/run/openrdx/openrdx-hardware.sock");
-    assert_eq!(macos.address(), "/var/run/openrdx-hardware.sock");
+    assert_eq!(macos.address(), "openrdx-macos-native");
     assert!(!windows.is_development_stdio());
     assert!(!linux.is_development_stdio());
     assert!(!macos.is_development_stdio());

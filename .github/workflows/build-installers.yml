@@ -183,6 +183,16 @@ jobs:
                   path: out/visual-qa-diagnostics
                   if-no-files-found: ignore
                   retention-days: 7
+            - name: Upload Windows installer failure evidence
+              if: failure() && matrix.platform == 'win'
+              uses: actions/upload-artifact@v7.0.1
+              with:
+                  name: windows-installer-diagnostics-${{ matrix.arch }}
+                  path: |
+                      dist/installers/*.exe
+                      dist/installers/*.zip
+                  if-no-files-found: ignore
+                  retention-days: 3
 
     collect:
         name: Verify and collect all installers

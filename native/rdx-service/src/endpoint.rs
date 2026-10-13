@@ -216,13 +216,14 @@ impl ServiceEndpoint {
     }
 
     /// Returns the fixed diagnostic address without accepting a caller path.
+    /// macOS uses a logical identity; verified native policy selects its socket.
     #[must_use]
     pub const fn address(self) -> &'static str {
         match self {
             Self::DevelopmentStdio => "stdio",
             Self::WindowsNamedPipe => r"\\.\pipe\OpenRDXHardwareService",
             Self::LinuxUnixSocket => "/run/openrdx/openrdx-hardware.sock",
-            Self::MacOsUnixSocket => "/var/run/openrdx-hardware.sock",
+            Self::MacOsUnixSocket => "openrdx-macos-native",
         }
     }
 

@@ -8,7 +8,7 @@ import { createMacOsNativeEndpointConnector } from './macos-native-endpoint.mjs'
 import { createWindowsNativeEndpointConnector } from './windows-native-endpoint.mjs'
 
 const ENDPOINTS = Object.freeze({
-    darwin: '/var/run/openrdx-hardware.sock',
+    darwin: 'openrdx-macos-native',
     linux: '/run/openrdx/openrdx-hardware.sock',
     win32: String.raw`\\.\pipe\OpenRDXHardwareService`
 })
@@ -191,7 +191,7 @@ class PrivilegedEndpointTransport extends EventEmitter {
 /**
  * Returns the fixed production endpoint for one supported host.
  * @param {'darwin'|'win32'|'linux'} platform - Node platform identifier.
- * @returns {string} Fixed local endpoint path or pipe name.
+ * @returns {string} macOS native logical token (sealed mode selects its path), or the fixed Unix path/pipe name on other hosts.
  * @throws {RangeError} For unsupported hosts.
  */
 export function resolvePrivilegedServiceEndpoint(platform) {
@@ -232,7 +232,7 @@ export function createPrivilegedEndpointTransportFactory(options = {}) {
      * @returns {PrivilegedEndpointTransport} Owned bounded endpoint transport.
      */
     function createTransport(launch) {
-        const socket = connectEndpoint(platform === 'win32' ? { path, expectedExecutable: launch?.command } : { path })
+        const socket = connectEndpoint(platform === 'darwin' ? { endpoint: path } : platform === 'win32' ? { path, expectedExecutable: launch?.command } : { path })
         socket.setNoDelay?.(true)
         return new PrivilegedEndpointTransport(socket, {
             connectTimeoutMs,

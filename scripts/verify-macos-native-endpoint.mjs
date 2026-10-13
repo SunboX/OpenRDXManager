@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { execFile } from 'node:child_process'
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { createRequire } from 'node:module'
@@ -67,6 +67,11 @@ async function verifyActualLaunchdListener(project, environment) {
     const fixture = await mkdtemp('/private/tmp/openrdx-launchd-regression-')
     const label = `com.openrdx.test.activation.${randomUUID()}`
     const socketPath = `/tmp/${label}.sock`
+    // This separate ordinary-user fixture models a foreign legacy job. The
+    // local acceptance flow must leave its registration and socket untouched.
+    const legacyLabel = `com.openrdx.test.legacy.${randomUUID()}`
+    const legacySocketPath = `/tmp/${legacyLabel}.sock`
+    const legacyPlistPath = join(fixture, 'legacy.plist')
     const helper = join(fixture, 'helper')
     const plistPath = join(fixture, 'fixture.plist')
     const logPath = join(fixture, 'fixture.log')
@@ -74,6 +79,7 @@ async function verifyActualLaunchdListener(project, environment) {
     let domain = `gui/${uid}`
     const plist = createRequire(import.meta.url)('plist')
     let registered = false
+    let legacyRegistered = false
     let socket
     try {
         try {
@@ -83,6 +89,9 @@ async function verifyActualLaunchdListener(project, environment) {
         }
         await execFileAsync('/usr/bin/xcrun', ['clang', '-std=c17', '-Wall', '-Wextra', '-Werror', '-DRDX_MACOS_ENDPOINT_TEST_HOOKS=1', '-I', join(project, 'native/rdx-service/native/macos'), join(project, 'native/macos-client-addon/launchd_listener_helper.c'), join(project, 'native/rdx-service/native/macos/rdx_endpoint.c'), join(project, 'native/rdx-service/native/macos/rdx_endpoint_identity.c'), '-framework', 'Security', '-framework', 'CoreFoundation', '-lbsm', '-lproc', '-o', helper], { env: environment })
         await execFileAsync('/usr/bin/codesign', ['--force', '--sign', '-', '--identifier', 'com.openrdx.fixture', helper])
+        await writeFile(legacyPlistPath, plist.build({ Label: legacyLabel, ProgramArguments: [helper], Sockets: { Listener: { SockPathName: legacySocketPath, SockPathMode: 384 } }, StandardErrorPath: join(fixture, 'legacy.log') }), { mode: 0o600 })
+        await execFileAsync('/bin/launchctl', ['bootstrap', domain, legacyPlistPath])
+        legacyRegistered = true
         await writeFile(plistPath, plist.build({ Label: label, ProgramArguments: [helper], Sockets: { Listener: { SockPathName: socketPath, SockPathMode: 384 } }, StandardErrorPath: logPath }), { mode: 0o600 })
         await execFileAsync('/bin/launchctl', ['bootstrap', domain, plistPath])
         registered = true
@@ -90,6 +99,7 @@ async function verifyActualLaunchdListener(project, environment) {
         while (true) {
             try {
                 await access(socketPath)
+                await access(legacySocketPath)
                 break
             } catch {
                 if (Date.now() >= deadline) throw new Error('launchd-fixture-activation-timeout')
@@ -98,6 +108,7 @@ async function verifyActualLaunchdListener(project, environment) {
         }
         const remaining = deadline - Date.now()
         if (remaining <= 0) throw new Error('launchd-fixture-connect-timeout')
+        const legacyBefore = await lstat(legacySocketPath)
         socket = createConnection(socketPath)
         await once(socket, 'connect', { signal: AbortSignal.timeout(remaining) })
         // The fixture never reads/sends protocol bytes; only accept() is tested.
@@ -112,7 +123,10 @@ async function verifyActualLaunchdListener(project, environment) {
             }
             if (evidence.includes('launchd listener accepted before protocol bytes')) {
                 if (!evidence.includes('launchd listener descriptor: valid=true')) throw new Error('launchd-fixture-descriptor-invalid')
-                return 'actual launchd listener: private bind address validated and accepted before protocol bytes'
+                await execFileAsync('/bin/launchctl', ['print', `${domain}/${legacyLabel}`])
+                const legacyAfter = await lstat(legacySocketPath)
+                if (!legacyAfter.isSocket() || legacyBefore.dev !== legacyAfter.dev || legacyBefore.ino !== legacyAfter.ino) throw new Error('launchd-fixture-legacy-namespace-changed')
+                return 'actual launchd listener: private bind address validated and accepted before protocol bytes; isolated legacy job/socket preserved through acceptance'
             }
             if (Date.now() >= deadline) throw new Error(`launchd-fixture-accept-timeout: ${evidence.slice(0, 512)}`)
             await delay(20)
@@ -122,8 +136,15 @@ async function verifyActualLaunchdListener(project, environment) {
         try {
             if (registered) await execFileAsync('/bin/launchctl', ['bootout', `${domain}/${label}`])
         } finally {
-            await rm(socketPath, { force: true })
-            await rm(fixture, { recursive: true, force: true })
+            try {
+                // Cleanup only this test's uniquely named owned legacy fixture,
+                // after the preservation assertions; never a installed job.
+                if (legacyRegistered) await execFileAsync('/bin/launchctl', ['bootout', `${domain}/${legacyLabel}`])
+            } finally {
+                await rm(socketPath, { force: true })
+                await rm(legacySocketPath, { force: true })
+                await rm(fixture, { recursive: true, force: true })
+            }
         }
     }
 }
