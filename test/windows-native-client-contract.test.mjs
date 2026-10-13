@@ -165,7 +165,7 @@ test('Windows service retains its pending pipe across idle polls and later sessi
     assert.doesNotMatch(serviceLoop, /NativeError::ResourceLimit\) => return Ok/u)
 })
 
-test('Windows service ACL provisioner derives only a live signed installed manager identity', async () => {
+test('Windows service ACL provisioner derives only a live verified installed Manager identity', async () => {
     const source = await readFile(join(projectRoot, 'native/rdx-service/windows-native/src/service_acl.rs'), 'utf8')
 
     assert.match(source, /QueryFullProcessImageNameW/u)
@@ -173,7 +173,8 @@ test('Windows service ACL provisioner derives only a live signed installed manag
     assert.match(source, /WTSGetActiveConsoleSessionId/u)
     assert.match(source, /OpenProcessToken/u)
     assert.match(source, /SetServiceObjectSecurity/u)
-    assert.match(source, /exact_dacl_matches\([^)]*\)\?/u)
+    // The closed diagnostic wrapper must still propagate the original strict readback result.
+    assert.match(source, /diagnostic\(\s*Stage::ManagerDacl,\s*exact_dacl_matches\([^)]*\),?\s*\)\?/u)
     assert.equal((source.match(/validate_manager_process\(/gu) ?? []).length >= 3, true)
     assert.match(source, /raw_ace_address[\s\S]*checked_add\(size_of::<ACCESS_ALLOWED_ACE>\(\)\)[\s\S]*descriptor_end/u)
     assert.doesNotMatch(source, /ConvertStringSidToSid|LookupAccountName/u)

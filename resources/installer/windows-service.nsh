@@ -204,6 +204,23 @@ ${StrStr}
   ${If} $R5 != ""
     StrCpy $R3 "manager-revalidation"
   ${EndIf}
+  ; Specific user-policy denials override the enclosing manager-user token.
+  ${StrStr} $R5 "$1" "phase=manager-user-elevation reason="
+  ${If} $R5 != ""
+    StrCpy $R3 "manager-user-elevation"
+  ${EndIf}
+  ${StrStr} $R5 "$1" "phase=manager-user-session reason="
+  ${If} $R5 != ""
+    StrCpy $R3 "manager-user-session"
+  ${EndIf}
+  ${StrStr} $R5 "$1" "phase=manager-user-principal reason="
+  ${If} $R5 != ""
+    StrCpy $R3 "manager-user-principal"
+  ${EndIf}
+  ${StrStr} $R5 "$1" "phase=manager-user-query reason="
+  ${If} $R5 != ""
+    StrCpy $R3 "manager-user-query"
+  ${EndIf}
   !insertmacro OpenRDXFail "${STAGE}" "$0" "${MESSAGE} native-phase=$R3 native-reason=$R4"
 !macroend
 
@@ -271,8 +288,9 @@ ${StrStr}
 !macroend
 
 !macro customInstall
-  ; The shell launches the installed Manager using the interactive user's
-  ; unelevated token. The installer never runs Electron with administrator rights.
+  ; Requests Explorer user launch; StdUtils fallback may retain elevation.
+  ; Native token/session/principal checks decide whether Manager can be enrolled.
+  ; https://muldersoft.com/docs/stdutils_readme.html
   ${StdUtils.ExecShellAsUser} $0 "${OPENRDX_FIXED_ROOT}\OpenRDXManager.exe" "open" ""
   ${If} $0 != "ok"
     DetailPrint "Launch the installed Manager as the active console user to complete setup."

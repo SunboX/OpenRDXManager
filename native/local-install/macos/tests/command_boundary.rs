@@ -40,3 +40,27 @@ fn executable_denies_all_elevated_actions_to_ordinary_user() {
         assert!(String::from_utf8_lossy(&result.stderr).contains("administrator approval"));
     }
 }
+
+/// Actual private entry rejects ordinary users and extra role/path/PID arguments.
+#[cfg(target_os = "macos")]
+#[test]
+fn executable_denies_private_supervisor_to_ordinary_user() {
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+    for arguments in [
+        vec!["--internal-supervisor"],
+        vec!["--internal-supervisor", "3"],
+        vec!["--internal-supervisor", "/tmp/foreign"],
+    ] {
+        let result = Command::new(env!("CARGO_BIN_EXE_openrdx-local-install"))
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert!(
+            String::from_utf8_lossy(&result.stderr)
+                .contains("invalid administrator-only supervisor entry")
+        );
+    }
+}

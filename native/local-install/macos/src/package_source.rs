@@ -10,7 +10,10 @@ use std::{
     io::Read,
     os::{
         fd::{AsRawFd, FromRawFd},
-        unix::{ffi::OsStrExt, fs::MetadataExt},
+        unix::{
+            ffi::OsStrExt,
+            fs::{FileExt, MetadataExt},
+        },
     },
     path::{Component, Path, PathBuf},
 };
@@ -28,7 +31,7 @@ struct SourceNode {
 /// exactly root:wheel01777 and cannot be the immediate source directory. Sticky
 /// semantics prevent ordinary users deleting/replacing its root-owned child.
 /// This historical record NEVER becomes runtime.json or authenticates an IPC peer.
-pub(super) fn read_package_record() -> Result<Vec<u8>, String> {
+pub(super) fn retain_package_source() -> Result<PackageSource, String> {
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
     if executable.file_name() != Some(OsStr::new("openrdx-local-install")) {
         return Err("package setup executable has an unexpected fixed filename".into());
@@ -49,7 +52,8 @@ pub(super) fn read_package_record() -> Result<Vec<u8>, String> {
         .read_to_end(&mut bytes)
         .map_err(|error| error.to_string())?;
     let inventory = parse_inventory(&bytes, "macos").map_err(|error| error.to_string())?;
-    verify_setup_pin(directory, &inventory, parent)?;
+    let cli = verify_setup_pin(directory, &inventory, parent)?;
+    let cli_metadata = cli.metadata().map_err(|error| error.to_string())?;
     recheck_file(
         &manifest,
         &manifest_metadata,
@@ -58,7 +62,89 @@ pub(super) fn read_package_record() -> Result<Vec<u8>, String> {
     for node in &mut nodes {
         recheck_directory(node)?;
     }
-    Ok(bytes)
+    Ok(PackageSource {
+        executable,
+        nodes,
+        manifest,
+        manifest_metadata,
+        cli,
+        cli_metadata,
+        bytes,
+        inherited: Vec::new(),
+    })
+}
+
+/// Hold the full protected source namespace and both immutable generation files.
+pub(super) struct PackageSource {
+    executable: PathBuf,
+    nodes: Vec<SourceNode>,
+    manifest: File,
+    manifest_metadata: Metadata,
+    cli: File,
+    cli_metadata: Metadata,
+    bytes: Vec<u8>,
+    inherited: Vec<File>,
+}
+
+impl PackageSource {
+    /// Kernel-derived executable; callers cannot select another program.
+    pub(super) fn executable(&self) -> &Path {
+        &self.executable
+    }
+    /// Strictly parsed bytes for historical ownership, never IPC enrollment.
+    pub(super) fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+    /// Borrow retained executable and inventory descriptors for fixed transfer.
+    pub(super) fn files(&self) -> [&File; 2] {
+        [&self.cli, &self.manifest]
+    }
+    /// Repeat protected namespace, identity and full byte pin checks while retained.
+    pub(super) fn recheck(&self) -> Result<(), String> {
+        for node in &self.nodes {
+            recheck_directory(node)?;
+        }
+        let parent = self.executable.parent().ok_or("package source missing")?;
+        recheck_file(
+            &self.manifest,
+            &self.manifest_metadata,
+            &parent.join("pending-runtime.json"),
+        )?;
+        recheck_file(&self.cli, &self.cli_metadata, &self.executable)?;
+        let inventory = parse_inventory(&self.bytes, "macos").map_err(|error| error.to_string())?;
+        let pin = setup_pin(&inventory)?;
+        verify_file_pin(&self.cli, pin.size, &pin.sha256)?;
+        verify_file_pin(
+            &self.manifest,
+            self.bytes.len() as u64,
+            &format!("{:x}", Sha256::digest(&self.bytes)),
+        )?;
+        recheck_file(&self.cli, &self.cli_metadata, &self.executable)?;
+        recheck_file(
+            &self.manifest,
+            &self.manifest_metadata,
+            &parent.join("pending-runtime.json"),
+        )?;
+        Ok(())
+    }
+    /// Verify inherited roles name the exact freshly checked package file inodes.
+    pub(super) fn retain_inherited(&mut self, cli: File, manifest: File) -> Result<(), String> {
+        same_inode(&cli, &self.cli)?;
+        same_inode(&manifest, &self.manifest)?;
+        self.recheck()?;
+        self.inherited = vec![cli, manifest];
+        Ok(())
+    }
+}
+
+/// Compare actual retained inodes; filenames or descriptor numbers do not prove identity.
+fn same_inode(left: &File, right: &File) -> Result<(), String> {
+    let a = left.metadata().map_err(|error| error.to_string())?;
+    let b = right.metadata().map_err(|error| error.to_string())?;
+    if !a.is_file() || !b.is_file() || a.dev() != b.dev() || a.ino() != b.ino() {
+        return Err("inherited package source inode mismatch".into());
+    }
+    rdx_local_trust::verify_protected_descriptor(left).map_err(|error| error.to_string())
 }
 
 /// Retain root and each source ancestor using openat(O_NOFOLLOW), rejecting aliases.
@@ -177,30 +263,55 @@ fn verify_setup_pin(
     directory: &File,
     inventory: &RuntimeInventory,
     parent: &Path,
-) -> Result<(), String> {
-    let pin = inventory
+) -> Result<File, String> {
+    let pin = setup_pin(inventory)?;
+    let file = open_child(directory, "openrdx-local-install")?;
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    verify_file_pin(&file, pin.size, &pin.sha256)?;
+    recheck_file(&file, &metadata, &parent.join("openrdx-local-install"))?;
+    Ok(file)
+}
+
+/// Select only the inventory's compiled in-app installer path, never a caller policy.
+fn setup_pin(inventory: &RuntimeInventory) -> Result<&rdx_local_trust::RuntimeFile, String> {
+    inventory
         .files
         .iter()
         .find(|file| file.path == "Contents/Resources/native/macos/openrdx-local-install")
-        .ok_or("package inventory does not pin its installer setup executable")?;
-    let mut file = open_child(directory, "openrdx-local-install")?;
-    let metadata = file.metadata().map_err(|error| error.to_string())?;
-    if metadata.len() != pin.size {
-        return Err("package setup executable size does not match inventory".into());
+        .ok_or_else(|| "package inventory does not pin its installer setup executable".into())
+}
+
+/// Hash exactly the retained expected length with positional reads, without changing shared OFD cursors.
+/// Metadata/ACL/namespace authorization is separately retained and checked by the source guard.
+fn verify_file_pin(file: &File, size: u64, expected: &str) -> Result<(), String> {
+    if file.metadata().map_err(|error| error.to_string())?.len() != size {
+        return Err("package source file size does not match approved generation".into());
     }
     let mut digest = Sha256::new();
     let mut buffer = [0_u8; 65536];
-    loop {
-        let count = file.read(&mut buffer).map_err(|error| error.to_string())?;
+    let mut position = 0;
+    while position < size {
+        let limit = (size - position).min(buffer.len() as u64) as usize;
+        let count = file
+            .read_at(&mut buffer[..limit], position)
+            .map_err(|error| error.to_string())?;
         if count == 0 {
-            break;
+            return Err("retained package source ended before approved length".into());
         }
         digest.update(&buffer[..count]);
+        position += count as u64;
     }
-    if format!("{:x}", digest.finalize()) != pin.sha256 {
-        return Err("package setup executable does not match approved generation".into());
+    if file
+        .read_at(&mut buffer[..1], size)
+        .map_err(|error| error.to_string())?
+        != 0
+    {
+        return Err("retained package source grew during verification".into());
     }
-    recheck_file(&file, &metadata, &parent.join("openrdx-local-install"))
+    if format!("{:x}", digest.finalize()) != expected {
+        return Err("retained package source bytes do not match approved generation".into());
+    }
+    Ok(())
 }
 
 /// Reject manifest replacement or content mutation after bounded parsing and pin verification.
@@ -227,6 +338,32 @@ fn recheck_file(file: &File, original: &Metadata, path: &Path) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Distinct real protected source inodes cannot substitute for inherited CLI/inventory roles.
+    #[test]
+    fn inherited_source_refuses_different_actual_inodes() {
+        let original = File::open("/usr/bin/true").unwrap();
+        let replacement = File::open("/bin/launchctl").unwrap();
+        assert!(same_inode(&original, &original).is_ok());
+        assert!(
+            same_inode(&original, &replacement)
+                .unwrap_err()
+                .contains("inode mismatch")
+        );
+    }
+
+    /// Retained byte proof ignores shared cursors and rejects actual same-inode mutations.
+    #[test]
+    fn retained_hash_recheck_sees_mutation_without_reopening_or_shared_cursor() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut file, b"approved").unwrap();
+        let digest = format!("{:x}", Sha256::digest(b"approved"));
+        assert!(verify_file_pin(file.as_file(), 8, &digest).is_ok());
+        std::io::Write::write_all(&mut file, b"extra").unwrap();
+        assert!(verify_file_pin(file.as_file(), 8, &digest).is_err());
+        fs::write(file.path(), b"tampered").unwrap();
+        assert!(verify_file_pin(file.as_file(), 8, &digest).is_err());
+    }
 
     /// Actual root system source directories retain their native no-follow/ACL proof.
     #[test]

@@ -225,6 +225,8 @@ mod windows_impl {
     use super::windows_helpers::{
         bounded_multi_wide, bounded_wide, is_error, map_native_error, wide_null,
     };
+    mod manager_token;
+    use manager_token::manager_sid;
     mod queries;
     use queries::{query_service_configuration, read_service_security};
 
@@ -471,70 +473,6 @@ mod windows_impl {
             return Err(NativeError::AccessDenied);
         }
         Ok(())
-    }
-
-    /// Derives and validates the exact active-console user SID from a pinned process.
-    fn manager_sid(process: &OwnedHandle, process_id: u32) -> Result<OwnedSid, NativeError> {
-        let mut token = HANDLE::default();
-        // SAFETY: process is query-owned, TOKEN_QUERY is read-only, and output is writable.
-        unsafe { OpenProcessToken(process.0, TOKEN_QUERY, &mut token) }
-            .map_err(map_native_error)?;
-        let token = OwnedHandle(token);
-        // Setup pins a live, unelevated Manager rather than granting the
-        // administrator's installer token interactive service rights.
-        let mut elevation = windows::Win32::Security::TOKEN_ELEVATION::default();
-        let mut returned_elevation = 0;
-        unsafe {
-            GetTokenInformation(
-                token.0,
-                windows::Win32::Security::TokenElevation,
-                Some((&mut elevation as *mut windows::Win32::Security::TOKEN_ELEVATION).cast()),
-                size_of::<windows::Win32::Security::TOKEN_ELEVATION>() as u32,
-                &mut returned_elevation,
-            )
-        }
-        .map_err(map_native_error)?;
-        if returned_elevation as usize != size_of::<windows::Win32::Security::TOKEN_ELEVATION>()
-            || elevation.TokenIsElevated != 0
-        {
-            return Err(NativeError::AccessDenied);
-        }
-        let mut token_session = u32::MAX;
-        let mut returned = 0_u32;
-        // SAFETY: output is exact writable u32 storage for TokenSessionId.
-        unsafe {
-            GetTokenInformation(
-                token.0,
-                TokenSessionId,
-                Some((&mut token_session as *mut u32).cast()),
-                size_of::<u32>() as u32,
-                &mut returned,
-            )
-        }
-        .map_err(map_native_error)?;
-        let mut process_session = u32::MAX;
-        // SAFETY: output points to initialized writable scalar storage.
-        unsafe { ProcessIdToSessionId(process_id, &mut process_session) }
-            .map_err(map_native_error)?;
-        // SAFETY: this query has no pointer or ownership preconditions.
-        if returned as usize != size_of::<u32>()
-            || token_session != process_session
-            || token_session != unsafe { WTSGetActiveConsoleSessionId() }
-        {
-            return Err(NativeError::AccessDenied);
-        }
-        let sid = token_user_sid(&token)?;
-        for forbidden in [
-            WinLocalSystemSid,
-            WinLocalServiceSid,
-            WinNetworkServiceSid,
-            WinBuiltinAdministratorsSid,
-        ] {
-            if sid.bytes() == well_known_sid(forbidden)?.bytes() {
-                return Err(NativeError::AccessDenied);
-            }
-        }
-        Ok(sid)
     }
 
     /// Copies one variable-length token user SID into aligned owned storage.

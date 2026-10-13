@@ -66,6 +66,14 @@ pub(crate) enum InstallStage {
     ManagerRegistry,
     /// Sanitized manager revalidation checkpoint.
     ManagerRevalidation,
+    /// Sanitized manager user elevation checkpoint.
+    ManagerUserElevation,
+    /// Sanitized manager user session checkpoint.
+    ManagerUserSession,
+    /// Sanitized manager user principal checkpoint.
+    ManagerUserPrincipal,
+    /// Sanitized manager user kernel-query checkpoint.
+    ManagerUserQuery,
     /// Sanitized device-access checkpoint.
     DeviceAccess,
     /// Sanitized commit-enrollment checkpoint.
@@ -106,6 +114,10 @@ impl InstallStage {
             Self::ManagerDacl => "manager-dacl",
             Self::ManagerRegistry => "manager-registry",
             Self::ManagerRevalidation => "manager-revalidation",
+            Self::ManagerUserElevation => "manager-user-elevation",
+            Self::ManagerUserSession => "manager-user-session",
+            Self::ManagerUserPrincipal => "manager-user-principal",
+            Self::ManagerUserQuery => "manager-user-query",
             Self::DeviceAccess => "device-access",
             Self::CommitEnrollment => "commit-enrollment",
             Self::VerifyEnrollment => "verify-enrollment",
@@ -166,6 +178,10 @@ mod tests {
             InstallStage::ManagerDacl,
             InstallStage::ManagerRegistry,
             InstallStage::ManagerRevalidation,
+            InstallStage::ManagerUserElevation,
+            InstallStage::ManagerUserSession,
+            InstallStage::ManagerUserPrincipal,
+            InstallStage::ManagerUserQuery,
         ] {
             let message = failure(stage, NativeError::AccessDenied);
             assert!(message.starts_with("OpenRDX native failure: phase=manager-"));

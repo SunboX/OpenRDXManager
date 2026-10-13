@@ -91,7 +91,7 @@ test('installed runtime diagnostics remain closed and select the specific native
 test('manager diagnostics preserve closed specific phases after their enclosing denial', async () => {
     const native = await readFile(new URL('../native/rdx-service/windows-native/src/installer/diagnostics.rs', import.meta.url), 'utf8')
     const hook = await source('windows-service.nsh')
-    for (const phase of ['runtime', 'process', 'user', 'configuration', 'dacl', 'registry', 'revalidation']) {
+    for (const phase of ['runtime', 'process', 'user', 'configuration', 'dacl', 'registry', 'revalidation', 'user-elevation', 'user-session', 'user-principal', 'user-query']) {
         const token = `manager-${phase}`
         assert.ok(native.includes(`=> "${token}"`), token)
         assert.ok(hook.includes(`"phase=${token} reason="`), token)
