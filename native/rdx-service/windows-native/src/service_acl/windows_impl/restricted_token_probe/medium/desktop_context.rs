@@ -12,6 +12,8 @@ use windows::Win32::Security::{
     TokenImpersonation, WinBatchSid, WinInteractiveSid, WinServiceSid,
 };
 use windows::Win32::System::Threading::GetCurrentThreadId;
+#[path = "mandatory_context.rs"]
+mod mandatory_context;
 
 /// SDK WinUser.h object-specific WINSTA_ALL_ACCESS; generic-all also includes standard rights.
 /// https://github.com/microsoft/win32metadata/blob/main/generation/WinSDK/RecompiledIdlHeaders/um/WinUser.h
@@ -479,6 +481,12 @@ pub(super) fn observe(source: &OwnedHandle, derived: &OwnedHandle) {
         .collect::<Vec<_>>()
         .join(" ");
     println!("openrdx-token-desktop-context {closed}");
+    mandatory_context::observe(
+        station.as_ref().map(|owned| owned.0),
+        desktop.as_ref().map(|owned| owned.0),
+        source,
+        derived,
+    );
 }
 
 /// Malformed descriptor headers fail before any native validator follows embedded pointers.
