@@ -40,3 +40,13 @@ test('31 fixed worker reasons plus merged overflow remain a complete bounded rep
     assert.deepEqual(discoveryDiagnosticsSchema.parse(evidence), evidence)
     assert.equal(rejections.reduce((total, rejection) => total + rejection.count, 0) + evidence.acceptedCount, evidence.candidateCount)
 })
+
+test('interface-open IOReturn classes remain fixed path-free aggregate reasons', () => {
+    const classes = ['io-not-ready', 'io-not-attached', 'io-not-found', 'io-offline', 'io-bad-argument', 'io-no-resources', 'io-ipc-error', 'io-internal-error', 'io-error', 'io-general-error', 'error-missing', 'other']
+    const rejections = classes.map((code) => ({ reason: `candidate-worker-usb-open-interface-${code}`, count: 1 }))
+    const evidence = { candidateCount: classes.length, acceptedCount: 0, rejections }
+    assert.deepEqual(discoveryDiagnosticsSchema.parse(evidence), evidence)
+    for (const extra of [{ nativeCode: 3758097112 }, { nativeCodeKind: 'nserror' }, { errorDomain: 'IOUSBHostErrorDomain' }, { localizedDescription: 'kernel text' }]) {
+        assert.equal(discoveryDiagnosticsSchema.safeParse({ candidateCount: 1, acceptedCount: 0, rejections: [{ ...rejections[0], ...extra }] }).success, false)
+    }
+})

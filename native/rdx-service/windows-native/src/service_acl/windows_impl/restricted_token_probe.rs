@@ -3,6 +3,7 @@
 
 //! Opt-in, never-launched token-reduction observations on a disposable verifier.
 //! Successful queries do not prove a derived token is eligible for Manager launch.
+mod medium;
 use super::*;
 use std::mem::offset_of;
 use windows::Win32::Foundation::LUID;

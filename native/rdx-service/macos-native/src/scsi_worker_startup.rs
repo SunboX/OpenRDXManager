@@ -70,6 +70,17 @@ enum Bucket {
     BadFd,
     Missing,
     Other,
+    IoNotReady,
+    IoNotAttached,
+    IoNotFound,
+    IoOffline,
+    IoBadArgument,
+    IoNoResources,
+    IoIpcError,
+    IoInternalError,
+    IoError,
+    IoGeneralError,
+    ErrorMissing,
 }
 
 impl WorkerStartupFailure {
@@ -96,6 +107,27 @@ impl WorkerStartupFailure {
                     }
                     Bucket::BadFd => concat!("candidate-worker-", $phase, "-bad-fd"),
                     Bucket::Missing => concat!("candidate-worker-", $phase, "-missing-executable"),
+                    Bucket::IoNotReady => concat!("candidate-worker-", $phase, "-io-not-ready"),
+                    Bucket::IoNotAttached => {
+                        concat!("candidate-worker-", $phase, "-io-not-attached")
+                    }
+                    Bucket::IoNotFound => concat!("candidate-worker-", $phase, "-io-not-found"),
+                    Bucket::IoOffline => concat!("candidate-worker-", $phase, "-io-offline"),
+                    Bucket::IoBadArgument => {
+                        concat!("candidate-worker-", $phase, "-io-bad-argument")
+                    }
+                    Bucket::IoNoResources => {
+                        concat!("candidate-worker-", $phase, "-io-no-resources")
+                    }
+                    Bucket::IoIpcError => concat!("candidate-worker-", $phase, "-io-ipc-error"),
+                    Bucket::IoInternalError => {
+                        concat!("candidate-worker-", $phase, "-io-internal-error")
+                    }
+                    Bucket::IoError => concat!("candidate-worker-", $phase, "-io-error"),
+                    Bucket::IoGeneralError => {
+                        concat!("candidate-worker-", $phase, "-io-general-error")
+                    }
+                    Bucket::ErrorMissing => concat!("candidate-worker-", $phase, "-error-missing"),
                     Bucket::Other => concat!("candidate-worker-", $phase, "-other"),
                 }
             };
@@ -442,11 +474,53 @@ fn parse_native(line: &str) -> Option<NativeDiagnostic> {
     Some(NativeDiagnostic {
         failure: WorkerStartupFailure {
             stage,
-            bucket: bucket(crate::boundary::status_error(status)),
+            bucket: interface_error_class(
+                stage,
+                bucket(crate::boundary::status_error(status)),
+                kind,
+                code,
+            ),
         },
         _code_kind: kind,
         _native_code: code,
     })
+}
+
+/// Refines diagnostic text only for an unclassified interface-init error, never native results.
+///
+/// The C branch reports the IOUSBHost NSError contract (SDK: NSError codes are IOReturn).
+/// This is not a general NSError/HRESULT/IOKit-family classifier. C currently reuses its
+/// NSError variable across successful calls, so this records observed numeric evidence,
+/// not proof that the current interface failed for this cause. It never triggers retry,
+/// rematching, authorization, capture or commands; unknown/out-of-range values stay Other.
+fn interface_error_class(stage: &str, original: Bucket, kind: u8, native_code: i64) -> Bucket {
+    if stage != "usb-open-interface" || original != Bucket::Other {
+        return original;
+    }
+    if kind == 0 && native_code == 0 {
+        return Bucket::ErrorMissing;
+    }
+    if kind != 3 {
+        return original;
+    }
+    // NSError may render the signed IOReturn as either signed-i32 or unsigned-u32.
+    let code = u32::try_from(native_code)
+        .ok()
+        .or_else(|| i32::try_from(native_code).ok().map(|value| value as u32));
+    // Exact public constants from Apple IOKit/IOReturn.h (iokit_common_err namespace).
+    match code {
+        Some(0xe000_02d8) => Bucket::IoNotReady, // kIOReturnNotReady
+        Some(0xe000_02d9) => Bucket::IoNotAttached, // kIOReturnNotAttached
+        Some(0xe000_02f0) => Bucket::IoNotFound, // kIOReturnNotFound
+        Some(0xe000_02d7) => Bucket::IoOffline,  // kIOReturnOffline
+        Some(0xe000_02c2) => Bucket::IoBadArgument, // kIOReturnBadArgument
+        Some(0xe000_02be) => Bucket::IoNoResources, // kIOReturnNoResources
+        Some(0xe000_02bf) => Bucket::IoIpcError, // kIOReturnIPCError
+        Some(0xe000_02c9) => Bucket::IoInternalError, // kIOReturnInternalError
+        Some(0xe000_02ca) => Bucket::IoError,    // kIOReturnIOError
+        Some(0xe000_02bc) => Bucket::IoGeneralError, // kIOReturnError
+        _ => original,
+    }
 }
 
 /// Accepts only the closed worker progress formatter and its existing error discriminants.
@@ -639,5 +713,145 @@ mod tests {
             );
             assert!(take_last_worker_startup_failure().is_none());
         }
+    }
+
+    /// Regression: standard interface readiness evidence retains its fixed diagnostic class.
+    #[test]
+    fn interface_open_standard_ioreturn_is_a_fixed_diagnostic_class() {
+        let line = "{\"diagnostic\":\"snapshot-native-acquisition\",\"substage\":\"usb-open-interface\",\"nativeStatus\":10,\"nativeCodeKind\":\"nserror\",\"nativeCode\":3758097112}";
+        assert_eq!(
+            parse_native(line).unwrap().failure.code(),
+            "candidate-worker-usb-open-interface-io-not-ready"
+        );
+    }
+
+    /// Builds only the existing closed formatter; test inputs never reach native acquisition.
+    fn interface_record(stage: &str, status: u32, kind: &str, code: i64) -> NativeDiagnostic {
+        parse_native(&format!("{{\"diagnostic\":\"snapshot-native-acquisition\",\"substage\":\"{stage}\",\"nativeStatus\":{status},\"nativeCodeKind\":\"{kind}\",\"nativeCode\":{code}}}")).unwrap()
+    }
+
+    /// Signed and unsigned representations of exact SDK constants produce the same fixed code.
+    #[test]
+    fn interface_open_sdk_whitelist_normalizes_only_i32_or_u32() {
+        for (value, suffix) in [
+            (0xe000_02d8u32, "io-not-ready"),
+            (0xe000_02d9, "io-not-attached"),
+            (0xe000_02f0, "io-not-found"),
+            (0xe000_02d7, "io-offline"),
+            (0xe000_02c2, "io-bad-argument"),
+            (0xe000_02be, "io-no-resources"),
+            (0xe000_02bf, "io-ipc-error"),
+            (0xe000_02c9, "io-internal-error"),
+            (0xe000_02ca, "io-error"),
+            (0xe000_02bc, "io-general-error"),
+        ] {
+            let positive = interface_record("usb-open-interface", 10, "nserror", i64::from(value));
+            let negative =
+                interface_record("usb-open-interface", 10, "nserror", i64::from(value as i32));
+            assert_eq!(positive.failure, negative.failure);
+            assert_eq!(
+                positive.failure.code(),
+                format!("candidate-worker-usb-open-interface-{suffix}")
+            );
+            assert!(positive.failure.code().len() <= 128);
+            assert!(
+                positive
+                    .failure
+                    .code()
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte == b'-')
+            );
+            // Private evidence remains exact; public codes contain no numeric/native text.
+            assert_eq!(positive._native_code, i64::from(value));
+            assert_eq!(negative._native_code, i64::from(value as i32));
+        }
+        for code in [
+            i64::MIN,
+            i64::MAX,
+            -2_147_483_649,
+            4_294_967_296,
+            0,
+            -1,
+            0xe000_4001,
+            0xe000_02bd,
+        ] {
+            assert_eq!(
+                interface_record("usb-open-interface", 10, "nserror", code)
+                    .failure
+                    .code(),
+                "candidate-worker-usb-open-interface-other"
+            );
+        }
+    }
+
+    /// Other stages, known status buckets and non-NSError namespaces are unchanged.
+    #[test]
+    fn interface_classification_requires_exact_stage_status_and_code_namespace() {
+        for &stage in NATIVE_STAGES {
+            let record = interface_record(stage, 10, "nserror", 0xe000_02d8);
+            if stage != "usb-open-interface" {
+                assert_eq!(record.failure.bucket, Bucket::Other);
+            }
+        }
+        for status in 1..=9 {
+            let record = interface_record("usb-open-interface", status, "nserror", 0xe000_02d8);
+            assert_eq!(
+                record.failure.bucket,
+                bucket(crate::boundary::status_error(status))
+            );
+        }
+        for kind in ["ioreturn", "hresult"] {
+            assert_eq!(
+                interface_record("usb-open-interface", 10, kind, 0xe000_02d8)
+                    .failure
+                    .bucket,
+                Bucket::Other
+            );
+        }
+        assert_eq!(
+            interface_record("usb-open-interface", 10, "none", 0)
+                .failure
+                .code(),
+            "candidate-worker-usb-open-interface-error-missing"
+        );
+        assert_eq!(
+            interface_record("usb-open-interface", 10, "nserror", 0)
+                .failure
+                .bucket,
+            Bucket::Other
+        );
+        assert_eq!(
+            interface_record("usb-open-interface", 3, "none", 0)
+                .failure
+                .bucket,
+            Bucket::Denied
+        );
+        assert_eq!(
+            interface_record("usb-capture-device", 10, "none", 0)
+                .failure
+                .bucket,
+            Bucket::Other
+        );
+        assert!(parse_native("{\"diagnostic\":\"snapshot-native-acquisition\",\"substage\":\"usb-open-interface\",\"nativeStatus\":10,\"nativeCodeKind\":\"none\",\"nativeCode\":3758097112}").is_none());
+    }
+
+    /// An existing precleanup record yields only the compiled class and successful READY clears it.
+    #[test]
+    fn interface_classification_is_evidence_only_and_success_still_clears() {
+        reset();
+        let line = b"{\"diagnostic\":\"snapshot-native-acquisition\",\"substage\":\"usb-open-interface\",\"nativeStatus\":10,\"nativeCodeKind\":\"nserror\",\"nativeCode\":3758097097}\n";
+        let mut observer = StartupDiagnostics::new(None);
+        observer.consume(line);
+        observer.failure("init-read", NativeError::TransportUnavailable);
+        assert_eq!(
+            take_last_worker_startup_failure().unwrap().code(),
+            "candidate-worker-usb-open-interface-io-internal-error"
+        );
+        assert!(take_last_worker_startup_failure().is_none());
+        let mut observer = StartupDiagnostics::new(None);
+        observer.consume(line);
+        observer.success();
+        observer.failure("init-read", NativeError::TransportUnavailable);
+        assert!(take_last_worker_startup_failure().is_none());
     }
 }

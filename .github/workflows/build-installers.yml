@@ -70,7 +70,30 @@ jobs:
               run: cargo test --manifest-path native/rdx-service/windows-native/Cargo.toml --locked --lib service_acl::windows_impl::tests::native_service_setter_retains_exact_protected_dacl -- --ignored --exact --nocapture
             - name: Observe restricted Windows token on disposable runner
               if: matrix.platform == 'win'
-              run: node scripts/verify-windows-restricted-token-probe.mjs
+              shell: pwsh
+              run: |
+                  New-Item -ItemType Directory -Force -Path out/verification | Out-Null
+                  node scripts/verify-windows-restricted-token-probe.mjs | Tee-Object -FilePath out/verification/windows-token-baseline.log
+                  $probeExitCode = $LASTEXITCODE
+                  exit $probeExitCode
+            - name: Verify medium restricted Windows token on disposable runner
+              if: matrix.platform == 'win'
+              shell: pwsh
+              run: |
+                  New-Item -ItemType Directory -Force -Path out/verification | Out-Null
+                  node scripts/verify-windows-restricted-token-probe.mjs --medium | Tee-Object -FilePath out/verification/windows-token-medium.log
+                  $probeExitCode = $LASTEXITCODE
+                  exit $probeExitCode
+            - name: Upload closed Windows token evidence
+              if: always() && matrix.platform == 'win'
+              uses: actions/upload-artifact@v7.0.1
+              with:
+                  name: windows-token-diagnostics-${{ matrix.arch }}
+                  path: |
+                      out/verification/windows-token-baseline.log
+                      out/verification/windows-token-medium.log
+                  if-no-files-found: ignore
+                  retention-days: 3
             - name: Verify Windows PowerShell installer boundary
               if: matrix.platform == 'win'
               run: powershell -NoProfile -ExecutionPolicy Bypass -File native/rdx-service/windows-native/tests/installer_script_contract.ps1
