@@ -12,6 +12,8 @@ use windows::Win32::Security::{
     TokenImpersonation, WinBatchSid, WinInteractiveSid, WinServiceSid,
 };
 use windows::Win32::System::Threading::GetCurrentThreadId;
+#[path = "library_context.rs"]
+mod library_context;
 #[path = "mandatory_context.rs"]
 mod mandatory_context;
 
@@ -279,13 +281,30 @@ fn query_copy(token: &OwnedHandle) -> Result<OwnedHandle, NativeError> {
     Ok(OwnedHandle(handle))
 }
 
-/// Checks object-specific DACL rights only, excluding standard rights, MIC and loader readiness.
+/// Separate fixed window-object masks keep old specific rights distinct from standard rights.
+#[derive(Clone, Copy)]
+enum WindowRights {
+    Specific,
+    ReadControl,
+    Full,
+}
+
+/// Preserves the existing object-specific check, without claiming standard rights or loader readiness.
 fn dacl_allowed(
     descriptor: &Descriptor,
     token: &OwnedHandle,
     station: bool,
 ) -> Result<bool, NativeError> {
-    let token = query_copy(token)?;
+    window_allowed(descriptor, token, station, WindowRights::Specific)
+}
+
+/// Checks one fixed window-object mask with the unchanged interactive generic mapping.
+fn window_allowed(
+    descriptor: &Descriptor,
+    token: &OwnedHandle,
+    station: bool,
+    rights: WindowRights,
+) -> Result<bool, NativeError> {
     // Interactive object generic mappings from the documented SDK access-right tables.
     let mapping = if station {
         GENERIC_MAPPING {
@@ -302,11 +321,27 @@ fn dacl_allowed(
             GenericAll: STANDARD_REQUIRED | DESKTOP_SPECIFIC,
         }
     };
-    let desired = if station {
+    let specific = if station {
         STATION_ALL
     } else {
         DESKTOP_SPECIFIC
     };
+    let desired = match rights {
+        WindowRights::Specific => specific,
+        WindowRights::ReadControl => READ_CONTROL_MASK,
+        WindowRights::Full => STANDARD_REQUIRED | specific,
+    };
+    dacl_access(descriptor, token, desired, &mapping)
+}
+
+/// Checks only DACL masks using an owned query-only copy; it never impersonates a thread.
+fn dacl_access(
+    descriptor: &Descriptor,
+    token: &OwnedHandle,
+    desired: u32,
+    mapping: &GENERIC_MAPPING,
+) -> Result<bool, NativeError> {
+    let token = query_copy(token)?;
     let mut privileges = vec![0_usize; MAX_PROBE_BYTES / size_of::<usize>()];
     let mut bytes = MAX_PROBE_BYTES as u32;
     let mut granted = 0;
@@ -317,7 +352,7 @@ fn dacl_allowed(
             descriptor.pointer(),
             token.0,
             desired,
-            &mapping,
+            mapping,
             Some(privileges.as_mut_ptr().cast::<PRIVILEGE_SET>()),
             &mut bytes,
             &mut granted,
@@ -329,6 +364,40 @@ fn dacl_allowed(
         return Err(NativeError::Other);
     }
     Ok(allowed.as_bool() && granted & desired == desired)
+}
+
+/// Emits READ_CONTROL and full-mask observations independently of existing specific checks.
+fn window_fields(
+    station: Option<&Descriptor>,
+    desktop: Option<&Descriptor>,
+    source: &OwnedHandle,
+    derived: &OwnedHandle,
+) {
+    let mut fields = Vec::new();
+    for (subject, token) in [("source", source), ("derived", derived)] {
+        for (object, is_station, descriptor) in
+            [("station", true, station), ("desktop", false, desktop)]
+        {
+            for (mask, rights) in [
+                ("read-control", WindowRights::ReadControl),
+                ("full", WindowRights::Full),
+            ] {
+                let result = descriptor
+                    .map(|descriptor| window_allowed(descriptor, token, is_station, rights));
+                fields.push(format!(
+                    "{subject}-{object}-{mask}-query-ok={}",
+                    result.as_ref().is_some_and(|result| result.is_ok())
+                ));
+                fields.push(format!(
+                    "{subject}-{object}-{mask}-allowed={}",
+                    result
+                        .as_ref()
+                        .is_some_and(|result| result.as_ref().is_ok_and(|value| *value))
+                ));
+            }
+        }
+    }
+    println!("openrdx-token-window-access {}", fields.join(" "));
 }
 
 /// Emits independently queryable fixed facts without changing the existing child attempt/result.
@@ -481,12 +550,19 @@ pub(super) fn observe(source: &OwnedHandle, derived: &OwnedHandle) {
         .collect::<Vec<_>>()
         .join(" ");
     println!("openrdx-token-desktop-context {closed}");
+    window_fields(
+        station_descriptor.as_ref(),
+        desktop_descriptor.as_ref(),
+        source,
+        derived,
+    );
     mandatory_context::observe(
         station.as_ref().map(|owned| owned.0),
         desktop.as_ref().map(|owned| owned.0),
         source,
         derived,
     );
+    library_context::observe(source, derived);
 }
 
 /// Malformed descriptor headers fail before any native validator follows embedded pointers.
