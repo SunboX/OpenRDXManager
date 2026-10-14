@@ -5,12 +5,13 @@ import { execFile } from 'node:child_process'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify, stripVTControlCharacters } from 'node:util'
+import { processControlEvidence, processControlRequirements } from './windows-process-dacl-control-evidence.mjs'
 import { sourceControlEvidence, sourceControlRequirements } from './windows-source-token-control-evidence.mjs'
 
 const execFileAsync = promisify(execFile)
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 const maximumOutputBytes = 65_536
-const testNames = Object.freeze({ baseline: 'service_acl::windows_impl::restricted_token_probe::native_restricted_token_observations', medium: 'service_acl::windows_impl::restricted_token_probe::medium::native_medium_restricted_token_observations', child: 'service_acl::windows_impl::restricted_token_probe::medium::child::native_medium_restricted_child_observations', 'source-control': 'service_acl::windows_impl::restricted_token_probe::medium::child::source_control::native_source_context_child_control' })
+const testNames = Object.freeze({ baseline: 'service_acl::windows_impl::restricted_token_probe::native_restricted_token_observations', medium: 'service_acl::windows_impl::restricted_token_probe::medium::native_medium_restricted_token_observations', child: 'service_acl::windows_impl::restricted_token_probe::medium::child::native_medium_restricted_child_observations', 'source-control': 'service_acl::windows_impl::restricted_token_probe::medium::child::source_control::native_source_context_child_control', 'process-dacl-control': 'service_acl::windows_impl::restricted_token_probe::medium::child::process_dacl_control::native_process_dacl_child_control' })
 const mediumRequirements = Object.freeze({ 'source-open': true, 'derived-created': true, 'query-ok': true, 'medium-set-ok': true, 'source-unchanged': true, 'same-user': true, 'same-session': true, 'source-active-console': true, 'derived-active-console': true, 'source-console-user-match': true, 'derived-console-user-match': true, 'source-elevated': true, 'derived-elevated': false, 'source-integrity-high': true, 'admin-deny-only': true, 'no-enabled-admins': true, 'enabled-privilege-whitelist': true, 'present-privilege-whitelist': true, 'privileges-reduced': true, 'no-added-privileges': true, 'integrity-medium': true, 'integrity-high': false, 'integrity-reduced': true, 'ui-access-zero': true, 'sandbox-inert-zero': true, 'primary-token': true, 'elevation-type-known': true, 'elevation-type-full': false })
 const childRequirements = Object.freeze({ 'source-open': true, 'derived-created': true, 'query-ok': true, 'fixture-protected': true, 'child-created': true, 'child-image-match': true, 'child-same-user': true, 'child-same-session': true, 'child-console-user-match': true, 'child-active-console': true, 'child-elevated': false, 'child-admin-deny-only': true, 'child-no-enabled-admins': true, 'child-present-privilege-whitelist': true, 'child-medium': true, 'child-ui-access-zero': true, 'child-sandbox-inert-zero': true, 'child-primary': true, 'child-suspended-proof': true, 'child-resumed': true, 'child-exited': true, 'child-exit-zero': true, 'owned-child-cleanup': true, 'negative-proof-reaped': true, 'timeout-reaped': true, 'api-error-rejected': true })
 const diagnosticKeys = new Set([...Object.keys(mediumRequirements), ...Object.keys(childRequirements), 'source-unchanged-after-create', 'source-admin-deny-only', 'source-no-enabled-admins', 'source-integrity-low', 'source-integrity-medium', 'source-integrity-system', 'integrity-low', 'integrity-system', 'elevation-type-default', 'elevation-type-limited'])
@@ -40,16 +41,19 @@ const effectiveContextKeys = new Set([
  * Reconstructs only bounded, schema-validated partial diagnostics; never authorizes a pass.
  * @param {string} stdout - Captured standard output, never forwarded verbatim.
  * @param {string} stderr - Captured standard error, used only for the combined bound.
- * @returns {{facts: string[], context: string[], mandatoryContext: string[], libraryContext: string[], objectContext: string[], effectiveContext: string[], sourceControl: string[], stage: string|null, childExit: string|null, observedFailure: boolean, seen: Map<string,boolean>, reason: string|null}} Closed evidence.
+ * @returns {{facts: string[], context: string[], mandatoryContext: string[], libraryContext: string[], objectContext: string[], effectiveContext: string[], sourceControl: string[], processControl: string[], stage: string|null, childExit: string|null, observedFailure: boolean, seen: Map<string,boolean>, reason: string|null}} Closed evidence.
  */
 function closedEvidence(stdout, stderr) {
     /** @param {string} reason Fixed rejection token. @returns {object} Empty fail-closed diagnostics. */
-    const reject = (reason) => ({ facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], stage: null, childExit: null, observedFailure: false, seen: new Map(), reason })
+    const reject = (reason) => ({ facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], processControl: [], stage: null, childExit: null, observedFailure: false, seen: new Map(), reason })
     if (typeof stdout !== 'string' || typeof stderr !== 'string') return reject('output-type')
     if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) > maximumOutputBytes) return reject('output-bound')
     const sourceEvidence = sourceControlEvidence(stripVTControlCharacters(stdout).split(/\r?\n/u))
     if (sourceEvidence.reason !== null) return reject(sourceEvidence.reason)
     const sourceControl = sourceEvidence.lines
+    const processEvidence = processControlEvidence(stripVTControlCharacters(stdout).split(/\r?\n/u))
+    if (processEvidence.reason !== null) return reject(processEvidence.reason)
+    const processControl = processEvidence.lines
     const facts = []
     const context = []
     const contextSeen = new Set()
@@ -157,7 +161,7 @@ function closedEvidence(stdout, stderr) {
             }
         }
     }
-    return { facts, context, mandatoryContext, libraryContext, objectContext, effectiveContext, sourceControl, sourceEvidence, stage, childExit, observedFailure, seen, reason: null }
+    return { facts, context, mandatoryContext, libraryContext, objectContext, effectiveContext, sourceControl, sourceEvidence, processControl, processEvidence, stage, childExit, observedFailure, seen, reason: null }
 }
 
 /**
@@ -166,7 +170,7 @@ function closedEvidence(stdout, stderr) {
  * @param {string} stdout - Bounded Cargo standard output.
  * @param {string} stderr - Bounded Cargo standard error, never forwarded.
  * @param {object} [options] - Fixed experiment selection.
- * @param {'baseline'|'medium'|'child'|'source-control'} [options.mode] - Exact approved experiment.
+ * @param {'baseline'|'medium'|'child'|'source-control'|'process-dacl-control'} [options.mode] - Exact approved experiment.
  * @returns {{passed: boolean, facts: string[], reason: string}} Exact execution verdict and closed rejection reason.
  */
 export function validateRestrictedTokenProbeOutput(stdout, stderr, { mode = 'baseline' } = {}) {
@@ -175,6 +179,8 @@ export function validateRestrictedTokenProbeOutput(stdout, stderr, { mode = 'bas
     if (!Object.hasOwn(testNames, mode)) return failed('mode')
     const closed = closedEvidence(stdout, stderr)
     if (closed.reason !== null) return failed(closed.reason)
+    if (mode !== 'process-dacl-control' && closed.processControl.length !== 0) return failed('process-control-mode')
+    if (mode === 'process-dacl-control' && (closed.processEvidence.failure || closed.processEvidence.exits.get('baseline-wait') !== 'status-dll-init-failed' || closed.processEvidence.exits.get('positive-wait') !== 'success' || closed.processEvidence.lastStatus !== 'ok' || Object.entries(processControlRequirements).some(([key, expected]) => closed.processEvidence.seen.get(key) !== expected))) return failed('process-control-evidence')
     if (mode !== 'source-control' && closed.sourceControl.length !== 0) return failed('source-control-mode')
     if (mode === 'source-control' && (closed.sourceEvidence.failure || closed.sourceEvidence.exit !== 'self-elevation' || closed.sourceEvidence.lastStatus !== 'ok' || Object.entries(sourceControlRequirements).some(([key, expected]) => closed.sourceEvidence.seen.get(key) !== expected))) return failed('source-control-evidence')
     if (closed.observedFailure || (closed.stage !== null && !closed.stage.includes(' status=ok'))) return failed('stage-result')
@@ -186,7 +192,7 @@ export function validateRestrictedTokenProbeOutput(stdout, stderr, { mode = 'bas
     const namedResults = lines.filter((line) => line.startsWith('test ') && !line.startsWith('test result:'))
     if (namedResults.length !== 1 || namedResults[0] !== `test ${testNames[mode]} ... ok`) return failed('named-result')
     const { seen, facts } = closed
-    if (mode !== 'source-control' && (seen.get('source-open') !== true || seen.get('derived-created') !== true || seen.get('query-ok') !== true)) return failed('query-facts')
+    if (!['source-control', 'process-dacl-control'].includes(mode) && (seen.get('source-open') !== true || seen.get('derived-created') !== true || seen.get('query-ok') !== true)) return failed('query-facts')
     if (mode === 'medium' && (Object.entries(mediumRequirements).some(([key, expected]) => seen.get(key) !== expected) || !seen.has('elevation-type-default') || !seen.has('elevation-type-limited') || Number(seen.get('elevation-type-default')) + Number(seen.get('elevation-type-limited')) !== 1)) return failed('medium-facts')
     if (mode === 'child' && Object.entries(childRequirements).some(([key, expected]) => seen.get(key) !== expected)) return failed('child-facts')
     return { passed: true, facts, reason: 'none' }
@@ -216,30 +222,30 @@ async function executeProbe(command, args, options) {
  * Requires one exact native test plus successful closed kernel-query evidence.
  * @param {object} [options] - Test-only execution dependency.
  * @param {Function} [options.execute] - Awaited executor; receives only the fixed command/options.
- * @param {'baseline'|'medium'|'child'|'source-control'} [options.mode] - Fixed experiment, never an arbitrary native filter.
+ * @param {'baseline'|'medium'|'child'|'source-control'|'process-dacl-control'} [options.mode] - Fixed experiment, never an arbitrary native filter.
  * @returns {Promise<object>} Fail-closed verdict preserving genuine Cargo failure and separately labeling execution errors.
  */
 export async function runRestrictedTokenProbe({ execute = executeProbe, mode = 'baseline' } = {}) {
     try {
-        if (!Object.hasOwn(testNames, mode)) return { exitCode: 1, passed: false, facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'evidence', failureReason: 'mode' }
+        if (!Object.hasOwn(testNames, mode)) return { exitCode: 1, passed: false, facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], processControl: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'evidence', failureReason: 'mode' }
         // Serial libtest prints the test-name prefix before nocapture output. Two fixed
         // threads keep the exact standalone name/result and diagnostic line contract.
         const cargoArguments = Object.freeze(['test', '--manifest-path', 'native/rdx-service/windows-native/Cargo.toml', '--locked', '--lib', testNames[mode], '--', '--ignored', '--exact', '--nocapture', '--test-threads=2'])
         const result = await execute('cargo', cargoArguments, { cwd: projectRoot, shell: false, windowsHide: true, encoding: 'utf8', maxBuffer: maximumOutputBytes, timeout: 120_000 })
-        if (result.executionError || !Number.isInteger(result.exitCode) || result.exitCode < 0 || result.exitCode > 255) return { exitCode: 1, passed: false, facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'execution', failureReason: ['timeout', 'buffer', 'signal', 'launch'].includes(result.executionError) ? result.executionError : 'launch' }
+        if (result.executionError || !Number.isInteger(result.exitCode) || result.exitCode < 0 || result.exitCode > 255) return { exitCode: 1, passed: false, facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], processControl: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'execution', failureReason: ['timeout', 'buffer', 'signal', 'launch'].includes(result.executionError) ? result.executionError : 'launch' }
         const closed = closedEvidence(result.stdout, result.stderr)
-        const diagnostics = { facts: closed.facts, context: closed.context, mandatoryContext: closed.mandatoryContext, libraryContext: closed.libraryContext, objectContext: closed.objectContext, effectiveContext: closed.effectiveContext, sourceControl: closed.sourceControl, stage: closed.stage, childExit: closed.childExit, cargoExitCode: result.exitCode }
+        const diagnostics = { facts: closed.facts, context: closed.context, mandatoryContext: closed.mandatoryContext, libraryContext: closed.libraryContext, objectContext: closed.objectContext, effectiveContext: closed.effectiveContext, sourceControl: closed.sourceControl, processControl: closed.processControl, stage: closed.stage, childExit: closed.childExit, cargoExitCode: result.exitCode }
         if (result.exitCode !== 0) return { exitCode: result.exitCode, passed: false, ...diagnostics, failureClass: 'native-exit', failureReason: 'cargo-nonzero' }
         const evidence = validateRestrictedTokenProbeOutput(result.stdout, result.stderr, { mode })
         return { exitCode: evidence.passed ? 0 : 1, passed: evidence.passed, ...diagnostics, failureClass: evidence.passed ? 'none' : 'evidence', failureReason: evidence.reason }
     } catch {
-        return { exitCode: 1, passed: false, facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'execution', failureReason: 'launch' }
+        return { exitCode: 1, passed: false, facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], processControl: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'execution', failureReason: 'launch' }
     }
 }
 
 /** @returns {Promise<void>} Runs only the fixed gate and emits sanitized evidence. */
 async function main() {
-    const mode = process.argv.length === 2 ? 'baseline' : process.argv.length === 3 && process.argv[2] === '--medium' ? 'medium' : process.argv.length === 3 && process.argv[2] === '--child' ? 'child' : process.argv.length === 3 && process.argv[2] === '--source-control' ? 'source-control' : null
+    const mode = process.argv.length === 2 ? 'baseline' : process.argv.length === 3 && process.argv[2] === '--medium' ? 'medium' : process.argv.length === 3 && process.argv[2] === '--child' ? 'child' : process.argv.length === 3 && process.argv[2] === '--source-control' ? 'source-control' : process.argv.length === 3 && process.argv[2] === '--process-dacl-control' ? 'process-dacl-control' : null
     if (mode === null) {
         process.stderr.write('openrdx-token-probe-gate passed=false arguments-rejected=true\n')
         process.exitCode = 1
@@ -253,6 +259,7 @@ async function main() {
     for (const line of result.objectContext) process.stdout.write(`${line}\n`)
     for (const line of result.effectiveContext) process.stdout.write(`${line}\n`)
     for (const line of result.sourceControl) process.stdout.write(`${line}\n`)
+    for (const line of result.processControl) process.stdout.write(`${line}\n`)
     if (result.stage !== null) process.stdout.write(`${result.stage}\n`)
     if (result.childExit !== null) process.stdout.write(`${result.childExit}\n`)
     process.stdout.write(`openrdx-token-probe-gate passed=${result.passed} class=${result.failureClass} reason=${result.failureReason} cargo-exit-observed=${result.cargoExitCode !== null} cargo-exit-zero=${result.cargoExitCode === 0} cargo-exit-nonzero=${result.cargoExitCode !== null && result.cargoExitCode !== 0}\n`)

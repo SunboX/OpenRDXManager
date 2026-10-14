@@ -3,9 +3,8 @@
 
 //! Actual owned suspended-child security observations, not MIC/loader/authorization proof.
 use super::desktop_context::{Descriptor, dacl_access};
+use super::object_acl;
 use super::*;
-#[path = "object_acl.rs"]
-mod object_acl;
 use windows::Win32::Security::{
     GENERIC_MAPPING, GetKernelObjectSecurity, TOKEN_ALL_ACCESS, TOKEN_DEFAULT_DACL, TOKEN_EXECUTE,
     TOKEN_OWNER, TOKEN_READ, TOKEN_READ_CONTROL, TOKEN_WRITE, TokenDefaultDacl, TokenOwner,

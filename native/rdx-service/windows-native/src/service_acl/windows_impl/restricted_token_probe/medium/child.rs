@@ -16,8 +16,12 @@ mod effective_context;
 mod exit_status;
 #[path = "mandatory_label.rs"]
 mod mandatory_label;
+#[path = "object_acl.rs"]
+mod object_acl;
 #[path = "object_context.rs"]
 mod object_context;
+#[path = "process_dacl_control.rs"]
+mod process_dacl_control;
 #[path = "source_control.rs"]
 mod source_control;
 use windows::Win32::Foundation::{DuplicateHandle, WAIT_OBJECT_0, WAIT_TIMEOUT};
@@ -36,6 +40,15 @@ struct OwnedChild {
 impl OwnedChild {
     /// Creates only the exact privately staged fixture, suspended with no inherited handles.
     fn create(fixture: &Fixture, derived: &OwnedHandle) -> Result<Self, NativeError> {
+        Self::create_with_process_security(fixture, derived, None)
+    }
+
+    /// Shares mechanical creation only; ordinary/source controls retain exactly NULL/NULL attributes.
+    fn create_with_process_security(
+        fixture: &Fixture,
+        derived: &OwnedHandle,
+        process_security: Option<&windows::Win32::Security::SECURITY_ATTRIBUTES>,
+    ) -> Result<Self, NativeError> {
         let application = wide_null(fixture.executable.as_os_str());
         let directory = wide_null(fixture.root.as_os_str());
         let mut desktop = wide_null(OsStr::new(r"winsta0\default"));
@@ -57,7 +70,7 @@ impl OwnedChild {
                 Some(derived.0),
                 PCWSTR(application.as_ptr()),
                 None,
-                None,
+                process_security.map(|attributes| attributes as *const _),
                 None,
                 false,
                 CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,

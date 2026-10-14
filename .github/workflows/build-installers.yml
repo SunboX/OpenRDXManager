@@ -108,6 +108,14 @@ jobs:
                   node scripts/verify-windows-restricted-token-probe.mjs --source-control | Tee-Object -FilePath out/verification/windows-token-source-control.log
                   $probeExitCode = $LASTEXITCODE
                   exit $probeExitCode
+            - name: Observe isolated Windows process DACL control
+              if: always() && matrix.platform == 'win' && steps.windows-token-fixtures.outcome == 'success'
+              continue-on-error: true
+              shell: pwsh
+              run: |
+                  node scripts/verify-windows-restricted-token-probe.mjs --process-dacl-control | Tee-Object -FilePath out/verification/windows-token-process-dacl-control.log
+                  $probeExitCode = $LASTEXITCODE
+                  exit $probeExitCode
             - name: Upload closed Windows token evidence
               if: always() && matrix.platform == 'win'
               uses: actions/upload-artifact@v7.0.1
@@ -118,6 +126,7 @@ jobs:
                       out/verification/windows-token-medium.log
                       out/verification/windows-token-child.log
                       out/verification/windows-token-source-control.log
+                      out/verification/windows-token-process-dacl-control.log
                   if-no-files-found: ignore
                   retention-days: 3
             - name: Verify Windows PowerShell installer boundary
