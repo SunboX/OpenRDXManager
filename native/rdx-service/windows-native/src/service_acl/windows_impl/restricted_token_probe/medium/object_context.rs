@@ -11,8 +11,8 @@ use windows::Win32::Security::{
     TOKEN_OWNER, TOKEN_READ, TOKEN_READ_CONTROL, TOKEN_WRITE, TokenDefaultDacl, TokenOwner,
 };
 use windows::Win32::System::Threading::{
-    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, THREAD_QUERY_LIMITED_INFORMATION,
-    THREAD_SYNCHRONIZE,
+    PROCESS_ALL_ACCESS, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, THREAD_ALL_ACCESS,
+    THREAD_QUERY_LIMITED_INFORMATION, THREAD_SYNCHRONIZE,
 };
 
 /// A fixed standard security-query right, never used to mutate objects.
@@ -21,10 +21,10 @@ const READ_CONTROL_MASK: u32 = 0x0002_0000;
 /// Queries only bounded owner/group/DACL from an existing retained owned kernel handle.
 /// Access-token object descriptors explicitly use this documented API.
 /// https://learn.microsoft.com/en-us/windows/win32/secauthz/access-rights-for-access-token-objects
-fn descriptor(handle: &OwnedHandle) -> Result<Descriptor, NativeError> {
+pub(super) fn descriptor(handle: HANDLE) -> Result<Descriptor, NativeError> {
     let mut needed = 0;
     // SAFETY: retained owned handle, sizing output only; no SACL/privilege request.
-    let sizing = unsafe { GetKernelObjectSecurity(handle.0, 1 | 2 | 4, None, 0, &mut needed) };
+    let sizing = unsafe { GetKernelObjectSecurity(handle, 1 | 2 | 4, None, 0, &mut needed) };
     if !is_error(&sizing, ERROR_INSUFFICIENT_BUFFER)
         || !(size_of::<windows::Win32::Security::SECURITY_DESCRIPTOR_RELATIVE>()..=MAX_PROBE_BYTES)
             .contains(&(needed as usize))
@@ -36,7 +36,7 @@ fn descriptor(handle: &OwnedHandle) -> Result<Descriptor, NativeError> {
     // SAFETY: initialized aligned bounded storage, live kernel handle, read-only flags.
     unsafe {
         GetKernelObjectSecurity(
-            handle.0,
+            handle,
             1 | 2 | 4,
             Some(windows::Win32::Security::PSECURITY_DESCRIPTOR(
                 storage.as_mut_ptr().cast(),
@@ -146,6 +146,7 @@ fn access_fields(
     descriptor: Option<&Descriptor>,
     source: &OwnedHandle,
     derived: &OwnedHandle,
+    actual: Option<&OwnedHandle>,
 ) {
     let is_token = object == "token";
     let mapping = if is_token {
@@ -171,16 +172,27 @@ fn access_fields(
     } else {
         THREAD_SYNCHRONIZE.0
     };
-    for (subject, token) in [("source", source), ("derived", derived)] {
+    let all = match object {
+        "process" => PROCESS_ALL_ACCESS.0,
+        "thread" => THREAD_ALL_ACCESS.0,
+        _ => TOKEN_ALL_ACCESS.0,
+    };
+    // ALL_ACCESS is an observation only; denial/reserved rights do not identify a loader cause.
+    for (subject, token) in [
+        ("source", Some(source)),
+        ("derived", Some(derived)),
+        ("actual", actual),
+    ] {
         for (tag, desired) in [
             ("read-control", READ_CONTROL_MASK),
             ("query", query),
             ("synchronize", synchronize),
+            ("all", all),
         ] {
             if is_token && tag == "synchronize" {
                 continue;
             }
-            let result = descriptor.map(|descriptor| {
+            let result = descriptor.zip(token).map(|(descriptor, token)| {
                 ordinary_descriptor(descriptor, !is_token)?;
                 if desired & 0xf000_0000 != 0 {
                     return Err(NativeError::Other);
@@ -202,22 +214,27 @@ fn access_fields(
 }
 
 /// Observes only this owned, already-proved suspended child; never borrows/looks up other PIDs.
-pub(super) fn observe(source: &OwnedHandle, derived: &OwnedHandle, child: &OwnedChild) {
+pub(super) fn observe(
+    source: &OwnedHandle,
+    derived: &OwnedHandle,
+    child: &OwnedChild,
+    fixture: &Fixture,
+) {
     let mut fields = token_fields("source", source);
     fields.extend(token_fields("derived", derived));
-    let process = descriptor(&child.process).ok();
-    let thread = descriptor(&child.thread).ok();
+    let process = descriptor(child.process.0).ok();
+    let thread = descriptor(child.thread.0).ok();
     let mut handle = HANDLE::default();
     // SAFETY: exact retained owned child process; separate observer opening changes no proof handle.
     let opening = unsafe {
         OpenProcessToken(
             child.process.0,
-            TOKEN_QUERY | TOKEN_READ_CONTROL,
+            TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_READ_CONTROL,
             &mut handle,
         )
     };
     let token = opening.ok().map(|()| OwnedHandle(handle));
-    let token_descriptor = token.as_ref().and_then(|token| descriptor(token).ok());
+    let token_descriptor = token.as_ref().and_then(|token| descriptor(token.0).ok());
     fields.push(format!("child-token-open-query-ok={}", token.is_some()));
     for (object, observed) in [
         ("process", process.as_ref()),
@@ -228,8 +245,16 @@ pub(super) fn observe(source: &OwnedHandle, derived: &OwnedHandle, child: &Owned
             "child-{object}-descriptor-query-ok={}",
             observed.is_some()
         ));
-        access_fields(&mut fields, object, observed, source, derived);
+        access_fields(
+            &mut fields,
+            object,
+            observed,
+            source,
+            derived,
+            token.as_ref(),
+        );
     }
+    effective_context::observe(source, derived, token.as_ref(), child, fixture);
     // Local query handle drops independently; original image/token proof and child lifecycle stay unchanged.
     println!("openrdx-token-object-context {}", fields.join(" "));
 }

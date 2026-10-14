@@ -10,8 +10,12 @@ use fixture::{Fixture, Variant};
 mod creation_ownership;
 #[path = "desktop_context.rs"]
 mod desktop_context;
+#[path = "effective_context.rs"]
+mod effective_context;
 #[path = "../../../../../tests/fixtures/token-child-status.rs"]
 mod exit_status;
+#[path = "mandatory_label.rs"]
+mod mandatory_label;
 #[path = "object_context.rs"]
 mod object_context;
 #[path = "source_control.rs"]
@@ -498,7 +502,12 @@ fn observe_child() -> Result<(), NativeError> {
     checkpoint(ChildPhase::TimeoutProof, || {
         prove_child_quiet(&timeout_child, &wait_fixture, &original, &console, session)
     })?;
-    object_context::observe(&source, &derived, &timeout_child);
+    object_context::observe(&source, &derived, &timeout_child, &wait_fixture);
+    // Optional read-only observations may take time; fresh strict identity/console proof
+    // remains mandatory before the existing Resume transition.
+    checkpoint(ChildPhase::TimeoutProof, || {
+        prove_child_quiet(&timeout_child, &wait_fixture, &original, &console, session)
+    })?;
     checkpoint(ChildPhase::TimeoutResume, || timeout_child.resume())?;
     checkpoint(ChildPhase::TimeoutWait, || {
         let exit = timeout_child.wait(100)?;

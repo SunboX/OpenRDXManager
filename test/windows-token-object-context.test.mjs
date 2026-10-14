@@ -47,7 +47,7 @@ test('observer uses retained owned child handles and separate read-only actual p
     assert.match(source, /GetKernelObjectSecurity/u)
     assert.match(source, /TokenDefaultDacl/u)
     assert.match(source, /TokenOwner/u)
-    assert.match(source, /TOKEN_QUERY \| TOKEN_READ_CONTROL/u)
+    assert.match(source, /TOKEN_QUERY \| TOKEN_DUPLICATE \| TOKEN_READ_CONTROL/u)
     assert.match(source, /OwnedHandle\(handle\)/u)
     assert.match(source, /TOKEN_READ/u)
     assert.match(source, /TOKEN_WRITE/u)
@@ -55,7 +55,7 @@ test('observer uses retained owned child handles and separate read-only actual p
     assert.match(source, /TOKEN_ALL_ACCESS/u)
     assert.doesNotMatch(source, /OpenProcess\(|OpenThread\(|SetKernelObjectSecurity|SetTokenInformation|AdjustTokenPrivileges|ImpersonateLoggedOnUser|ConvertSidToStringSid|LoadLibrary|CreateProcess|TerminateProcess|ResumeThread|assert_eq!|dbg!/u)
     const child = await readFile(new URL('../native/rdx-service/windows-native/src/service_acl/windows_impl/restricted_token_probe/medium/child.rs', import.meta.url), 'utf8')
-    assert.match(child, /object_context::observe\(&source, &derived, &timeout_child\);[\s\S]*?ChildPhase::TimeoutResume/u)
+    assert.match(child, /object_context::observe\(&source, &derived, &timeout_child, &wait_fixture\);[\s\S]*?ChildPhase::TimeoutResume/u)
 })
 
 test('ordinary object ACL parser runs host Rust malformed, generic and unsupported ACE negatives', async () => {

@@ -22,17 +22,29 @@ const mandatoryContextKeys = new Set([...['station', 'desktop'].flatMap((subject
 const libraryContextKeys = new Set(['system-directory-query-ok', ...['source', 'derived'].flatMap((subject) => ['restricted-sids-query-ok', 'restricted-sids-empty', 'restricted-sids-present', 'has-restrictions-query-ok', 'has-restrictions-api-ok', 'has-restrictions-size-match', 'has-restrictions'].map((key) => `${subject}-${key}`)), ...['kernel32', 'advapi32'].flatMap((library) => ['file-query-ok', 'descriptor-query-ok'].map((key) => `${library}-${key}`)), ...['source', 'derived'].flatMap((subject) => ['kernel32', 'advapi32'].flatMap((library) => ['read', 'execute'].flatMap((access) => ['query-ok', 'allowed'].map((key) => `${subject}-${library}-${access}-${key}`))))])
 const windowAccessKeys = new Set(['source', 'derived'].flatMap((subject) => ['station', 'desktop'].flatMap((object) => ['read-control', 'full'].flatMap((access) => ['query-ok', 'allowed'].map((key) => `${subject}-${object}-${access}-${key}`)))))
 
-const objectContextKeys = new Set(['child-process-descriptor-query-ok', 'child-thread-descriptor-query-ok', 'child-token-open-query-ok', 'child-token-descriptor-query-ok', ...['source', 'derived'].flatMap((subject) => ['default-dacl-query-ok', 'default-dacl-valid', 'default-dacl-null', 'owner-query-ok', 'owner-equals-user'].map((key) => `${subject}-${key}`)), ...['source', 'derived'].flatMap((subject) => ['process', 'thread', 'token'].flatMap((object) => (object === 'token' ? ['read-control', 'query'] : ['read-control', 'query', 'synchronize']).flatMap((access) => ['query-ok', 'allowed'].map((key) => `${subject}-${object}-${access}-${key}`))))])
+const objectContextKeys = new Set(['child-process-descriptor-query-ok', 'child-thread-descriptor-query-ok', 'child-token-open-query-ok', 'child-token-descriptor-query-ok', ...['source', 'derived'].flatMap((subject) => ['default-dacl-query-ok', 'default-dacl-valid', 'default-dacl-null', 'owner-query-ok', 'owner-equals-user'].map((key) => `${subject}-${key}`)), ...['source', 'derived', 'actual'].flatMap((subject) => ['process', 'thread', 'token'].flatMap((object) => (object === 'token' ? ['read-control', 'query', 'all'] : ['read-control', 'query', 'synchronize', 'all']).flatMap((access) => ['query-ok', 'allowed'].map((key) => `${subject}-${object}-${access}-${key}`))))])
+
+const effectiveContextKeys = new Set([
+    'actual-snapshot-query-ok',
+    'derived-fresh-snapshot-query-ok',
+    'actual-derived-snapshot-match',
+    'fixture-root-descriptor-query-ok',
+    'fixture-image-descriptor-query-ok',
+    ...['user', 'session', 'elevation', 'integrity', 'ui-access', 'sandbox-inert', 'type', 'elevation-type', 'groups', 'privileges'].map((key) => `actual-derived-${key}-match`),
+    ...['child-process', 'child-thread', 'child-token', 'fixture-root', 'fixture-image'].flatMap((object) => ['query-ok', 'query-unsupported', 'parse-valid', 'present', 'single', 'known', 'implicit-medium', 'low', 'medium', 'high', 'system', 'policy-known', 'no-write-up', 'no-read-up', 'no-execute-up'].map((key) => `${object}-label-${key}`)),
+    ...['source', 'derived', 'actual'].flatMap((subject) => ['principals-query-ok', 'builtin-users-enabled', 'logon-single', 'logon-enabled'].map((key) => `${subject}-${key}`)),
+    ...['source', 'derived', 'actual'].flatMap((subject) => ['root', 'image'].flatMap((object) => ['read', 'execute'].flatMap((access) => ['query-ok', 'allowed'].map((key) => `${subject}-fixture-${object}-${access}-${key}`))))
+])
 
 /**
  * Reconstructs only bounded, schema-validated partial diagnostics; never authorizes a pass.
  * @param {string} stdout - Captured standard output, never forwarded verbatim.
  * @param {string} stderr - Captured standard error, used only for the combined bound.
- * @returns {{facts: string[], context: string[], mandatoryContext: string[], libraryContext: string[], objectContext: string[], sourceControl: string[], stage: string|null, childExit: string|null, observedFailure: boolean, seen: Map<string,boolean>, reason: string|null}} Closed evidence.
+ * @returns {{facts: string[], context: string[], mandatoryContext: string[], libraryContext: string[], objectContext: string[], effectiveContext: string[], sourceControl: string[], stage: string|null, childExit: string|null, observedFailure: boolean, seen: Map<string,boolean>, reason: string|null}} Closed evidence.
  */
 function closedEvidence(stdout, stderr) {
     /** @param {string} reason Fixed rejection token. @returns {object} Empty fail-closed diagnostics. */
-    const reject = (reason) => ({ facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], sourceControl: [], stage: null, childExit: null, observedFailure: false, seen: new Map(), reason })
+    const reject = (reason) => ({ facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], stage: null, childExit: null, observedFailure: false, seen: new Map(), reason })
     if (typeof stdout !== 'string' || typeof stderr !== 'string') return reject('output-type')
     if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) > maximumOutputBytes) return reject('output-bound')
     const sourceEvidence = sourceControlEvidence(stripVTControlCharacters(stdout).split(/\r?\n/u))
@@ -47,6 +59,8 @@ function closedEvidence(stdout, stderr) {
     const librarySeen = new Set()
     const objectContext = []
     const objectSeen = new Set()
+    const effectiveContext = []
+    const effectiveSeen = new Set()
     let stage = null
     let observedFailure = false
     let stageFailure = false
@@ -119,6 +133,16 @@ function closedEvidence(stdout, stderr) {
             }
             // Actual child descriptors remain observations, never execution authority.
             objectContext.push(`openrdx-token-object-context ${pairs.join(' ')}`)
+        } else if (line.startsWith('openrdx-token-effective-context ')) {
+            const pairs = []
+            for (const pair of line.slice('openrdx-token-effective-context '.length).split(' ')) {
+                const match = /^([a-z-]+)=(true|false)$/u.exec(pair)
+                if (match === null || !effectiveContextKeys.has(match[1]) || effectiveSeen.has(match[1])) return reject('effective-context-schema')
+                effectiveSeen.add(match[1])
+                pairs.push(`${match[1]}=${match[2]}`)
+            }
+            // Labels/fixture/full-rights/token comparisons are optional observations only.
+            effectiveContext.push(`openrdx-token-effective-context ${pairs.join(' ')}`)
         } else if (line.startsWith('openrdx-token-child-exit ')) {
             const match = /^openrdx-token-child-exit phase=(timeout-wait|positive-wait) category=([a-z-]+)$/u.exec(line)
             if (match === null || !childExitCategories.has(match[2])) return reject('child-exit-schema')
@@ -133,7 +157,7 @@ function closedEvidence(stdout, stderr) {
             }
         }
     }
-    return { facts, context, mandatoryContext, libraryContext, objectContext, sourceControl, sourceEvidence, stage, childExit, observedFailure, seen, reason: null }
+    return { facts, context, mandatoryContext, libraryContext, objectContext, effectiveContext, sourceControl, sourceEvidence, stage, childExit, observedFailure, seen, reason: null }
 }
 
 /**
@@ -197,19 +221,19 @@ async function executeProbe(command, args, options) {
  */
 export async function runRestrictedTokenProbe({ execute = executeProbe, mode = 'baseline' } = {}) {
     try {
-        if (!Object.hasOwn(testNames, mode)) return { exitCode: 1, passed: false, facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], sourceControl: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'evidence', failureReason: 'mode' }
+        if (!Object.hasOwn(testNames, mode)) return { exitCode: 1, passed: false, facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'evidence', failureReason: 'mode' }
         // Serial libtest prints the test-name prefix before nocapture output. Two fixed
         // threads keep the exact standalone name/result and diagnostic line contract.
         const cargoArguments = Object.freeze(['test', '--manifest-path', 'native/rdx-service/windows-native/Cargo.toml', '--locked', '--lib', testNames[mode], '--', '--ignored', '--exact', '--nocapture', '--test-threads=2'])
         const result = await execute('cargo', cargoArguments, { cwd: projectRoot, shell: false, windowsHide: true, encoding: 'utf8', maxBuffer: maximumOutputBytes, timeout: 120_000 })
-        if (result.executionError || !Number.isInteger(result.exitCode) || result.exitCode < 0 || result.exitCode > 255) return { exitCode: 1, passed: false, facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], sourceControl: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'execution', failureReason: ['timeout', 'buffer', 'signal', 'launch'].includes(result.executionError) ? result.executionError : 'launch' }
+        if (result.executionError || !Number.isInteger(result.exitCode) || result.exitCode < 0 || result.exitCode > 255) return { exitCode: 1, passed: false, facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'execution', failureReason: ['timeout', 'buffer', 'signal', 'launch'].includes(result.executionError) ? result.executionError : 'launch' }
         const closed = closedEvidence(result.stdout, result.stderr)
-        const diagnostics = { facts: closed.facts, context: closed.context, mandatoryContext: closed.mandatoryContext, libraryContext: closed.libraryContext, objectContext: closed.objectContext, sourceControl: closed.sourceControl, stage: closed.stage, childExit: closed.childExit, cargoExitCode: result.exitCode }
+        const diagnostics = { facts: closed.facts, context: closed.context, mandatoryContext: closed.mandatoryContext, libraryContext: closed.libraryContext, objectContext: closed.objectContext, effectiveContext: closed.effectiveContext, sourceControl: closed.sourceControl, stage: closed.stage, childExit: closed.childExit, cargoExitCode: result.exitCode }
         if (result.exitCode !== 0) return { exitCode: result.exitCode, passed: false, ...diagnostics, failureClass: 'native-exit', failureReason: 'cargo-nonzero' }
         const evidence = validateRestrictedTokenProbeOutput(result.stdout, result.stderr, { mode })
         return { exitCode: evidence.passed ? 0 : 1, passed: evidence.passed, ...diagnostics, failureClass: evidence.passed ? 'none' : 'evidence', failureReason: evidence.reason }
     } catch {
-        return { exitCode: 1, passed: false, facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], sourceControl: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'execution', failureReason: 'launch' }
+        return { exitCode: 1, passed: false, facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'execution', failureReason: 'launch' }
     }
 }
 
@@ -227,6 +251,7 @@ async function main() {
     for (const line of result.mandatoryContext) process.stdout.write(`${line}\n`)
     for (const line of result.libraryContext) process.stdout.write(`${line}\n`)
     for (const line of result.objectContext) process.stdout.write(`${line}\n`)
+    for (const line of result.effectiveContext) process.stdout.write(`${line}\n`)
     for (const line of result.sourceControl) process.stdout.write(`${line}\n`)
     if (result.stage !== null) process.stdout.write(`${result.stage}\n`)
     if (result.childExit !== null) process.stdout.write(`${result.childExit}\n`)

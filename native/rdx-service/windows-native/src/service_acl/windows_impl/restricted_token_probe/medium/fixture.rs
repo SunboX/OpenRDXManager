@@ -24,6 +24,14 @@ pub(super) struct Fixture {
     cleaned: bool,
 }
 impl Fixture {
+    /// Borrows only the retained root/image pins; observers cannot replace or close owned handles.
+    pub(super) fn retained_payload(&self) -> Option<(&File, &File)> {
+        if self.payload_pins.len() != 2 {
+            return None;
+        }
+        Some((&self.payload_pins[0], &self.payload_pins[1]))
+    }
+
     /// Copies fixed CI-compiled bytes from a pinned source into an owned protected namespace.
     pub(super) fn create(administrator: &OwnedSid, variant: Variant) -> Result<Self, NativeError> {
         let basename = match variant {

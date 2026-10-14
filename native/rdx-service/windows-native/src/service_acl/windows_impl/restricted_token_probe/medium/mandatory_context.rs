@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! Read-only LABEL-only and token-policy facts; never loader or access authorization.
+use super::super::mandatory_label;
 use super::*;
-#[path = "mandatory_label.rs"]
-mod mandatory_label;
 use mandatory_label::LabelFacts;
 use windows::Win32::Foundation::GetLastError;
 use windows::Win32::Security::TokenMandatoryPolicy;
