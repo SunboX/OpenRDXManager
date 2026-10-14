@@ -80,7 +80,7 @@ test('medium gate invokes only its exact fixed ignored test and preserves Cargo 
         execute: async (command, args) => {
             assert.equal(command, 'cargo')
             assert.ok(args.includes(name))
-            assert.deepEqual(args.slice(-3), ['--ignored', '--exact', '--nocapture'])
+            assert.deepEqual(args.slice(-4), ['--ignored', '--exact', '--nocapture', '--test-threads=2'])
             return { exitCode: 101, stdout: output(), stderr: '' }
         }
     })

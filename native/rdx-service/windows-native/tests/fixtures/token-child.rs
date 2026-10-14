@@ -23,6 +23,10 @@ unsafe extern "system" {
     fn ProcessIdToSessionId(process: u32, session: *mut u32) -> i32;
     /// Closes only successfully opened owned query-token handles.
     fn CloseHandle(handle: Handle) -> i32;
+    /// Reads the active console session without changing desktop/account state.
+    /// The documented import library is Kernel32.lib, not Wtsapi32.lib.
+    /// https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-wtsgetactiveconsolesessionid
+    fn WTSGetActiveConsoleSessionId() -> u32;
 }
 #[link(name = "advapi32")]
 unsafe extern "system" {
@@ -36,11 +40,6 @@ unsafe extern "system" {
         capacity: u32,
         returned: *mut u32,
     ) -> i32;
-}
-#[link(name = "wtsapi32")]
-unsafe extern "system" {
-    /// Reads the active console session without changing desktop/account state.
-    fn WTSGetActiveConsoleSessionId() -> u32;
 }
 
 /// Owns only this process' successfully opened query token.

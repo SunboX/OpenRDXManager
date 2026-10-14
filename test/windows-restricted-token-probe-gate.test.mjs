@@ -51,7 +51,7 @@ test('token probe gate preserves original Cargo failure and invokes only the fix
         execute: async (command, args, options) => {
             calls += 1
             assert.equal(command, 'cargo')
-            assert.deepEqual(args, ['test', '--manifest-path', 'native/rdx-service/windows-native/Cargo.toml', '--locked', '--lib', name, '--', '--ignored', '--exact', '--nocapture'])
+            assert.deepEqual(args, ['test', '--manifest-path', 'native/rdx-service/windows-native/Cargo.toml', '--locked', '--lib', name, '--', '--ignored', '--exact', '--nocapture', '--test-threads=2'])
             assert.equal(options.shell, false)
             assert.equal(options.maxBuffer, 65_536)
             return { exitCode: 101, stdout: successful, stderr: 'private arbitrary stderr' }
@@ -60,7 +60,12 @@ test('token probe gate preserves original Cargo failure and invokes only the fix
     assert.equal(calls, 1)
     assert.equal(result.exitCode, 101)
     assert.equal(result.passed, false)
-    assert.deepEqual(result.facts, [])
+    assert.deepEqual(
+        result.facts,
+        successful.split('\n').filter((line) => line.startsWith('openrdx-token-probe '))
+    )
+    assert.equal(result.cargoExitCode, 101)
+    assert.equal(result.failureClass, 'native-exit')
 })
 
 test('token probe gate fails zero-exit invalid evidence and bounded-output overflow', async () => {
@@ -81,5 +86,5 @@ test('token probe gate passes exact successful execution and sanitizes launch er
             throw new Error('private launch details')
         }
     })
-    assert.deepEqual(failed, { exitCode: 1, passed: false, facts: [] })
+    assert.deepEqual(failed, { exitCode: 1, passed: false, facts: [], stage: null, cargoExitCode: null, failureClass: 'execution', failureReason: 'launch' })
 })

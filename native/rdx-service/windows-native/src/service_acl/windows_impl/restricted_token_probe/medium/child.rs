@@ -265,102 +265,240 @@ fn negative_predicates(
     Ok(())
 }
 
+/// Closed test-only transitions distinguish API failure, assertion panic and output validation.
+#[derive(Clone, Copy)]
+enum ChildPhase {
+    SourceOpen,
+    SourceQuery,
+    ConsoleQuery,
+    SourceConsole,
+    Derive,
+    Medium,
+    PredicateNegatives,
+    ProofFixture,
+    QueryOnlyToken,
+    ApiDenial,
+    NegativeCreate,
+    NegativeProof,
+    NegativeReap,
+    TimeoutFixture,
+    TimeoutCreate,
+    TimeoutProof,
+    TimeoutResume,
+    TimeoutWait,
+    TimeoutReap,
+    TimeoutCleanup,
+    PositiveCreate,
+    SourceRequery,
+    PositiveProof,
+    PositiveResume,
+    PositiveWait,
+    PositiveCleanup,
+}
+impl ChildPhase {
+    /// Returns a fixed token; no external values or kernel identities are formatted.
+    fn name(self) -> &'static str {
+        match self {
+            Self::SourceOpen => "source-open",
+            Self::SourceQuery => "source-query",
+            Self::ConsoleQuery => "console-query",
+            Self::SourceConsole => "source-console",
+            Self::Derive => "derive",
+            Self::Medium => "medium",
+            Self::PredicateNegatives => "predicate-negatives",
+            Self::ProofFixture => "proof-fixture",
+            Self::QueryOnlyToken => "query-only-token",
+            Self::ApiDenial => "api-denial",
+            Self::NegativeCreate => "negative-create",
+            Self::NegativeProof => "negative-proof",
+            Self::NegativeReap => "negative-reap",
+            Self::TimeoutFixture => "timeout-fixture",
+            Self::TimeoutCreate => "timeout-create",
+            Self::TimeoutProof => "timeout-proof",
+            Self::TimeoutResume => "timeout-resume",
+            Self::TimeoutWait => "timeout-wait",
+            Self::TimeoutReap => "timeout-reap",
+            Self::TimeoutCleanup => "timeout-cleanup",
+            Self::PositiveCreate => "positive-create",
+            Self::SourceRequery => "source-requery",
+            Self::PositiveProof => "positive-proof",
+            Self::PositiveResume => "positive-resume",
+            Self::PositiveWait => "positive-wait",
+            Self::PositiveCleanup => "positive-cleanup",
+        }
+    }
+}
+/// Emits a fixed attempted transition even if its operation panics; never prints panic text.
+fn checkpoint<T>(
+    phase: ChildPhase,
+    operation: impl FnOnce() -> Result<T, NativeError>,
+) -> Result<T, NativeError> {
+    println!(
+        "openrdx-token-probe-stage phase={} status=begin",
+        phase.name()
+    );
+    let result = operation();
+    match &result {
+        Ok(_) => println!("openrdx-token-probe-stage phase={} status=ok", phase.name()),
+        Err(error) => println!(
+            "openrdx-token-probe-stage phase={} status=failed reason={error:?}",
+            phase.name()
+        ),
+    }
+    result
+}
+
+/// Closed checkpoint diagnostics leave the original fieldless error unchanged.
+#[test]
+fn checkpoint_preserves_original_result() {
+    for error in [
+        NativeError::AccessDenied,
+        NativeError::Busy,
+        NativeError::Other,
+    ] {
+        assert!(checkpoint::<()>(ChildPhase::PositiveProof, || Err(error)) == Err(error));
+    }
+    assert!(checkpoint(ChildPhase::PositiveProof, || Ok(7)) == Ok(7));
+}
+
 /// Executes one owned harmless child only after token-only and suspended-image proof.
 fn observe_child() -> Result<(), NativeError> {
-    let mut handle = HANDLE::default();
-    // SAFETY: only the current source token is duplicated; assignment/default rights serve the derived token.
-    unsafe {
-        OpenProcessToken(
-            GetCurrentProcess(),
-            TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ADJUST_DEFAULT | TOKEN_ASSIGN_PRIMARY,
-            &mut handle,
-        )
-    }
-    .map_err(map_native_error)?;
-    let source = OwnedHandle(handle);
-    let original = SourceSnapshot::read(&source)?;
-    let administrator = token_user_sid(&source)?;
-    // SAFETY: no pointer preconditions; invalid/no-console context fails closed.
-    let session = unsafe { WTSGetActiveConsoleSessionId() };
-    if session == u32::MAX {
-        return Err(NativeError::AccessDenied);
-    }
-    let console = console_sid(session)?;
-    if original.user != console.bytes()
-        || original.session != session
-        || original.elevation == 0
-        || original.integrity != 0x3000
-    {
-        return Err(NativeError::AccessDenied);
-    }
-    let mut handle = HANDLE::default();
-    // SAFETY: no supplied SID/privilege tables, approved reduction flags only.
-    unsafe {
-        CreateRestrictedToken(
-            source.0,
-            LUA_TOKEN | DISABLE_MAX_PRIVILEGE,
-            None,
-            None,
-            None,
-            &mut handle,
-        )
-    }
-    .map_err(map_native_error)?;
-    let derived = OwnedHandle(handle);
-    set_medium(&derived)?;
-    negative_predicates(&original, &derived, &console, session)?;
-    let mut fixture = Fixture::create(&administrator, Variant::Proof)?;
-    let mut query_handle = HANDLE::default();
-    // SAFETY: borrowed current-process handles; duplicate has only query rights and is owned.
-    unsafe {
-        DuplicateHandle(
-            GetCurrentProcess(),
-            derived.0,
-            GetCurrentProcess(),
-            &mut query_handle,
-            TOKEN_QUERY.0,
-            false,
-            Default::default(),
-        )
-    }
-    .map_err(map_native_error)?;
-    let query_only = OwnedHandle(query_handle);
-    // It is still a restricted derived token; never pass the elevated source to child creation.
-    assert!(
-        OwnedChild::create(&fixture, &query_only).is_err(),
-        "missing-assign-rights-accepted"
-    );
-    // Actual suspended creation plus deliberate failed-proof cleanup, without executing that child.
-    let mut negative = OwnedChild::create(&fixture, &derived)?;
-    let mut mismatched_source = SourceSnapshot::read(&source)?;
-    mismatched_source.user = vec![0];
-    assert!(
-        prove_child(&negative, &fixture, &mismatched_source, &console, session).is_err(),
-        "wrong-source-accepted"
-    );
-    negative.terminate_and_reap()?;
+    let source = checkpoint(ChildPhase::SourceOpen, || {
+        let mut handle = HANDLE::default();
+        // SAFETY: only the current source token is queried/duplicated; later modification is derived-only.
+        unsafe {
+            OpenProcessToken(
+                GetCurrentProcess(),
+                TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ADJUST_DEFAULT | TOKEN_ASSIGN_PRIMARY,
+                &mut handle,
+            )
+        }
+        .map_err(map_native_error)?;
+        Ok(OwnedHandle(handle))
+    })?;
+    let (original, administrator) = checkpoint(ChildPhase::SourceQuery, || {
+        Ok((SourceSnapshot::read(&source)?, token_user_sid(&source)?))
+    })?;
+    let (session, console) = checkpoint(ChildPhase::ConsoleQuery, || {
+        // SAFETY: read-only local console query without pointer preconditions.
+        let session = unsafe { WTSGetActiveConsoleSessionId() };
+        if session == u32::MAX {
+            return Err(NativeError::AccessDenied);
+        }
+        Ok((session, console_sid(session)?))
+    })?;
+    checkpoint(ChildPhase::SourceConsole, || {
+        if original.user != console.bytes()
+            || original.session != session
+            || original.elevation == 0
+            || original.integrity != 0x3000
+        {
+            return Err(NativeError::AccessDenied);
+        }
+        Ok(())
+    })?;
+    let derived = checkpoint(ChildPhase::Derive, || {
+        let mut handle = HANDLE::default();
+        // SAFETY: no supplied SID/privilege tables, approved reduction flags only.
+        unsafe {
+            CreateRestrictedToken(
+                source.0,
+                LUA_TOKEN | DISABLE_MAX_PRIVILEGE,
+                None,
+                None,
+                None,
+                &mut handle,
+            )
+        }
+        .map_err(map_native_error)?;
+        Ok(OwnedHandle(handle))
+    })?;
+    checkpoint(ChildPhase::Medium, || set_medium(&derived))?;
+    checkpoint(ChildPhase::PredicateNegatives, || {
+        negative_predicates(&original, &derived, &console, session)
+    })?;
+    let mut fixture = checkpoint(ChildPhase::ProofFixture, || {
+        Fixture::create(&administrator, Variant::Proof)
+    })?;
+    let query_only = checkpoint(ChildPhase::QueryOnlyToken, || {
+        let mut handle = HANDLE::default();
+        // SAFETY: borrowed current-process handles; duplicate has only query rights and is owned.
+        unsafe {
+            DuplicateHandle(
+                GetCurrentProcess(),
+                derived.0,
+                GetCurrentProcess(),
+                &mut handle,
+                TOKEN_QUERY.0,
+                false,
+                Default::default(),
+            )
+        }
+        .map_err(map_native_error)?;
+        Ok(OwnedHandle(handle))
+    })?;
+    checkpoint(ChildPhase::ApiDenial, || {
+        // Never pass the elevated source to creation, including negative tests.
+        assert!(
+            OwnedChild::create(&fixture, &query_only).is_err(),
+            "missing-assign-rights-accepted"
+        );
+        Ok(())
+    })?;
+    let mut negative = checkpoint(ChildPhase::NegativeCreate, || {
+        OwnedChild::create(&fixture, &derived)
+    })?;
+    checkpoint(ChildPhase::NegativeProof, || {
+        let mut mismatched_source = SourceSnapshot::read(&source)?;
+        mismatched_source.user = vec![0];
+        assert!(
+            prove_child(&negative, &fixture, &mismatched_source, &console, session).is_err(),
+            "wrong-source-accepted"
+        );
+        Ok(())
+    })?;
+    checkpoint(ChildPhase::NegativeReap, || negative.terminate_and_reap())?;
     drop(negative);
-    let mut wait_fixture = Fixture::create(&administrator, Variant::Wait)?;
-    let mut timeout_child = OwnedChild::create(&wait_fixture, &derived)?;
-    // The timeout variant has separate pinned bytes; validate its token/image without emitting duplicate facts.
-    prove_child_quiet(&timeout_child, &wait_fixture, &original, &console, session)?;
-    timeout_child.resume()?;
-    assert!(
-        timeout_child.wait(100)?.is_none(),
-        "timeout-fixture-ended-before-deadline"
-    );
-    timeout_child.terminate_and_reap()?;
+    let mut wait_fixture = checkpoint(ChildPhase::TimeoutFixture, || {
+        Fixture::create(&administrator, Variant::Wait)
+    })?;
+    let mut timeout_child = checkpoint(ChildPhase::TimeoutCreate, || {
+        OwnedChild::create(&wait_fixture, &derived)
+    })?;
+    checkpoint(ChildPhase::TimeoutProof, || {
+        prove_child_quiet(&timeout_child, &wait_fixture, &original, &console, session)
+    })?;
+    checkpoint(ChildPhase::TimeoutResume, || timeout_child.resume())?;
+    checkpoint(ChildPhase::TimeoutWait, || {
+        assert!(
+            timeout_child.wait(100)?.is_none(),
+            "timeout-fixture-ended-before-deadline"
+        );
+        Ok(())
+    })?;
+    checkpoint(ChildPhase::TimeoutReap, || {
+        timeout_child.terminate_and_reap()
+    })?;
     drop(timeout_child);
-    wait_fixture.cleanup()?;
-    let mut child = OwnedChild::create(&fixture, &derived)?;
-    let observed_source_unchanged = original == SourceSnapshot::read(&source)?;
-    prove_child(&child, &fixture, &original, &console, session)?;
-    child.resume()?;
-    if child.wait(10_000)? != Some(true) {
-        return Err(NativeError::Other);
-    }
+    checkpoint(ChildPhase::TimeoutCleanup, || wait_fixture.cleanup())?;
+    let mut child = checkpoint(ChildPhase::PositiveCreate, || {
+        OwnedChild::create(&fixture, &derived)
+    })?;
+    let observed_source_unchanged = checkpoint(ChildPhase::SourceRequery, || {
+        Ok(original == SourceSnapshot::read(&source)?)
+    })?;
+    checkpoint(ChildPhase::PositiveProof, || {
+        prove_child(&child, &fixture, &original, &console, session)
+    })?;
+    checkpoint(ChildPhase::PositiveResume, || child.resume())?;
+    checkpoint(ChildPhase::PositiveWait, || {
+        if child.wait(10_000)? != Some(true) {
+            return Err(NativeError::Other);
+        }
+        Ok(())
+    })?;
     drop(child);
-    fixture.cleanup()?;
+    checkpoint(ChildPhase::PositiveCleanup, || fixture.cleanup())?;
     println!(
         "openrdx-token-probe source-open=true derived-created=true query-ok=true fixture-protected=true child-created=true child-resumed=true child-exited=true child-exit-zero=true owned-child-cleanup=true negative-proof-reaped=true timeout-reaped=true api-error-rejected=true source-unchanged-after-create={observed_source_unchanged}"
     );
