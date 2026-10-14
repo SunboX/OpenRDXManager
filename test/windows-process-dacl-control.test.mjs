@@ -95,7 +95,7 @@ test('descriptor component transformation runs real host adversarial Rust tests'
         await writeFile(driver, ['mandatory_label', 'object_acl', 'process_descriptor'].map((module) => `#[path=${JSON.stringify(fileURLToPath(new URL(`${module}.rs`, root)))}]\nmod ${module};`).join('\n'))
         await execute('rustc', ['--edition=2024', '--test', driver, '-o', binary], { timeout: 30_000 })
         const { stdout } = await execute(binary, ['process_descriptor::process_descriptor_tests::', '--test-threads=2'])
-        assert.match(stdout, /4 passed; 0 failed/u)
+        assert.match(stdout, /6 passed; 0 failed/u)
     } finally {
         await rm(directory, { recursive: true, force: true })
     }

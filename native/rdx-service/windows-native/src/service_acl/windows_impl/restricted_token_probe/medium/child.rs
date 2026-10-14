@@ -20,6 +20,8 @@ mod mandatory_label;
 mod object_acl;
 #[path = "object_context.rs"]
 mod object_context;
+#[path = "object_dacl_controls.rs"]
+mod object_dacl_controls;
 #[path = "process_dacl_control.rs"]
 mod process_dacl_control;
 #[path = "source_control.rs"]
@@ -49,6 +51,16 @@ impl OwnedChild {
         derived: &OwnedHandle,
         process_security: Option<&windows::Win32::Security::SECURITY_ATTRIBUTES>,
     ) -> Result<Self, NativeError> {
+        Self::create_with_object_security(fixture, derived, process_security, None)
+    }
+
+    /// Test matrix supplies only private fixed process/thread descriptors; ordinary paths use NULL/NULL.
+    fn create_with_object_security(
+        fixture: &Fixture,
+        derived: &OwnedHandle,
+        process_security: Option<&windows::Win32::Security::SECURITY_ATTRIBUTES>,
+        thread_security: Option<&windows::Win32::Security::SECURITY_ATTRIBUTES>,
+    ) -> Result<Self, NativeError> {
         let application = wide_null(fixture.executable.as_os_str());
         let directory = wide_null(fixture.root.as_os_str());
         let mut desktop = wide_null(OsStr::new(r"winsta0\default"));
@@ -71,7 +83,7 @@ impl OwnedChild {
                 PCWSTR(application.as_ptr()),
                 None,
                 process_security.map(|attributes| attributes as *const _),
-                None,
+                thread_security.map(|attributes| attributes as *const _),
                 false,
                 CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
                 Some(environment.as_ptr().cast()),

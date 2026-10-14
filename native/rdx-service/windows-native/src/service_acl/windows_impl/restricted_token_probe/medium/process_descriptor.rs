@@ -14,6 +14,23 @@ pub struct Components {
     label: Option<Vec<u8>>,
 }
 
+/// Compiled object roles select exact public SDK masks; callers cannot supply arbitrary rights.
+#[derive(Clone, Copy)]
+pub enum ObjectRole {
+    Process,
+    Thread,
+    Token,
+}
+impl ObjectRole {
+    /// Concrete SDK ALL_ACCESS values, checked against platform constants by the native control.
+    fn mask(self) -> u32 {
+        match self {
+            Self::Process | Self::Thread => 0x001f_ffff,
+            Self::Token => 0x000f_01ff,
+        }
+    }
+}
+
 /// Validates bounded source-default ACL bytes without interpreting pointer-bearing token headers.
 pub fn validate_default_acl(bytes: &[u8]) -> Result<(), ()> {
     object_acl::validate_acl(bytes, false)
@@ -111,7 +128,16 @@ impl Components {
 
     /// Adds exactly one explicit noninheriting ALLOW ACE, preserving every old byte/denial/order.
     pub fn with_user_process_allow(&self, user: &[u8], mask: u32) -> Result<Self, ()> {
-        if sid(user)? != user || mask != 0x001f_ffff {
+        if mask != ObjectRole::Process.mask() {
+            return Err(());
+        }
+        self.with_user_allow(user, ObjectRole::Process)
+    }
+
+    /// Adds one exact verified-user ACE with the compiled object-specific mask only.
+    pub fn with_user_allow(&self, user: &[u8], role: ObjectRole) -> Result<Self, ()> {
+        let mask = role.mask();
+        if sid(user)? != user {
             return Err(());
         }
         let count = u16::from_le_bytes([self.dacl[4], self.dacl[5]]);
@@ -243,6 +269,47 @@ mod process_descriptor_tests {
         assert!(granted.dacl[56..] == user(7));
         assert!(granted.same_other_components(&baseline));
         assert!(Components::parse(&granted.bytes().unwrap()).unwrap() == granted);
+    }
+    /// A token-object control needs its exact concrete SDK mask, never process rights.
+    #[test]
+    fn token_user_grant_preserves_original() {
+        let baseline = sample();
+        for role in [ObjectRole::Process, ObjectRole::Thread, ObjectRole::Token] {
+            let granted = baseline.with_user_allow(&user(7), role).unwrap();
+            assert!(granted.same_other_components(&baseline));
+            assert!(granted.dacl[8..48] == baseline.dacl[8..]);
+            assert!(granted.dacl[48] == 0 && granted.dacl[49] == 0);
+            assert!(granted.dacl[52..56] == role.mask().to_le_bytes());
+            assert!(granted.dacl[56..] == user(7));
+            assert!(Components::parse(&granted.bytes().unwrap()).unwrap() == granted);
+        }
+        assert!(
+            baseline
+                .with_user_process_allow(&user(7), 0x000f_01ff)
+                .is_err()
+        );
+    }
+    /// New grants precede inherited ACEs while retaining every denial/flag/mask byte unchanged.
+    #[test]
+    fn inherited_ace_bytes_and_invalid_trustees_are_preserved() {
+        let mut baseline = sample();
+        baseline.dacl[29] = 0x10;
+        let original = baseline.dacl.clone();
+        for role in [ObjectRole::Process, ObjectRole::Thread, ObjectRole::Token] {
+            let granted = baseline.with_user_allow(&user(7), role).unwrap();
+            assert!(granted.dacl[8..28] == original[8..28]);
+            assert!(granted.dacl[28..32] == [0, 0, 20, 0]);
+            assert!(granted.dacl[32..36] == role.mask().to_le_bytes());
+            assert!(granted.dacl[36..48] == user(7));
+            assert!(granted.dacl[48..68] == original[28..48]);
+            for malformed in [
+                vec![],
+                vec![1, 16, 0, 0, 0, 0, 0, 5],
+                [user(7), vec![0]].concat(),
+            ] {
+                assert!(baseline.with_user_allow(&malformed, role).is_err());
+            }
+        }
     }
     /// Unsupported/truncated/overlapping/null and nonaligned components never become usable.
     #[test]

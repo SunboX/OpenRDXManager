@@ -4,7 +4,7 @@
 //! Optional one-object process DACL isolation; never production authorization or a fallback.
 use super::*;
 #[path = "process_descriptor.rs"]
-mod process_descriptor;
+pub(super) mod process_descriptor;
 use process_descriptor::Components;
 use windows::Win32::Security::{
     GetKernelObjectSecurity, IsValidSecurityDescriptor, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES,
@@ -13,13 +13,13 @@ use windows::Win32::Security::{
 use windows::Win32::System::Threading::PROCESS_ALL_ACCESS;
 
 /// Private aligned descriptor and canonical components; identities never implement Debug.
-struct PrivateDescriptor {
+pub(super) struct PrivateDescriptor {
     storage: Vec<usize>,
-    components: Components,
+    pub(super) components: Components,
 }
 impl PrivateDescriptor {
     /// Owns bounded aligned bytes only after the complete pure component parser succeeds.
-    fn from_bytes(bytes: &[u8]) -> Result<Self, NativeError> {
+    pub(super) fn from_bytes(bytes: &[u8]) -> Result<Self, NativeError> {
         let components = Components::parse(bytes).map_err(|_| NativeError::Other)?;
         let mut storage = vec![0_usize; bytes.len().div_ceil(size_of::<usize>())];
         // SAFETY: initialized bytes fit the allocated aligned buffer; pure parser bounds every component.
@@ -38,12 +38,12 @@ impl PrivateDescriptor {
     }
 
     /// Returns only a pointer into this private live aligned descriptor, never a kernel object to write.
-    fn pointer(&self) -> PSECURITY_DESCRIPTOR {
+    pub(super) fn pointer(&self) -> PSECURITY_DESCRIPTOR {
         PSECURITY_DESCRIPTOR(self.storage.as_ptr().cast_mut().cast())
     }
 
     /// Reads owner/group/DACL plus LABEL only from an exact retained owned child handle.
-    fn read(handle: HANDLE) -> Result<Self, NativeError> {
+    pub(super) fn read(handle: HANDLE) -> Result<Self, NativeError> {
         let mut needed = 0;
         let information = 1 | 2 | 4 | 0x10;
         // SAFETY: retained owned handle, LABEL-only rather than full SACL; sizing output only.
@@ -76,14 +76,14 @@ impl PrivateDescriptor {
 }
 
 /// Private canonical process/thread/primary-token readbacks for exact one-object comparison.
-struct Objects {
-    process: PrivateDescriptor,
-    thread: PrivateDescriptor,
-    token: PrivateDescriptor,
+pub(super) struct Objects {
+    pub(super) process: PrivateDescriptor,
+    pub(super) thread: PrivateDescriptor,
+    pub(super) token: PrivateDescriptor,
 }
 impl Objects {
     /// Reads only trusted created process/thread handles and a separate owned query-token opening.
-    fn read(child: &OwnedChild) -> Result<Self, NativeError> {
+    pub(super) fn read(child: &OwnedChild) -> Result<Self, NativeError> {
         let mut handle = HANDLE::default();
         // SAFETY: exact retained owned child process, query/security read only; no arbitrary PID.
         unsafe {
@@ -148,7 +148,7 @@ impl Objects {
 }
 
 /// Snapshots nullable source default DACL bytes privately without changing token/object security.
-fn source_default_dacl(source: &OwnedHandle) -> Result<Option<Vec<u8>>, NativeError> {
+pub(super) fn source_default_dacl(source: &OwnedHandle) -> Result<Option<Vec<u8>>, NativeError> {
     let buffer = TokenBuffer::read(source, TokenDefaultDacl)?;
     let header = buffer.header::<TOKEN_DEFAULT_DACL>()?;
     if header.DefaultDacl.is_null() {
