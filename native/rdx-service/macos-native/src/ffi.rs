@@ -375,6 +375,8 @@ unsafe extern "C" {
     #[cfg(feature = "test-hooks")]
     pub(crate) fn rdx_macos_test_usb_host_release_order_contract() -> bool;
     #[cfg(feature = "test-hooks")]
+    pub(crate) fn rdx_macos_test_interface_error_provenance_contract() -> bool;
+    #[cfg(feature = "test-hooks")]
     pub(crate) fn rdx_macos_test_transport_release_mapping_invalidation() -> bool;
     #[cfg(feature = "test-hooks")]
     pub(crate) fn rdx_macos_test_media_presence_without_mapping_contract() -> bool;

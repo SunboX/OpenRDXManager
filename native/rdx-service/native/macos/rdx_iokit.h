@@ -358,6 +358,7 @@ bool rdx_macos_test_compatibility_setup_scsi_contract(void);
 bool rdx_macos_test_acquisition_diagnostics_contract(void);
 bool rdx_macos_test_usb_host_exception_contract(void);
 bool rdx_macos_test_usb_host_release_order_contract(void);
+bool rdx_macos_test_interface_error_provenance_contract(void);
 bool rdx_macos_test_transport_release_mapping_invalidation(void);
 bool rdx_macos_test_media_presence_without_mapping_contract(void);
 void rdx_macos_test_fail_next_matching_dictionary(void);

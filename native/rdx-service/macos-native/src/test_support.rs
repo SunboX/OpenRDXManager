@@ -285,3 +285,17 @@ pub fn system_format_virtual_disk_for_test(
         false
     }
 }
+
+/// Exercises fresh interface NSError provenance with a real hardware-free constructor stub.
+#[must_use]
+pub fn interface_error_provenance_is_enforced_for_test() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: the hook owns a local Objective-C stub and never invokes native acquisition.
+        unsafe { ffi::rdx_macos_test_interface_error_provenance_contract() }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}

@@ -7,6 +7,7 @@
 #import <IOKit/usb/USBSpec.h>
 #import <IOUSBHost/IOUSBHost.h>
 #include <stdio.h>
+#include <errno.h>
 #import <unistd.h>
 
 @interface RDXUSBHostLease : NSObject
@@ -24,8 +25,8 @@ enum {
     RDX_USB_RELEASE_INTERFACE = 3,
     RDX_USB_RELEASE_DEVICE = 4
 };
-static uint8_t rdx_usb_release_events[4] = {0};
-static uint8_t rdx_usb_release_event_count = 0;
+static _Thread_local uint8_t rdx_usb_release_events[4] = {0};
+static _Thread_local uint8_t rdx_usb_release_event_count = 0;
 
 /** Records one bounded synthetic USB-host release event. */
 static void rdx_usb_record_release_event(uint8_t event) {
@@ -107,6 +108,102 @@ static rdx_macos_status rdx_usb_status_from_error(
         return fallback;
     }
     return rdx_status_from_io((IOReturn)(uint32_t)error.code, fallback);
+}
+
+/** Classifies only exact SDK domains, without exposing an NSError string. */
+static uint8_t rdx_interface_error_domain(NSError *error) {
+    if (error == nil) { return 0; }
+    if (![(id)error isKindOfClass:[NSError class]]) { return 5; }
+    NSString *domain = error.domain;
+    if (![(id)domain isKindOfClass:[NSString class]] || domain.length > 64) { return 4; }
+    if ([domain isEqualToString:IOUSBHostErrorDomain]) { return 1; }
+    if ([domain isEqualToString:NSPOSIXErrorDomain]) { return 2; }
+    if ([domain isEqualToString:NSCocoaErrorDomain]) { return 3; }
+    if ([domain isEqualToString:NSMachErrorDomain]) { return 6; }
+    return 4;
+}
+
+/** Maps numeric values only in their recognized namespace; unknown/Mach/Cocoa stay unknown. */
+static uint8_t rdx_interface_error_code(NSError *error, uint8_t domain) {
+    if (domain == 0) { return 0; }
+    if (domain == 2) {
+        switch (error.code) {
+            case EACCES: case EPERM: return 21;
+            case ENOENT: return 22;
+            case EBADF: return 23;
+            default: return 1;
+        }
+    }
+    if (domain != 1 || error.code < INT32_MIN || ((uint64_t)error.code > UINT32_MAX && error.code >= 0)) { return 1; }
+    switch ((uint32_t)error.code) {
+        case (uint32_t)kIOReturnNotReady: return 2;
+        case (uint32_t)kIOReturnNotAttached: return 3;
+        case (uint32_t)kIOReturnNotFound: return 4;
+        case (uint32_t)kIOReturnOffline: return 5;
+        case (uint32_t)kIOReturnBadArgument: return 6;
+        case (uint32_t)kIOReturnNoResources: return 7;
+        case (uint32_t)kIOReturnIPCError: return 8;
+        case (uint32_t)kIOReturnInternalError: return 9;
+        case (uint32_t)kIOReturnIOError: return 10;
+        case (uint32_t)kIOReturnError: return 11;
+        case (uint32_t)kIOReturnNotPrivileged: return 12;
+        case (uint32_t)kIOReturnBusy: return 13;
+        case (uint32_t)kIOReturnExclusiveAccess: return 14;
+        case (uint32_t)kIOReturnTimeout: return 15;
+        case (uint32_t)kIOReturnNoDevice: return 16;
+        case (uint32_t)kIOReturnNotOpen: return 17;
+        case (uint32_t)kIOReturnUnsupported: return 18;
+        case (uint32_t)kIOReturnNotPermitted: return 19;
+        case (uint32_t)kIOReturnNoMemory: return 20;
+        default: return 1;
+    }
+}
+
+/** Reads only one bounded reason string and one underlying object; never traverses recursively. */
+static rdx_interface_error_evidence rdx_interface_evidence(NSError *error) {
+    rdx_interface_error_evidence evidence = {0};
+    @try {
+    evidence.domain = rdx_interface_error_domain(error);
+    evidence.code = rdx_interface_error_code(error, evidence.domain);
+    if (evidence.domain == 0) { return evidence; }
+    if (evidence.domain == 5) { evidence.reason = 4; return evidence; }
+    id reason = error.userInfo[NSLocalizedFailureReasonErrorKey];
+    if (reason == nil) { evidence.reason = 0; }
+    else if (![reason isKindOfClass:[NSString class]] || [(NSString *)reason length] > 128) { evidence.reason = 4; }
+    else if ([(NSString *)reason isEqualToString:@"Failed [super init]"]) { evidence.reason = 1; }
+    else if ([(NSString *)reason isEqualToString:@"IOServiceOpen failed"] ||
+             [(NSString *)reason isEqualToString:@"IOServiceOpen failed."]) { evidence.reason = 2; }
+    else { evidence.reason = 3; }
+    id underlying = error.userInfo[NSUnderlyingErrorKey];
+    evidence.under_domain = rdx_interface_error_domain(underlying);
+    evidence.under_code = rdx_interface_error_code(underlying, evidence.under_domain);
+    return evidence;
+    } @catch (__unused NSException *exception) {
+        // Diagnostic extraction cannot replace the already-computed transport result.
+        return (rdx_interface_error_evidence){.domain = 5, .code = 1, .reason = 4};
+    }
+}
+
+/** Calls the single fixed interface initializer through a private class seam for native tests. */
+static rdx_macos_status rdx_usb_initialize_interface(
+    RDXUSBHostLease *owner, io_service_t service, Class interface_class, NSError **shared_error,
+    rdx_interface_error_evidence *out_evidence
+) {
+    NSError *fresh_error = nil;
+    owner.interface = [[interface_class alloc]
+        initWithIOService:service options:IOUSBHostObjectInitOptionsNone
+        queue:nil error:&fresh_error interestHandler:nil];
+    // Preserve the legacy shared-slot fallback independently from current-call evidence.
+    if (fresh_error != nil) { *shared_error = fresh_error; }
+    rdx_macos_status status = owner.interface == nil ?
+        rdx_usb_status_from_error(*shared_error, RDX_MACOS_STATUS_NATIVE_FAILURE) :
+        RDX_MACOS_STATUS_OK;
+    if (owner.interface == nil) {
+        *out_evidence = rdx_interface_evidence(fresh_error);
+        out_evidence->status = status;
+        rdx_record_interface_error_evidence(out_evidence);
+    }
+    return status;
 }
 
 /** Copies one exact CFNumber property from an IOKit service. */
@@ -357,6 +454,7 @@ rdx_macos_status rdx_macos_usb_bot_acquire(
         io_service_t interface_service = IO_OBJECT_NULL;
         RDXUSBHostLease *owner = [[RDXUSBHostLease alloc] init];
         NSError *error = nil;
+        rdx_interface_error_evidence interface_evidence = {0};
         rdx_acquisition_stage stage = RDX_ACQUIRE_USB_ANCESTOR;
         @try {
             status = rdx_usb_find_device_ancestor(scsi_service, &usb_service);
@@ -393,14 +491,9 @@ rdx_macos_status rdx_macos_usb_bot_acquire(
                 goto cleanup;
             }
             stage = RDX_ACQUIRE_USB_OPEN_INTERFACE;
-            owner.interface = [[IOUSBHostInterface alloc]
-                initWithIOService:interface_service
-                            options:IOUSBHostObjectInitOptionsNone
-                              queue:nil
-                              error:&error
-                    interestHandler:nil];
+            status = rdx_usb_initialize_interface(owner, interface_service, [IOUSBHostInterface class],
+                &error, &interface_evidence);
             if (owner.interface == nil) {
-                status = rdx_usb_status_from_error(error, RDX_MACOS_STATUS_NATIVE_FAILURE);
                 goto cleanup;
             }
             status = rdx_usb_open_bulk_pipes(owner, &error, &stage);
@@ -646,5 +739,158 @@ bool rdx_macos_test_usb_host_release_order_contract(void) {
         rdx_usb_release_events[1] == RDX_USB_RELEASE_BULK_OUT &&
         rdx_usb_release_events[2] == RDX_USB_RELEASE_INTERFACE &&
         rdx_usb_release_events[3] == RDX_USB_RELEASE_DEVICE;
+}
+#endif
+
+#if defined(RDX_MACOS_TEST_HOOKS)
+static _Thread_local unsigned int rdx_interface_stub_calls;
+static _Thread_local bool rdx_interface_stub_fresh_slot;
+static _Thread_local unsigned int rdx_interface_stub_mode;
+static _Thread_local unsigned int rdx_interface_lifetime_tick;
+static _Thread_local unsigned int rdx_interface_destroy_tick;
+static _Thread_local unsigned int rdx_interface_dealloc_tick;
+static _Thread_local unsigned int rdx_parent_destroy_tick;
+static _Thread_local unsigned int rdx_parent_dealloc_tick;
+
+/** Test-only NSError whose metadata throws after its legacy numeric status is computed. */
+@interface RDXInterfaceMetadataException : NSError
+@end
+@implementation RDXInterfaceMetadataException
+/** Exercises evidence isolation without touching a native user client. */
+- (NSString *)domain {
+    @throw [NSException exceptionWithName:NSInternalInconsistencyException reason:@"test-only" userInfo:nil];
+}
+@end
+
+@interface RDXInterfaceConstructorStub : NSObject
+- (instancetype)initWithIOService:(io_service_t)service options:(IOUSBHostObjectInitOptions)options
+    queue:(dispatch_queue_t)queue error:(NSError **)error
+    interestHandler:(IOUSBHostInterestHandler)interest_handler;
+@end
+@implementation RDXInterfaceConstructorStub
+/** Returns nil without supplying an error, matching a hardware-free failure boundary. */
+- (instancetype)initWithIOService:(io_service_t)service options:(IOUSBHostObjectInitOptions)options
+    queue:(dispatch_queue_t)queue error:(NSError **)error
+    interestHandler:(IOUSBHostInterestHandler)interest_handler {
+    rdx_interface_stub_calls += 1;
+    rdx_interface_stub_fresh_slot = service == IO_OBJECT_NULL &&
+        options == IOUSBHostObjectInitOptionsNone && queue == nil && interest_handler == nil &&
+        error != NULL && *error == nil;
+    if (rdx_interface_stub_mode == 1) {
+        NSError *under = [NSError errorWithDomain:NSPOSIXErrorDomain code:EACCES userInfo:nil];
+        *error = [NSError errorWithDomain:IOUSBHostErrorDomain code:(NSInteger)kIOReturnInternalError
+            userInfo:@{NSLocalizedFailureReasonErrorKey: @"Failed [super init]", NSUnderlyingErrorKey: under}];
+    }
+    if (rdx_interface_stub_mode >= 3) {
+        NSDictionary *info = nil;
+        NSString *domain = IOUSBHostErrorDomain;
+        if (rdx_interface_stub_mode == 3) { info = @{NSLocalizedFailureReasonErrorKey: @42}; }
+        if (rdx_interface_stub_mode == 4) { info = @{NSLocalizedFailureReasonErrorKey:
+            [@"x" stringByPaddingToLength:129 withString:@"x" startingAtIndex:0]}; }
+        if (rdx_interface_stub_mode == 5) { info = @{NSUnderlyingErrorKey: @42}; }
+        if (rdx_interface_stub_mode == 6) { info = @{NSUnderlyingErrorKey:
+            [NSError errorWithDomain:IOUSBHostErrorDomain code:(NSInteger)kIOReturnNotReady
+                userInfo:@{NSUnderlyingErrorKey: @42}]}; }
+        if (rdx_interface_stub_mode == 7) { domain = NSPOSIXErrorDomain; }
+        if (rdx_interface_stub_mode == 8) { domain = NSMachErrorDomain; }
+        if (rdx_interface_stub_mode == 9) { domain = NSCocoaErrorDomain; }
+        if (rdx_interface_stub_mode == 10) { domain = @"/private/do-not-export";
+            info = @{NSLocalizedFailureReasonErrorKey: @"/private/do-not-export"}; }
+        *error = rdx_interface_stub_mode == 11 ?
+            [[RDXInterfaceMetadataException alloc] initWithDomain:IOUSBHostErrorDomain
+                code:(NSInteger)kIOReturnInternalError userInfo:nil] :
+            [NSError errorWithDomain:domain code:(NSInteger)kIOReturnInternalError userInfo:info];
+    }
+    if (rdx_interface_stub_mode == 2) { return [super init]; }
+    return nil;
+}
+/** Records destruction without touching a USB user client. */
+- (void)destroy { rdx_interface_destroy_tick = ++rdx_interface_lifetime_tick; }
+/** Proves lease ownership drops the child before invoking the parent destroy. */
+- (void)dealloc { rdx_interface_dealloc_tick = ++rdx_interface_lifetime_tick; }
+@end
+
+@interface RDXInterfaceParentStub : NSObject
+- (void)destroy;
+@end
+@implementation RDXInterfaceParentStub
+/** Records only the hardware-free parent's destroy event. */
+- (void)destroy { rdx_parent_destroy_tick = ++rdx_interface_lifetime_tick; }
+/** Records only the hardware-free parent's final release event. */
+- (void)dealloc { rdx_parent_dealloc_tick = ++rdx_interface_lifetime_tick; }
+@end
+
+/** Proves one constructor, fresh current-call input, preserved legacy status and release order. */
+bool rdx_macos_test_interface_error_provenance_contract(void) {
+    @autoreleasepool {
+        NSError *previous = [NSError errorWithDomain:IOUSBHostErrorDomain
+            code:(NSInteger)kIOReturnNotPrivileged userInfo:nil];
+        NSError *shared = previous;
+        RDXUSBHostLease *owner = [[RDXUSBHostLease alloc] init];
+        rdx_interface_stub_mode = 0;
+        rdx_interface_stub_calls = 0;
+        rdx_interface_stub_fresh_slot = false;
+        rdx_interface_error_evidence evidence = {0};
+        rdx_macos_status status = rdx_usb_initialize_interface(owner, IO_OBJECT_NULL,
+            [RDXInterfaceConstructorStub class], &shared, &evidence);
+        rdx_usb_release_event_count = 0;
+        memset(rdx_usb_release_events, 0, sizeof(rdx_usb_release_events));
+        [owner destroy];
+        bool missing_correct = rdx_interface_stub_calls == 1 && rdx_interface_stub_fresh_slot &&
+            status == RDX_MACOS_STATUS_ACCESS_DENIED && shared == previous && owner.interface == nil &&
+            evidence.status == status && evidence.domain == 0 && evidence.code == 0 &&
+            evidence.reason == 0 && evidence.under_domain == 0 && evidence.under_code == 0 &&
+            rdx_usb_release_event_count == 4 &&
+            rdx_usb_release_events[0] == RDX_USB_RELEASE_BULK_IN &&
+            rdx_usb_release_events[1] == RDX_USB_RELEASE_BULK_OUT &&
+            rdx_usb_release_events[2] == RDX_USB_RELEASE_INTERFACE &&
+            rdx_usb_release_events[3] == RDX_USB_RELEASE_DEVICE;
+        rdx_interface_stub_mode = 1;
+        rdx_interface_stub_calls = 0;
+        status = rdx_usb_initialize_interface(owner, IO_OBJECT_NULL,
+            [RDXInterfaceConstructorStub class], &shared, &evidence);
+        bool genuine_correct = rdx_interface_stub_calls == 1 && rdx_interface_stub_fresh_slot &&
+            status == RDX_MACOS_STATUS_NATIVE_FAILURE && evidence.status == status &&
+            evidence.domain == 1 && evidence.code == 9 && evidence.reason == 1 &&
+            evidence.under_domain == 2 && evidence.under_code == 21 && shared != previous;
+        bool classes_correct = true;
+        const uint8_t expected[][5] = {
+            {1, 9, 4, 0, 0}, {1, 9, 4, 0, 0}, {1, 9, 0, 5, 1},
+            {1, 9, 0, 1, 2}, {2, 1, 0, 0, 0}, {6, 1, 0, 0, 0},
+            {3, 1, 0, 0, 0}, {4, 1, 3, 0, 0}, {5, 1, 4, 0, 0}
+        };
+        for (unsigned int mode = 3; mode <= 11; ++mode) {
+            rdx_interface_stub_mode = mode;
+            rdx_interface_stub_calls = 0;
+            status = rdx_usb_initialize_interface(owner, IO_OBJECT_NULL,
+                [RDXInterfaceConstructorStub class], &shared, &evidence);
+            const uint8_t *wanted = expected[mode - 3];
+            classes_correct = classes_correct && rdx_interface_stub_calls == 1 &&
+                rdx_interface_stub_fresh_slot && status == RDX_MACOS_STATUS_NATIVE_FAILURE &&
+                evidence.status == status && evidence.domain == wanted[0] &&
+                evidence.code == wanted[1] && evidence.reason == wanted[2] &&
+                evidence.under_domain == wanted[3] && evidence.under_code == wanted[4];
+        }
+        NSError *signed_error = [NSError errorWithDomain:IOUSBHostErrorDomain
+            code:(NSInteger)(int32_t)kIOReturnInternalError userInfo:nil];
+        NSError *unsigned_error = [NSError errorWithDomain:IOUSBHostErrorDomain
+            code:(NSInteger)(uint32_t)kIOReturnInternalError userInfo:nil];
+        classes_correct = classes_correct && rdx_interface_evidence(signed_error).code == 9 &&
+            rdx_interface_evidence(unsigned_error).code == 9;
+        rdx_interface_stub_mode = 2;
+        rdx_interface_stub_calls = 0;
+        rdx_interface_lifetime_tick = rdx_interface_destroy_tick = rdx_interface_dealloc_tick = 0;
+        rdx_parent_destroy_tick = rdx_parent_dealloc_tick = 0;
+        owner.device = (IOUSBHostDevice *)(id)[[RDXInterfaceParentStub alloc] init];
+        status = rdx_usb_initialize_interface(owner, IO_OBJECT_NULL,
+            [RDXInterfaceConstructorStub class], &shared, &evidence);
+        bool success_correct = status == RDX_MACOS_STATUS_OK && owner.interface != nil &&
+            rdx_interface_stub_calls == 1 && rdx_interface_stub_fresh_slot;
+        [owner destroy];
+        return missing_correct && genuine_correct && classes_correct && success_correct &&
+            rdx_interface_destroy_tick == 1 && rdx_interface_dealloc_tick == 2 &&
+            rdx_parent_destroy_tick == 3 && rdx_parent_dealloc_tick == 4;
+
+    }
 }
 #endif

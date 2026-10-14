@@ -41,6 +41,8 @@ pub use user_directory::user_home_directory;
 #[cfg(target_os = "macos")]
 mod scsi_worker;
 #[cfg(target_os = "macos")]
+mod scsi_worker_interface;
+#[cfg(target_os = "macos")]
 mod scsi_worker_io;
 #[cfg(target_os = "macos")]
 mod scsi_worker_startup;
@@ -90,7 +92,7 @@ pub use test_support::{
     disk_mapping_contract_is_enforced_for_test, eject_scsi_contract_is_enforced_for_test,
     exercise_production_failure_injections_for_test,
     exfat_retained_fd_contract_is_enforced_for_test, fail_next_matching_dictionary_for_test,
-    hostile_ffi_inputs_are_rejected_for_test,
+    hostile_ffi_inputs_are_rejected_for_test, interface_error_provenance_is_enforced_for_test,
     media_presence_without_mapping_contract_is_enforced_for_test,
     probe_known_non_scsi_service_for_test, raw_media_authority_contract_is_enforced_for_test,
     scsi_authority_order_is_enforced_for_test, succeed_next_matching_without_iterator_for_test,

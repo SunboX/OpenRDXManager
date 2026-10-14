@@ -452,3 +452,60 @@ fn startup_production_initializer_accepts_ready_without_stale_evidence() {
     worker.terminate_child();
     assert!(worker.child.is_none());
 }
+
+/// Fresh current-call metadata survives actual child EOF without changing the original result.
+#[test]
+fn startup_real_child_fresh_error_eof_and_ready_keep_native_semantics() {
+    let evidence = "{\"diagnostic\":\"interface-init-evidence\",\"status\":10,\"domain\":1,\"code\":9,\"reason\":1,\"underDomain\":2,\"underCode\":21}";
+    let legacy = "{\"diagnostic\":\"snapshot-native-acquisition\",\"substage\":\"usb-open-interface\",\"nativeStatus\":10,\"nativeCodeKind\":\"nserror\",\"nativeCode\":3758097097}";
+    let script = format!("printf '%s\\n' '{evidence}' '{legacy}' >&2; exit 3");
+    let mut worker = startup_fixture(&script);
+    assert_eq!(
+        worker.read_frame(FRAME_READY, Instant::now() + Duration::from_secs(1)),
+        Err(NativeError::TransportUnavailable)
+    );
+    assert_eq!(
+        crate::take_last_worker_startup_failure().unwrap().code(),
+        "candidate-worker-usb-interface-fresh-super-init-under-posix-permission"
+    );
+    worker.terminate_child();
+    assert!(worker.child.is_none());
+    let script = format!(
+        "printf '%s\\n' '{evidence}' '{legacy}' >&2; printf 'RDXSCSI1\\002\\000\\000\\000\\000\\000\\000\\000'"
+    );
+    let mut worker = startup_fixture(&script);
+    assert_eq!(
+        worker.read_frame(FRAME_READY, Instant::now() + Duration::from_secs(1)),
+        Ok((FRAME_READY, vec![]))
+    );
+    worker.diagnostics.success();
+    assert!(crate::take_last_worker_startup_failure().is_none());
+    worker.terminate_child();
+    assert!(worker.child.is_none());
+}
+
+/// Partial reserved evidence at genuine child EOF is invalid, never an accepted or stale cause.
+#[test]
+fn startup_real_child_partial_fresh_stderr_eof_is_invalid() {
+    let partial = "{\"diagnostic\":\"interface-init-evidence\",\"status\":10,\"domain\":1";
+    let old = "{\"diagnostic\":\"snapshot-native-acquisition\",\"substage\":\"usb-open-interface\",\"nativeStatus\":10,\"nativeCodeKind\":\"nserror\",\"nativeCode\":3758097097}";
+    let fresh = "{\"diagnostic\":\"interface-init-evidence\",\"status\":10,\"domain\":1,\"code\":9,\"reason\":1,\"underDomain\":2,\"underCode\":21}";
+    let partial_old = "{\"diagnostic\":\"snapshot-native-acquisition\",\"substage\":\"usb-open-interface\",\"nativeStatus\":";
+    for script in [
+        format!("printf '%s' '{partial}' >&2; exit 3"),
+        format!("printf '%s\\n' '{old}' >&2; printf '%s' '{partial}' >&2; exit 3"),
+        format!("printf '%s\\n' '{fresh}' >&2; printf '%s' '{partial_old}' >&2; exit 3"),
+    ] {
+        let mut worker = startup_fixture(&script);
+        assert_eq!(
+            worker.read_frame(FRAME_READY, Instant::now() + Duration::from_secs(1)),
+            Err(NativeError::TransportUnavailable)
+        );
+        assert_eq!(
+            crate::take_last_worker_startup_failure().unwrap().code(),
+            "candidate-worker-usb-interface-fresh-evidence-invalid"
+        );
+        worker.terminate_child();
+        assert!(worker.child.is_none());
+    }
+}

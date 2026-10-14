@@ -53,6 +53,17 @@ void rdx_record_acquisition_diagnostic(
     rdx_acquisition_code_kind kind, int64_t native_code
 );
 
+/* Private stderr evidence only; scalar classes never affect native return status. */
+typedef struct rdx_interface_error_evidence {
+    uint32_t status;
+    uint8_t domain;
+    uint8_t code;
+    uint8_t reason;
+    uint8_t under_domain;
+    uint8_t under_code;
+} rdx_interface_error_evidence;
+void rdx_record_interface_error_evidence(const rdx_interface_error_evidence *evidence);
+
 enum {
     RDX_USB_BOT_CBW_LENGTH = 31,
     RDX_USB_BOT_CSW_LENGTH = 13

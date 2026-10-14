@@ -50,3 +50,13 @@ test('interface-open IOReturn classes remain fixed path-free aggregate reasons',
         assert.equal(discoveryDiagnosticsSchema.safeParse({ candidateCount: 1, acceptedCount: 0, rejections: [{ ...rejections[0], ...extra }] }).success, false)
     }
 })
+
+test('fresh current-call error classes fit existing path-free counts without private metadata', () => {
+    const codes = ['error-missing', 'error-malformed', 'evidence-invalid', 'super-init-under-posix-permission', 'reason-missing-under-host-not-ready', 'service-open-under-mach-unknown', 'reason-malformed-current-host-internal-error', 'reason-unknown-under-malformed', 'reason-missing-current-posix-unknown', 'reason-missing-current-cocoa-unknown', 'reason-unknown-current-other-unknown']
+    const rejections = codes.map((code) => ({ reason: `candidate-worker-usb-interface-fresh-${code}`, count: 1 }))
+    const evidence = { candidateCount: codes.length, acceptedCount: 0, rejections }
+    assert.deepEqual(discoveryDiagnosticsSchema.parse(evidence), evidence)
+    for (const extra of [{ domain: 1 }, { code: 9 }, { reasonClass: 1 }, { underDomain: 2 }, { underCode: 21 }, { userInfo: 'private' }, { underlyingError: 'private' }]) {
+        assert.equal(discoveryDiagnosticsSchema.safeParse({ candidateCount: 1, acceptedCount: 0, rejections: [{ ...rejections[0], ...extra }] }).success, false)
+    }
+})

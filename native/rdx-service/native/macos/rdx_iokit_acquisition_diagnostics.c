@@ -71,6 +71,22 @@ void rdx_record_acquisition_diagnostic(
     }
 }
 
+/** Flushes one fixed numeric-class record before native capture cleanup can terminate the worker. */
+void rdx_record_interface_error_evidence(const rdx_interface_error_evidence *evidence) {
+    if (evidence == NULL || !atomic_load_explicit(&rdx_acquisition_diagnostics_enabled,
+        memory_order_relaxed)) { return; }
+    char output[256];
+    int length = snprintf(output, sizeof(output),
+        "{\"diagnostic\":\"interface-init-evidence\",\"status\":%" PRIu32
+        ",\"domain\":%u,\"code\":%u,\"reason\":%u,\"underDomain\":%u,\"underCode\":%u}\n",
+        evidence->status, evidence->domain, evidence->code, evidence->reason,
+        evidence->under_domain, evidence->under_code);
+    if (length > 0 && (size_t)length < sizeof(output)) {
+        (void)fwrite(output, 1, (size_t)length, stderr);
+        (void)fflush(stderr);
+    }
+}
+
 #if defined(RDX_MACOS_TEST_HOOKS)
 /** Proves default-off output and bounded enum-only formatting without native I/O. */
 bool rdx_macos_test_acquisition_diagnostics_contract(void) {

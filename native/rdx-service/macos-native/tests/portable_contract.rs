@@ -364,3 +364,11 @@ fn candidate_debug_output_is_always_redacted() {
     assert_eq!(candidate.vendor(), Some("VENDOR"));
     assert!(!format!("{candidate:?}").contains("1311768467463790320"));
 }
+
+/// Shared historical error data cannot masquerade as fresh interface-init evidence.
+#[cfg(all(target_os = "macos", feature = "test-hooks"))]
+#[test]
+fn interface_constructor_preserves_legacy_status_with_fresh_error_provenance() {
+    let _guard = native_test_guard();
+    assert!(rdx_macos_native::interface_error_provenance_is_enforced_for_test());
+}
