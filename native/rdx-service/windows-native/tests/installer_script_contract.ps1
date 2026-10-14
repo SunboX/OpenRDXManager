@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path -LiteralPath $ScriptPath).Path, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'acceptance-script-syntax-error' }
-foreach ($name in @('Invoke-CapturedProgram', 'Invoke-LocalAction', 'Assert-RemovedRuntime', 'Read-SetupDiagnostic', 'Invoke-Setup', 'Get-TokenDiagnostic', 'Write-ManagerWorkerDiagnostic', 'Invoke-ManagerSetup', 'Wait-Worker')) {
+foreach ($name in @('Invoke-CapturedProgram', 'Invoke-LocalAction', 'Assert-RemovedRuntime', 'Read-SetupDiagnostic', 'Invoke-Setup', 'Get-TokenDiagnostic', 'Get-ConsoleContextDiagnostic', 'Get-TaskRunLevelDiagnostic', 'Write-TokenContextDiagnostic', 'Write-ManagerWorkerDiagnostic', 'Invoke-ManagerSetup', 'Wait-Worker')) {
     $function = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     if (-not $function) { throw "acceptance-script-function-missing: $name" }
     Invoke-Expression $function.Extent.Text
@@ -16,6 +16,51 @@ $typeCommand = $ast.Find({ param($node) $node -is [System.Management.Automation.
 Invoke-Expression $typeCommand.Extent.Text
 $ownFacts = Get-TokenDiagnostic -ProcessId $PID
 if (-not $ownFacts.ElevationQueryOk -or -not $ownFacts.ElevationSizeMatch -or -not $ownFacts.SessionQueryOk -or -not $ownFacts.SessionSizeMatch -or -not $ownFacts.TokenMatchesProcessSession) { throw 'read-only-self-token-query-failed' }
+if (-not $ownFacts.ElevationTypeQueryOk -or -not $ownFacts.ElevationTypeSizeMatch -or
+    (@($ownFacts.ElevationTypeDefault, $ownFacts.ElevationTypeFull, $ownFacts.ElevationTypeLimited) | Where-Object { $_ }).Count -ne 1) { throw 'read-only-elevation-type-query-failed' }
+if ($ownFacts.LinkedTokenAvailable -and (-not $ownFacts.LinkedTokenQueryOk -or -not $ownFacts.LinkedTokenSizeMatch)) { throw 'linked-token-availability-not-exact' }
+foreach ($field in $ownFacts.GetType().GetFields()) {
+    if ($field.FieldType -ne [bool]) { throw 'token-context-field-not-boolean' }
+}
+$ownContext = Get-ConsoleContextDiagnostic
+foreach ($value in $ownContext.Values) { if ($value -isnot [bool]) { throw 'console-context-field-not-boolean' } }
+$absentTask = Get-TaskRunLevelDiagnostic -TaskName ('OpenRDX-Absent-Context-' + [Guid]::NewGuid().ToString('N'))
+if ($absentTask.TaskRunLevelQueryOk -or $absentTask.TaskRunLevelIsLua) { throw 'absent-task-was-reported-lua' }
+# Deterministic read-boundary fixtures execute the exact production functions in
+# an isolated child scope. They do not create accounts, tasks or policy values.
+$contextDefinition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-ConsoleContextDiagnostic' }, $true).Extent.Text
+& {
+    param($definition)
+    Invoke-Expression $definition
+    <# .SYNOPSIS Supplies an isolated registry query result without writing the registry. #>
+    function Get-ItemProperty { return [pscustomobject]@{ EnableLUA=$fixtureUac } }
+    <# .SYNOPSIS Supplies a placeholder local account SID, never a real account or identity output. #>
+    function Get-LocalUser { return [pscustomobject]@{ SID=(New-Object Security.Principal.SecurityIdentifier('S-1-5-21-1-2-3-500')) } }
+    foreach ($fixtureUac in @(0, 1, 2, 'raw-private-registry-value')) {
+        $facts = Get-ConsoleContextDiagnostic
+        if ($facts.UacQueryOk -ne ($fixtureUac -is [int]) -or $facts.EnableLuaIsOne -ne ($fixtureUac -ceq 1)) { throw 'uac-read-projection-not-exact' }
+        if (-not $facts.LocalBuiltinAdminQueryOk -or $facts.LocalBuiltinAdmin) { throw 'local-account-equality-projection-failed' }
+    }
+    <# .SYNOPSIS Supplies a private query failure; production must suppress its text. #>
+    function Get-LocalUser { throw 'raw-private-account-query' }
+    $facts = Get-ConsoleContextDiagnostic
+    if ($facts.LocalBuiltinAdminQueryOk -or $facts.LocalBuiltinAdmin) { throw 'failed-local-account-query-not-distinguished' }
+} $contextDefinition
+$taskDefinition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-TaskRunLevelDiagnostic' }, $true).Extent.Text
+& {
+    param($definition)
+    Invoke-Expression $definition
+    <# .SYNOPSIS Supplies isolated task readback without registering or launching a task. #>
+    function Get-ScheduledTask {
+        if ($fixtureLevel -eq 'throw') { throw 'raw-private-task-query' }
+        return [pscustomobject]@{ Principal=[pscustomobject]@{RunLevel=$fixtureLevel;UserId='raw-private-user'} }
+    }
+    foreach ($fixtureLevel in @('Limited', 'Highest', 'raw-private-level', 'throw')) {
+        $facts = Get-TaskRunLevelDiagnostic -TaskName 'fixture-only'
+        if ($facts.TaskRunLevelQueryOk -ne ($fixtureLevel -cin @('Limited', 'Highest')) -or $facts.TaskRunLevelIsLua -ne ($fixtureLevel -ceq 'Limited')) { throw 'task-readback-projection-not-closed' }
+    }
+} $taskDefinition
+Write-Output 'Windows read-only closed console context contract passed'
 <# .SYNOPSIS Extracts one production NSIS macro, preserving its exact instructions. .PARAMETER Name Closed fixture macro name. #>
 function Get-DiagnosticMacro([string]$Name) {
     $hook = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '../../../../resources/installer/windows-service.nsh')
@@ -97,11 +142,17 @@ try {
     $bounded = Read-SetupDiagnostic $large
     if ($bounded.Length -gt 65600 -or -not $bounded.EndsWith('[diagnostic-output-truncated]')) { throw 'setup-output-was-unbounded' }
     $resultPath = Join-Path $runDirectory 'worker-result.json'
-    $fake = @{ ok=$false; error='raw-secret-error'; pid=424242; workerDiagnostic=@{prerequisite='console-mismatch';facts=$ownFacts}; managerDiagnostic=$ownFacts }
+    $fake = @{ ok=$false; error='raw-secret-error'; pid=424242; workerDiagnostic=@{prerequisite='console-mismatch';facts=$ownFacts;context=$ownContext}; managerDiagnostic=$ownFacts }
     $fake | ConvertTo-Json -Depth 4 -Compress | Set-Content -LiteralPath $resultPath -Encoding UTF8
     $diagnostic = Write-ManagerWorkerDiagnostic -Path $resultPath | Out-String
     if ($diagnostic -notmatch 'prerequisite=console-mismatch' -or $diagnostic -notmatch 'OpenRDX worker-selected Manager: elevation-query=True elevation-size-match=True' -or
         $diagnostic -match 'raw-secret-error|424242' -or $diagnostic.Length -gt 1024) { throw 'worker-diagnostic-not-closed' }
+    if ($diagnostic -notmatch 'subject=worker type-query=True type-size-match=True' -or $diagnostic -notmatch 'subject=worker-selected-manager type-query=True type-size-match=True' -or
+        $diagnostic -notmatch 'OpenRDX console context: uac-query=(True|False) enablelua-is-one=(True|False) local-builtin-admin-query=(True|False) local-builtin-admin=(True|False)') { throw 'token-console-context-not-closed' }
+    $rejectedSubject = $false
+    try { Write-TokenContextDiagnostic -Subject 'raw-private-subject' -Facts $ownFacts }
+    catch { $rejectedSubject = $true }
+    if (-not $rejectedSubject) { throw 'arbitrary-token-context-subject-accepted' }
     $fake.workerDiagnostic.prerequisite = 'raw-secret-stage'
     $fake | ConvertTo-Json -Depth 4 -Compress | Set-Content -LiteralPath $resultPath -Encoding UTF8
     $diagnostic = Write-ManagerWorkerDiagnostic -Path $resultPath | Out-String

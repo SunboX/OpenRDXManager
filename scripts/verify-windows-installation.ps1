@@ -38,6 +38,8 @@ public sealed class OpenRDXTokenFacts {
  public bool ElevationQueryOk, ElevationSizeMatch, Elevated;
  public bool SessionQueryOk, SessionSizeMatch, ProcessSessionQueryOk;
  public bool TokenMatchesProcessSession, TokenMatchesConsole, ProcessMatchesConsole;
+ public bool ElevationTypeQueryOk, ElevationTypeSizeMatch, ElevationTypeDefault, ElevationTypeFull, ElevationTypeLimited;
+ public bool LinkedTokenQueryOk, LinkedTokenSizeMatch, LinkedTokenAvailable;
 }
 /// <summary>Queries the exact selected process without granting or modifying access.</summary>
 public static class OpenRDXTokenDiagnostics {
@@ -47,6 +49,8 @@ public static class OpenRDXTokenDiagnostics {
  [DllImport("advapi32.dll", SetLastError=true)] private static extern bool OpenProcessToken(IntPtr process, UInt32 access, out IntPtr token);
  /// <summary>Reads an exact four-byte elevation or session output.</summary>
  [DllImport("advapi32.dll", SetLastError=true)] private static extern bool GetTokenInformation(IntPtr token, int kind, out UInt32 value, UInt32 length, out UInt32 returned);
+ /// <summary>Queries the linked token handle without duplicating or launching with it.</summary>
+ [DllImport("advapi32.dll", EntryPoint="GetTokenInformation", SetLastError=true)] private static extern bool GetLinkedTokenInformation(IntPtr token, int kind, out IntPtr value, UInt32 length, out UInt32 returned);
  /// <summary>Queries the existing process session without changing it.</summary>
  [DllImport("kernel32.dll", SetLastError=true)] private static extern bool ProcessIdToSessionId(UInt32 pid, out UInt32 session);
  /// <summary>Releases only handles opened by this diagnostic.</summary>
@@ -54,7 +58,7 @@ public static class OpenRDXTokenDiagnostics {
  /// <summary>Returns bounded facts only; query failures remain false and cannot authorize a process.</summary>
  public static OpenRDXTokenFacts Read(UInt32 pid) {
   var facts = new OpenRDXTokenFacts();
-  IntPtr process = IntPtr.Zero, token = IntPtr.Zero;
+  IntPtr process = IntPtr.Zero, token = IntPtr.Zero, linkedToken = IntPtr.Zero;
   try {
    process = OpenProcess(0x1000, false, pid); // PROCESS_QUERY_LIMITED_INFORMATION
    if (process == IntPtr.Zero || !OpenProcessToken(process, 8, out token)) return facts; // TOKEN_QUERY
@@ -69,9 +73,22 @@ public static class OpenRDXTokenDiagnostics {
    facts.TokenMatchesProcessSession = facts.SessionSizeMatch && facts.ProcessSessionQueryOk && tokenSession == processSession;
    facts.TokenMatchesConsole = facts.SessionSizeMatch && console != UInt32.MaxValue && tokenSession == console;
    facts.ProcessMatchesConsole = facts.ProcessSessionQueryOk && console != UInt32.MaxValue && processSession == console;
+   UInt32 elevationType;
+   facts.ElevationTypeQueryOk = GetTokenInformation(token, 18, out elevationType, 4, out returned); // TokenElevationType
+   facts.ElevationTypeSizeMatch = facts.ElevationTypeQueryOk && returned == 4;
+   facts.ElevationTypeDefault = facts.ElevationTypeSizeMatch && elevationType == 1;
+   facts.ElevationTypeFull = facts.ElevationTypeSizeMatch && elevationType == 2;
+   facts.ElevationTypeLimited = facts.ElevationTypeSizeMatch && elevationType == 3;
+   facts.LinkedTokenQueryOk = GetLinkedTokenInformation(token, 19, out linkedToken, (UInt32)IntPtr.Size, out returned); // TokenLinkedToken
+   // Failure does not transfer handle ownership. A successful query's handle is
+   // owned even if a future API reports an unexpected size; always release it.
+   // https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_linked_token
+   if (!facts.LinkedTokenQueryOk) linkedToken = IntPtr.Zero;
+   facts.LinkedTokenSizeMatch = facts.LinkedTokenQueryOk && returned == (UInt32)IntPtr.Size;
+   facts.LinkedTokenAvailable = facts.LinkedTokenSizeMatch && linkedToken != IntPtr.Zero;
    return facts;
   } catch { return facts; }
-  finally { if (token != IntPtr.Zero) CloseHandle(token); if (process != IntPtr.Zero) CloseHandle(process); }
+  finally { if (linkedToken != IntPtr.Zero) CloseHandle(linkedToken); if (token != IntPtr.Zero) CloseHandle(token); if (process != IntPtr.Zero) CloseHandle(process); }
  }
 }
 '@
@@ -79,6 +96,46 @@ public static class OpenRDXTokenDiagnostics {
 <# .SYNOPSIS Reads boolean-only facts for an exact PID; never selects, launches, enrolls or authorizes it. .PARAMETER ProcessId Process already selected by the existing lifecycle. #>
 function Get-TokenDiagnostic([UInt32]$ProcessId) {
     return [OpenRDXTokenDiagnostics]::Read($ProcessId)
+}
+
+<# .SYNOPSIS Reads UAC and the current user's equality with the enumerated local builtin Administrator; never returns identity or changes account/policy. #>
+function Get-ConsoleContextDiagnostic {
+    $facts = @{ UacQueryOk=$false; EnableLuaIsOne=$false; LocalBuiltinAdminQueryOk=$false; LocalBuiltinAdmin=$false }
+    try {
+        $value = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name EnableLUA -ErrorAction Stop).EnableLUA
+        $facts.UacQueryOk = $value -is [int] -or $value -is [uint32]
+        $facts.EnableLuaIsOne = $facts.UacQueryOk -and $value -eq 1
+    } catch {}
+    try {
+        # Get-LocalUser limits the comparison to the local SAM, avoiding a
+        # domain Administrator with the same relative well-known account type.
+        $builtin = @(Get-LocalUser -ErrorAction Stop | Where-Object { $_.SID.IsWellKnown([Security.Principal.WellKnownSidType]::AccountAdministratorSid) })
+        if ($builtin.Count -eq 1) {
+            $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+            try {
+                $facts.LocalBuiltinAdmin = $builtin[0].SID.Equals($identity.User)
+                $facts.LocalBuiltinAdminQueryOk = $true
+            } finally { $identity.Dispose() }
+        }
+    } catch {}
+    return $facts
+}
+
+<# .SYNOPSIS Reads the exact registered task's run level; query failure is distinguished from a non-LUA result. .PARAMETER TaskName Exact verification-owned task. #>
+function Get-TaskRunLevelDiagnostic([string]$TaskName) {
+    $facts = @{ TaskRunLevelQueryOk=$false; TaskRunLevelIsLua=$false }
+    try {
+        $level = [string](Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop).Principal.RunLevel
+        $facts.TaskRunLevelQueryOk = $level -cin @('Limited', 'Highest')
+        $facts.TaskRunLevelIsLua = $facts.TaskRunLevelQueryOk -and $level -ceq 'Limited'
+    } catch {}
+    return $facts
+}
+
+<# .SYNOPSIS Prints only boolean token context for a fixed subject; no token, identity or numeric enum leaves this boundary. .PARAMETER Subject Closed diagnostic subject. .PARAMETER Facts Read-only token query results. #>
+function Write-TokenContextDiagnostic([ValidateSet('worker', 'worker-selected-manager')][string]$Subject, $Facts) {
+    Write-Output ('OpenRDX token context: subject={0} type-query={1} type-size-match={2} type-default={3} type-full={4} type-limited={5} linked-query={6} linked-size-match={7} linked-available={8}' -f
+        $Subject, [bool]$Facts.ElevationTypeQueryOk, [bool]$Facts.ElevationTypeSizeMatch, [bool]$Facts.ElevationTypeDefault, [bool]$Facts.ElevationTypeFull, [bool]$Facts.ElevationTypeLimited, [bool]$Facts.LinkedTokenQueryOk, [bool]$Facts.LinkedTokenSizeMatch, [bool]$Facts.LinkedTokenAvailable)
 }
 
 <# .SYNOPSIS Prints only reconstructed prerequisite tokens and boolean token facts, including on setup failure. .PARAMETER Path Exact owned worker result, read without waiting on failure. .PARAMETER Result Previously bounded worker result on success. #>
@@ -94,10 +151,15 @@ function Write-ManagerWorkerDiagnostic([string]$Path, $Result) {
         $worker = $Result.workerDiagnostic.facts
         Write-Output ('OpenRDX Manager worker: prerequisite={0} elevation-query={1} elevation-size-match={2} elevated={3} token-process-session-match={4} token-console-match={5}' -f
             $prerequisite, [bool]$worker.ElevationQueryOk, [bool]$worker.ElevationSizeMatch, [bool]$worker.Elevated, [bool]$worker.TokenMatchesProcessSession, [bool]$worker.TokenMatchesConsole)
+        Write-TokenContextDiagnostic -Subject 'worker' -Facts $worker
+        $context = $Result.workerDiagnostic.context
+        Write-Output ('OpenRDX console context: uac-query={0} enablelua-is-one={1} local-builtin-admin-query={2} local-builtin-admin={3}' -f
+            [bool]$context.UacQueryOk, [bool]$context.EnableLuaIsOne, [bool]$context.LocalBuiltinAdminQueryOk, [bool]$context.LocalBuiltinAdmin)
         if ($null -eq $Result.managerDiagnostic) { Write-Output 'OpenRDX worker-selected Manager: token=not-observed'; return }
         $facts = $Result.managerDiagnostic
         Write-Output ('OpenRDX worker-selected Manager: elevation-query={0} elevation-size-match={1} elevated={2} session-query={3} session-size-match={4} process-session-query={5} token-process-session-match={6} token-console-match={7} process-console-match={8}' -f
             [bool]$facts.ElevationQueryOk, [bool]$facts.ElevationSizeMatch, [bool]$facts.Elevated, [bool]$facts.SessionQueryOk, [bool]$facts.SessionSizeMatch, [bool]$facts.ProcessSessionQueryOk, [bool]$facts.TokenMatchesProcessSession, [bool]$facts.TokenMatchesConsole, [bool]$facts.ProcessMatchesConsole)
+        Write-TokenContextDiagnostic -Subject 'worker-selected-manager' -Facts $facts
     } catch { Write-Output 'OpenRDX Manager worker: result=unavailable' }
 }
 
@@ -186,7 +248,7 @@ function Invoke-CapturedProgram([string]$Executable, [string[]]$Arguments) {
 if ($WorkerMode) {
     # Task Scheduler must supply the actual interactive limited token. A SYSTEM
     # session or elevated GUI cannot count as installed Manager authentication.
-    $workerDiagnostic = @{ prerequisite = 'not-checked'; facts = Get-TokenDiagnostic -ProcessId $PID }
+    $workerDiagnostic = @{ prerequisite = 'not-checked'; facts = Get-TokenDiagnostic -ProcessId $PID; context = Get-ConsoleContextDiagnostic }
     $managerDiagnostic = $null
     try {
         if ([Diagnostics.Process]::GetCurrentProcess().SessionId -ne [OpenRDXConsole]::WTSGetActiveConsoleSessionId()) { $workerDiagnostic.prerequisite = 'console-mismatch'; throw 'worker-console-mismatch' }
@@ -294,6 +356,12 @@ function Start-Worker([string]$Mode) {
     $principal = New-ScheduledTaskPrincipal -UserId $consoleAccount -LogonType Interactive -RunLevel Limited
     $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 3)
     Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings -Force | Out-Null
+    # Read back the actual registration rather than inferring it from the request.
+    # Diagnostic failure cannot prevent the original launch or change its result.
+    try {
+        $taskFacts = Get-TaskRunLevelDiagnostic -TaskName $taskName
+        Write-Host ('OpenRDX interactive task: runlevel-query={0} runlevel-is-lua={1}' -f [bool]$taskFacts.TaskRunLevelQueryOk, [bool]$taskFacts.TaskRunLevelIsLua)
+    } catch {}
     Start-ScheduledTask -TaskName $taskName
     return $result
 }
