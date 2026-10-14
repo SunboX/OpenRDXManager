@@ -12,6 +12,7 @@ use windows::Win32::Security::{
 /// Read-only source observer is captured before opening any derivation handle with WRITE_DAC.
 pub(super) struct SourceGuard {
     observer: OwnedHandle,
+    statistics: token_statistics::Statistics,
     pub(super) snapshot: SourceSnapshot,
     descriptor: Components,
     default_dacl: Option<Vec<u8>>,
@@ -33,6 +34,7 @@ impl SourceGuard {
         }
         .map_err(map_native_error)?;
         let observer = OwnedHandle(raw);
+        let statistics = token_statistics::Statistics::read(&observer);
         let snapshot = SourceSnapshot::read(&observer)?;
         let descriptor = PrivateDescriptor::read(observer.0)?.components;
         let default_dacl = source_default_dacl(&observer)?;
@@ -53,6 +55,7 @@ impl SourceGuard {
         let user = token_user_sid(&observer)?;
         Ok(Self {
             observer,
+            statistics,
             snapshot,
             descriptor,
             default_dacl,
@@ -60,6 +63,16 @@ impl SourceGuard {
             session,
             user,
         })
+    }
+
+    /// Retains pre-WRITE_DAC identity and queries the same held source only; metadata is observational.
+    pub(super) fn statistics(
+        &self,
+    ) -> (token_statistics::Statistics, token_statistics::Statistics) {
+        (
+            self.statistics,
+            token_statistics::Statistics::read(&self.observer),
+        )
     }
 
     /// Compares every source property and canonical object/default ACL without pointer-bearing headers.
@@ -133,6 +146,7 @@ impl SourceGuard {
 /// No raw constructor, From, Deref or source adoption; only the private restricted-token factory constructs it.
 pub(super) struct FreshDerivedToken {
     handle: OwnedHandle,
+    statistics: token_statistics::Statistics,
     snapshot: SourceSnapshot,
     descriptor: Components,
     default_dacl: Option<Vec<u8>>,
@@ -167,6 +181,7 @@ impl FreshDerivedToken {
         let medium = set_medium(&handle);
         facts(row.name(), "derive", &[("medium-set", medium.is_ok())]);
         medium?;
+        let statistics = token_statistics::Statistics::read(&handle);
         let snapshot = SourceSnapshot::read(&handle)?;
         let (denied, no_admins) = administrative_groups(&handle)?;
         let reduced = eligible(
@@ -186,11 +201,22 @@ impl FreshDerivedToken {
         source.unchanged()?;
         Ok(Self {
             handle,
+            statistics,
             snapshot,
             descriptor,
             default_dacl,
             adjusted: false,
         })
+    }
+
+    /// Captures fresh-current metadata separately from factory metadata; no raw token handle is adopted.
+    pub(super) fn statistics(
+        &self,
+    ) -> (token_statistics::Statistics, token_statistics::Statistics) {
+        (
+            self.statistics,
+            token_statistics::Statistics::read(&self.handle),
+        )
     }
 
     /// Borrows query/launch ownership only; no mutable/raw-adoption interface is provided.

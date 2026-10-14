@@ -3,10 +3,16 @@
 
 //! Fixed eight-row, test-only object DACL matrix; completion is not ordinary child authorization.
 use super::*;
+#[path = "matrix_output.rs"]
+mod matrix_output;
 #[path = "matrix_protocol.rs"]
 mod matrix_protocol;
 #[path = "owned_derived_token.rs"]
 mod owned_derived_token;
+#[path = "token_lineage.rs"]
+mod token_lineage;
+#[path = "token_statistics.rs"]
+mod token_statistics;
 use super::process_dacl_control::process_descriptor::{Components, ObjectRole};
 use super::process_dacl_control::{Objects, PrivateDescriptor};
 use matrix_protocol::Row;
@@ -73,30 +79,57 @@ impl State {
 
 /// Only compiled roles/phases/keys and booleans enter the compact matrix transcript.
 fn facts(row: &'static str, phase: &'static str, values: &[(&'static str, bool)]) {
-    println!(
-        "openrdx-token-object-dacl-matrix row={row} phase={phase} {}",
-        values
-            .iter()
-            .map(|(key, value)| format!("{key}={value}"))
-            .collect::<Vec<_>>()
-            .join(" ")
-    );
+    matrix_output::record(matrix_output::Prefix::Matrix, row, phase, values);
 }
-/// Closed ordered transition pairs retain original failure separately from subsequent cleanup.
+/// Maps only fixed formatting errors, never exposes a writer/SDK error string.
+fn output_error(error: matrix_output::Error) -> NativeError {
+    if error == matrix_output::Error::Bound {
+        NativeError::ResourceLimit
+    } else {
+        NativeError::Other
+    }
+}
+/// Closed ordered transition pairs flush all compiled boolean facts before the terminal marker.
 fn checkpoint<T>(
     row: &'static str,
     phase: &'static str,
     operation: impl FnOnce() -> Result<T, NativeError>,
 ) -> Result<T, NativeError> {
-    println!("openrdx-token-object-dacl-matrix-stage row={row} phase={phase} status=begin");
-    let result = operation();
-    match &result {
-        Ok(_) => {
-            println!("openrdx-token-object-dacl-matrix-stage row={row} phase={phase} status=ok")
+    use std::io::Write;
+    let mut guard = matrix_output::Phase::begin(row, phase).map_err(output_error)?;
+    {
+        let mut writer = std::io::stdout().lock();
+        if writeln!(
+            writer,
+            "openrdx-token-object-dacl-matrix-stage row={row} phase={phase} status=begin"
+        )
+        .is_err()
+        {
+            return Err(NativeError::Other);
         }
-        Err(error) => println!(
+    }
+    let result = operation();
+    let flushed = guard
+        .flush(&mut std::io::stdout().lock())
+        .map_err(output_error);
+    // The original native failure wins; formatting failure cannot convert success to acceptance.
+    let result = match result {
+        Err(error) => Err(error),
+        Ok(value) => flushed.map(|()| value),
+    };
+    let mut writer = std::io::stdout().lock();
+    let terminal = match &result {
+        Ok(_) => writeln!(
+            writer,
+            "openrdx-token-object-dacl-matrix-stage row={row} phase={phase} status=ok"
+        ),
+        Err(error) => writeln!(
+            writer,
             "openrdx-token-object-dacl-matrix-stage row={row} phase={phase} status=failed reason={error:?}"
         ),
+    };
+    if terminal.is_err() && result.is_ok() {
+        return Err(NativeError::Other);
     }
     result
 }
@@ -394,7 +427,22 @@ fn experiment(
         expected.create(row, fixture, &token)
     })?);
     checkpoint(name, "read", || {
-        expected.readback(name, "read", state.child()?)
+        let observer = if row.objects()[2] {
+            token_lineage::observe(token_lineage::Context {
+                row,
+                child: state.child()?,
+                fixture,
+                source,
+                derived: &token,
+                baseline: &baseline.token.components,
+                expected: &expected.token,
+            })
+        } else {
+            Ok(())
+        };
+        // The established byte-exact guard keeps its original error even if an observer also fails.
+        expected.readback(name, "read", state.child()?)?;
+        observer
     })?;
     checkpoint(name, "resume", || {
         deadline.launch()?;
@@ -468,6 +516,9 @@ fn observe_matrix() -> Result<(), NativeError> {
         }
         let source = SourceGuard::capture();
         facts("matrix", "setup", &[("verified", source.is_ok())]);
+        if let Ok(source) = &source {
+            token_lineage::initial(source);
+        }
         source
     })?;
     let mut fixture = checkpoint("matrix", "fixture", || {
@@ -533,6 +584,7 @@ fn observe_matrix() -> Result<(), NativeError> {
         child.and(fixture_result)
     });
     let unchanged = checkpoint("matrix", "source-check", || {
+        token_lineage::final_source(&source);
         source_check("matrix", "source-check", &source)
     });
     let complete = first_error.is_none() && cleanup.is_ok() && unchanged.is_ok();

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 André Fiedler
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import { TokenLineageEvidence } from './windows-token-lineage-evidence.mjs'
+
 /** Compiled roles only; matrix completion never authorizes ordinary child admission. */
 export const objectMatrixRows = Object.freeze(['baseline', 'process', 'thread', 'process-thread', 'token', 'process-token', 'thread-token', 'process-thread-token'])
 const prefix = 'openrdx-token-object-dacl-matrix'
@@ -40,6 +42,7 @@ const schema = Object.freeze({
  * @returns {object} Closed lines, experiment completion and independent startup observation.
  */
 export function objectMatrixEvidence(input) {
+    const lineage = new TokenLineageEvidence()
     const lines = [],
         facts = new Map(),
         stages = new Map(),
@@ -51,6 +54,12 @@ export function objectMatrixEvidence(input) {
     /** @returns {object} Closed empty rejection, never captured native strings. */
     const reject = () => ({ lines: [], failure: true, complete: false, anyStartup: false, firstFailure: null, reason: 'object-dacl-matrix-schema' })
     for (const line of input) {
+        if (line.startsWith('openrdx-token-object-lineage')) {
+            const closed = lineage.accept(line, active)
+            if (closed === null) return reject()
+            lines.push(closed)
+            continue
+        }
         if (!line.startsWith(prefix)) continue
         const match = new RegExp(`^${prefix}(-stage|-exit)? row=([a-z-]+) phase=([a-z-]+) (.+)$`, 'u').exec(line)
         if (match === null) return reject()
@@ -85,6 +94,7 @@ export function objectMatrixEvidence(input) {
         }
         lines.push(line)
     }
+    if (!lineage.valid()) return reject()
     /** @param {string} row Fixed compiled row. @param {string} phase Fixed phase. @param {readonly string[]} keys Required true keys. @returns {boolean} Exact completed facts. */
     const proved = (row, phase, keys = schema[phase] ?? []) => stages.get(`${row}/${phase}`) === 'ok' && keys.every((key) => facts.get(`${row}/${phase}/${key}`) === true)
     const expected = ['matrix/setup', 'matrix/fixture']

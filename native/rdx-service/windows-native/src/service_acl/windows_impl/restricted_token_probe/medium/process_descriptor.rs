@@ -3,6 +3,8 @@
 
 //! Private bounded descriptor components and one exactly scoped ordinary process ACE.
 use super::{mandatory_label, object_acl};
+#[path = "token_acl_profile.rs"]
+pub mod token_acl_profile;
 
 /// Canonical components contain private identities and intentionally never implement Debug.
 #[derive(Clone, PartialEq)]
