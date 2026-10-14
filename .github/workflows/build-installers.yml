@@ -85,6 +85,7 @@ jobs:
                   $probeExitCode = $LASTEXITCODE
                   exit $probeExitCode
             - name: Compile private Windows token child fixtures
+              id: windows-token-fixtures
               if: matrix.platform == 'win'
               shell: pwsh
               run: |
@@ -99,6 +100,14 @@ jobs:
                   node scripts/verify-windows-restricted-token-probe.mjs --child | Tee-Object -FilePath out/verification/windows-token-child.log
                   $probeExitCode = $LASTEXITCODE
                   exit $probeExitCode
+            - name: Observe source-context Windows child control
+              if: always() && matrix.platform == 'win' && steps.windows-token-fixtures.outcome == 'success'
+              continue-on-error: true
+              shell: pwsh
+              run: |
+                  node scripts/verify-windows-restricted-token-probe.mjs --source-control | Tee-Object -FilePath out/verification/windows-token-source-control.log
+                  $probeExitCode = $LASTEXITCODE
+                  exit $probeExitCode
             - name: Upload closed Windows token evidence
               if: always() && matrix.platform == 'win'
               uses: actions/upload-artifact@v7.0.1
@@ -108,6 +117,7 @@ jobs:
                       out/verification/windows-token-baseline.log
                       out/verification/windows-token-medium.log
                       out/verification/windows-token-child.log
+                      out/verification/windows-token-source-control.log
                   if-no-files-found: ignore
                   retention-days: 3
             - name: Verify Windows PowerShell installer boundary

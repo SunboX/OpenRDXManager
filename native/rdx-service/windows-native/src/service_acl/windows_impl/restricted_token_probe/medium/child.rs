@@ -6,12 +6,16 @@ use super::*;
 #[path = "fixture.rs"]
 mod fixture;
 use fixture::{Fixture, Variant};
+#[path = "creation_ownership.rs"]
+mod creation_ownership;
 #[path = "desktop_context.rs"]
 mod desktop_context;
 #[path = "../../../../../tests/fixtures/token-child-status.rs"]
 mod exit_status;
 #[path = "object_context.rs"]
 mod object_context;
+#[path = "source_control.rs"]
+mod source_control;
 use windows::Win32::Foundation::{DuplicateHandle, WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows::Win32::Security::TOKEN_ASSIGN_PRIMARY;
 use windows::Win32::System::Threading::{
@@ -62,14 +66,17 @@ impl OwnedChild {
         .map_err(map_native_error)?;
         let process = OwnedHandle(info.hProcess);
         let thread = OwnedHandle(info.hThread);
-        if info.dwProcessId == 0 || info.dwProcessId == std::process::id() {
-            return Err(NativeError::Other);
-        }
-        Ok(Self {
-            process,
-            thread,
-            reaped: false,
-        })
+        // Own cleanup immediately after API success, including later PID sanity rejection.
+        creation_ownership::retain_valid_creation(
+            Self {
+                process,
+                thread,
+                reaped: false,
+            },
+            info.dwProcessId,
+            std::process::id(),
+        )
+        .ok_or(NativeError::Other)
     }
 
     /// Resumes only this returned initial thread after complete suspended proof.
@@ -165,6 +172,28 @@ fn prove_child_quiet(
     console: &OwnedSid,
     session: u32,
 ) -> Result<(), NativeError> {
+    prove_image(child, fixture)?;
+    let mut handle = HANDLE::default();
+    // SAFETY: pinned owned child process; new output owns a query-only token handle.
+    unsafe { OpenProcessToken(child.process.0, TOKEN_QUERY, &mut handle) }
+        .map_err(map_native_error)?;
+    let token = OwnedHandle(handle);
+    let observed = SourceSnapshot::read(&token)?;
+    let (deny_only, no_admins) = administrative_groups(&token)?;
+    if !eligible(&observed, source, console, session, deny_only, no_admins)? {
+        return Err(NativeError::AccessDenied);
+    }
+    // SAFETY: only read-only local console rechecks, no session or account changes.
+    if session != unsafe { WTSGetActiveConsoleSessionId() }
+        || console.bytes() != console_sid(session)?.bytes()
+    {
+        return Err(NativeError::AccessDenied);
+    }
+    Ok(())
+}
+
+/// Revalidates only the mechanically pinned fixed image, without any token eligibility decision.
+fn prove_image(child: &OwnedChild, fixture: &Fixture) -> Result<(), NativeError> {
     let mut image = vec![0_u16; 32_768];
     let mut length = image.len() as u32;
     // SAFETY: owned process and bounded writable UTF-16 image query.
@@ -184,22 +213,6 @@ fn prove_child_quiet(
     let mut pin = crate::local_trust::windows::open(&image, false)?;
     crate::local_trust::validate_runtime_acl(&crate::local_trust::windows::evidence(&pin)?)?;
     if file_identity(&image)? != fixture.identity || fixture::hash(&mut pin)? != fixture.digest {
-        return Err(NativeError::AccessDenied);
-    }
-    let mut handle = HANDLE::default();
-    // SAFETY: pinned owned child process; new output owns a query-only token handle.
-    unsafe { OpenProcessToken(child.process.0, TOKEN_QUERY, &mut handle) }
-        .map_err(map_native_error)?;
-    let token = OwnedHandle(handle);
-    let observed = SourceSnapshot::read(&token)?;
-    let (deny_only, no_admins) = administrative_groups(&token)?;
-    if !eligible(&observed, source, console, session, deny_only, no_admins)? {
-        return Err(NativeError::AccessDenied);
-    }
-    // SAFETY: only read-only local console rechecks, no session or account changes.
-    if session != unsafe { WTSGetActiveConsoleSessionId() }
-        || console.bytes() != console_sid(session)?.bytes()
-    {
         return Err(NativeError::AccessDenied);
     }
     Ok(())
