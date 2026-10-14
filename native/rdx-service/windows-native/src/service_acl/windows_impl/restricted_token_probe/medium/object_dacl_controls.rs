@@ -11,8 +11,6 @@ mod matrix_protocol;
 mod owned_derived_token;
 #[path = "token_lineage.rs"]
 mod token_lineage;
-#[path = "token_statistics.rs"]
-mod token_statistics;
 use super::process_dacl_control::process_descriptor::{Components, ObjectRole};
 use super::process_dacl_control::{Objects, PrivateDescriptor};
 use matrix_protocol::Row;

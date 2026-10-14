@@ -6,6 +6,8 @@ use super::*;
 #[path = "fixture.rs"]
 mod fixture;
 use fixture::{Fixture, Variant};
+#[path = "actual_token_control.rs"]
+mod actual_token_control;
 #[path = "creation_ownership.rs"]
 mod creation_ownership;
 #[path = "desktop_context.rs"]
@@ -26,6 +28,8 @@ mod object_dacl_controls;
 mod process_dacl_control;
 #[path = "source_control.rs"]
 mod source_control;
+#[path = "token_statistics.rs"]
+mod token_statistics;
 use windows::Win32::Foundation::{DuplicateHandle, WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows::Win32::Security::TOKEN_ASSIGN_PRIMARY;
 use windows::Win32::System::Threading::{
