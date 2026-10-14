@@ -20,6 +20,9 @@ pub enum DiscoveryFailure {
     Unmount,
     /// The existing isolated SCSI worker could not acquire authority.
     WorkerAcquisition,
+    /// Closed evidence from this thread's just-failed isolated Mac worker startup.
+    #[cfg(target_os = "macos")]
+    WorkerStartup(rdx_macos_native::WorkerStartupFailure),
     /// Mandatory standard INQUIRY has no proven successful reply.
     StandardInquiry,
     /// Mandatory identification VPD page 0x83 has no proven reply.
@@ -58,6 +61,8 @@ impl DiscoveryFailure {
             Self::MediaMap => "candidate-media-map-failed",
             Self::Unmount => "candidate-unmount-failed",
             Self::WorkerAcquisition => "candidate-worker-acquisition-failed",
+            #[cfg(target_os = "macos")]
+            Self::WorkerStartup(failure) => failure.code(),
             Self::StandardInquiry => "candidate-standard-inquiry-failed",
             Self::Vpd83Inquiry => "candidate-vpd83-inquiry-failed",
             Self::Mode31Probe => "candidate-mode31-probe-failed",

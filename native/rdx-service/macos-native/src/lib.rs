@@ -42,6 +42,10 @@ pub use user_directory::user_home_directory;
 mod scsi_worker;
 #[cfg(target_os = "macos")]
 mod scsi_worker_io;
+#[cfg(target_os = "macos")]
+mod scsi_worker_startup;
+#[cfg(target_os = "macos")]
+pub use scsi_worker_startup::{WorkerStartupFailure, take_last_worker_startup_failure};
 mod serial_contract;
 #[cfg(feature = "test-hooks")]
 mod test_support;

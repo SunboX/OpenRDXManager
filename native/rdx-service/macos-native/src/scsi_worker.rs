@@ -40,6 +40,7 @@ pub struct MacScsiWorkerLease {
     child: Option<Child>,
     input: Option<ChildStdin>,
     output: Option<ChildStdout>,
+    diagnostics: crate::scsi_worker_startup::StartupDiagnostics,
 }
 
 impl MacScsiWorkerLease {
@@ -49,44 +50,78 @@ impl MacScsiWorkerLease {
     ///
     /// Returns a sanitized spawn, identity, initialization, or native-open failure.
     pub fn spawn(identity: &MacRematchIdentity) -> Result<Self, NativeError> {
+        use crate::scsi_worker_startup as diagnostic;
+        diagnostic::reset();
         if UNREAPED_WORKER.load(Ordering::Acquire) {
+            diagnostic::parent_failure("process-spawn", NativeError::Busy);
             return Err(NativeError::Busy);
         }
-        let executable = std::env::current_exe().map_err(|_| NativeError::TransportUnavailable)?;
-        let mut child = Command::new(executable)
+        let executable = std::env::current_exe().map_err(|error| {
+            diagnostic::os_failure("process-current-exe", &error);
+            NativeError::TransportUnavailable
+        })?;
+        let child = Command::new(executable)
             .arg("--openrdx-internal-macos-scsi-worker")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .spawn()
-            .map_err(|_| NativeError::TransportUnavailable)?;
-        let input = child
-            .stdin
-            .take()
-            .ok_or(NativeError::TransportUnavailable)?;
-        let output = child
-            .stdout
-            .take()
-            .ok_or(NativeError::TransportUnavailable)?;
+            .map_err(|error| {
+                diagnostic::os_failure("process-spawn", &error);
+                NativeError::TransportUnavailable
+            })?;
+        Self::initialize_child(child, identity)
+    }
+
+    /// Takes only a retained spawned child and initializes its existing bounded protocol.
+    fn initialize_child(child: Child, identity: &MacRematchIdentity) -> Result<Self, NativeError> {
+        Self::initialize_child_with(child, identity, |worker| {
+            worker.diagnostics.nonblocking()?;
+            crate::scsi_worker_io::nonblocking_io(worker.input.as_ref().expect("owned input"))?;
+            crate::scsi_worker_io::nonblocking_io(worker.output.as_ref().expect("owned output"))
+        })
+    }
+
+    /// Shares production setup ownership with hardware-free failure-injection fixtures.
+    fn initialize_child_with(
+        mut child: Child,
+        identity: &MacRematchIdentity,
+        configure: impl FnOnce(&mut Self) -> std::io::Result<()>,
+    ) -> Result<Self, NativeError> {
+        use crate::scsi_worker_startup as diagnostic;
         let mut worker = Self {
+            input: child.stdin.take(),
+            output: child.stdout.take(),
+            diagnostics: diagnostic::StartupDiagnostics::new(child.stderr.take()),
             child: Some(child),
-            input: Some(input),
-            output: Some(output),
         };
-        crate::scsi_worker_io::nonblocking(worker.input.as_ref().expect("owned input"))?;
-        crate::scsi_worker_io::nonblocking(worker.output.as_ref().expect("owned output"))?;
+        if worker.input.is_none() || worker.output.is_none() || !worker.diagnostics.has_pipe() {
+            diagnostic::parent_failure("process-pipes", NativeError::TransportUnavailable);
+            return Err(NativeError::TransportUnavailable);
+        }
+        if let Err(error) = configure(&mut worker) {
+            diagnostic::os_failure("process-nonblocking", &error);
+            return Err(NativeError::TransportUnavailable);
+        }
         let deadline = Instant::now() + INIT_TIMEOUT;
         let identity_payload = encode_identity(identity);
         worker.write_frame(FRAME_INIT, &identity_payload, deadline)?;
         let (kind, payload) = worker.read_frame(FRAME_READY, deadline)?;
         match kind {
-            FRAME_READY if payload.is_empty() => Ok(worker),
+            FRAME_READY if payload.is_empty() => {
+                worker.diagnostics.success();
+                Ok(worker)
+            }
             FRAME_ERROR => {
                 let error = decode_error(&payload).unwrap_or(NativeError::Other);
+                worker.diagnostics.failure("init-read", error);
                 worker.terminate_child();
                 Err(error)
             }
             _ => {
+                worker
+                    .diagnostics
+                    .failure("init-frame", NativeError::InvalidRequest);
                 worker.terminate_child();
                 Err(NativeError::InvalidRequest)
             }
@@ -202,9 +237,15 @@ impl MacScsiWorkerLease {
         frame.extend_from_slice(payload);
         // A child dispatches only after reading the complete frame. A failed
         // nonblocking write has supplied a strict prefix, never a complete command.
-        let result =
-            crate::scsi_worker_io::write_all(input, &frame, deadline).map_err(|(error, _)| error);
-        if result.is_err() {
+        let result = crate::scsi_worker_io::write_all_observed(
+            input,
+            &frame,
+            deadline,
+            Some(&mut self.diagnostics),
+        )
+        .map_err(|(error, _)| error);
+        if let Err(error) = &result {
+            self.diagnostics.failure("init-write", *error);
             self.terminate_child();
         }
         result
@@ -222,7 +263,12 @@ impl MacScsiWorkerLease {
                 .as_mut()
                 .ok_or(NativeError::TransportUnavailable)?;
             let mut header = [0; HEADER_BYTES];
-            crate::scsi_worker_io::read_exact(output, &mut header, deadline)?;
+            crate::scsi_worker_io::read_exact_observed(
+                output,
+                &mut header,
+                deadline,
+                Some(&mut self.diagnostics),
+            )?;
             if &header[..8] != MAGIC || header[9..12] != [0, 0, 0] {
                 return Err(NativeError::InvalidRequest);
             }
@@ -233,10 +279,23 @@ impl MacScsiWorkerLease {
                 return Err(NativeError::InvalidRequest);
             }
             let mut payload = vec![0; length];
-            crate::scsi_worker_io::read_exact(output, &mut payload, deadline)?;
+            crate::scsi_worker_io::read_exact_observed(
+                output,
+                &mut payload,
+                deadline,
+                Some(&mut self.diagnostics),
+            )?;
             Ok((kind, payload))
         })();
-        if result.is_err() {
+        if let Err(error) = &result {
+            self.diagnostics.failure(
+                if *error == NativeError::InvalidRequest {
+                    "init-frame"
+                } else {
+                    "init-read"
+                },
+                *error,
+            );
             self.terminate_child();
         }
         result
@@ -268,6 +327,8 @@ impl MacScsiWorkerLease {
 
     /// Terminates and reaps only this exact spawned child after a failed boundary.
     fn terminate_child(&mut self) {
+        self.diagnostics.drain();
+        self.diagnostics.close();
         self.input = None;
         self.output = None;
         if let Some(mut child) = self.child.take() {
@@ -363,33 +424,52 @@ fn run_worker<R: Read, W: Write>(
     mut output: W,
     serial_only: bool,
 ) -> Result<(), NativeError> {
-    let (kind, payload) = read_frame(&mut input)?;
-    if kind != FRAME_INIT {
-        return Err(NativeError::InvalidRequest);
+    use crate::scsi_worker_startup::step;
+    if !serial_only {
+        crate::enable_acquisition_diagnostics();
     }
-    let identity = decode_identity(&payload)?;
-    let candidates = enumerate_candidates()?;
-    let candidate = identity.select_unique(&candidates)?;
-    let mut authority = MacDevice::open(candidate)?;
-    {
-        let mapping = authority.pin_media()?;
-        if mapping.mounted_media_count() != 0 {
-            write_frame(&mut output, FRAME_ERROR, &encode_error(NativeError::Busy))?;
-            return Err(NativeError::Busy);
+    // Diagnostics precede each existing boundary, never introduce another probe.
+    let initialized = (|| {
+        let (kind, payload) = step("init-read", !serial_only, || read_frame(&mut input))?;
+        step("init-frame", !serial_only, || {
+            if kind == FRAME_INIT {
+                Ok(())
+            } else {
+                Err(NativeError::InvalidRequest)
+            }
+        })?;
+        let identity = step("init-decode", !serial_only, || decode_identity(&payload))?;
+        let candidates = step("rematch-enumerate", !serial_only, enumerate_candidates)?;
+        let candidate = step("rematch-select", !serial_only, || {
+            identity.select_unique(&candidates)
+        })?;
+        let mut authority = step("registry-open", !serial_only, || MacDevice::open(candidate))?;
+        {
+            let mapping = step("media-map", !serial_only, || authority.pin_media())?;
+            if mapping.mounted_media_count() != 0 {
+                // Preserve the original Busy reply before the retained mapping/device drop.
+                write_frame(&mut output, FRAME_ERROR, &encode_error(NativeError::Busy))?;
+                return Err(NativeError::Busy);
+            }
         }
-    }
-    // Bind topology before capture removes the mass-storage registry service.
-    // SCSI-only devices remain supported, but migration requires these fields.
-    let usb_identity = authority.usb_identity();
-    if serial_only
-        && !usb_identity
-            .as_ref()
-            .is_ok_and(crate::serial_contract::usb_identity_is_valid)
-    {
-        return Err(NativeError::EvidenceIncomplete);
-    }
-    let mut scsi = authority.acquire_scsi()?;
-    write_frame(&mut output, FRAME_READY, &[])?;
+        // Bind topology before capture removes the mass-storage registry service.
+        // SCSI-only devices remain supported, but migration requires these fields.
+        let usb_identity = step("usb-identity", !serial_only, || authority.usb_identity());
+        if serial_only
+            && !usb_identity
+                .as_ref()
+                .is_ok_and(crate::serial_contract::usb_identity_is_valid)
+        {
+            return Err(NativeError::EvidenceIncomplete);
+        }
+        let scsi = step("acquire", !serial_only, || authority.acquire_scsi())?;
+        Ok((authority, scsi, usb_identity))
+    })();
+    // Preserve all previously silent early failures and the public EOF error result.
+    let (authority, mut scsi, usb_identity) = initialized?;
+    step("ready-write", !serial_only, || {
+        write_frame(&mut output, FRAME_READY, &[])
+    })?;
     loop {
         let (kind, payload) = read_frame(&mut input)?;
         let payload = zeroize::Zeroizing::new(payload);
@@ -703,242 +783,5 @@ const fn decode_error_byte(value: u8) -> Result<NativeError, NativeError> {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::io::Cursor;
-
-    use super::*;
-
-    /// A removed Child handle does not prove a killed-but-unreaped capture owner exited.
-    #[test]
-    fn release_requires_proven_child_termination_even_after_lost_reply() {
-        for reply in [
-            Ok((FRAME_ACK, Vec::new())),
-            Err(NativeError::TransportUnavailable),
-        ] {
-            assert_eq!(
-                release_outcome(reply.clone(), Ok(()), true),
-                Err(NativeError::TimedOut)
-            );
-            assert_eq!(release_outcome(reply, Ok(()), false), Ok(()));
-        }
-    }
-
-    /// Only fixed compatibility shapes survive the IPC boundary; no offset is accepted.
-    #[test]
-    fn compatibility_setup_worker_frames_are_closed() {
-        let authorization = [0, 0, 0x67, 0x99, 0x11, 0x73, 0x32, 0xf6, 0x25, 0x8e];
-        for (operation, length) in [(24, 10), (25, 0)] {
-            let mut request = ffi::ScsiRequest {
-                operation,
-                timeout_ms: 15_000,
-                data_length: length,
-                ..ffi::ScsiRequest::default()
-            };
-            if operation == 24 {
-                request.data[..10].copy_from_slice(&authorization);
-            }
-            let payload = encode_request(request);
-            assert!(decode_request(&payload).is_ok());
-            for index in [12, 16] {
-                let mut changed = payload.clone();
-                changed[index] = 1;
-                assert!(decode_request(&changed).is_err());
-            }
-            if operation == 24 {
-                let mut changed = payload.clone();
-                changed[17] = 1;
-                assert!(decode_request(&changed).is_err());
-                changed = payload.clone();
-                changed[19] = 0x55 ^ 0x1f;
-                assert!(decode_request(&changed).is_err());
-            }
-        }
-    }
-
-    /// Restore framing rejects mutations to fixed fields or the desired record checksum.
-    #[test]
-    fn manufacturing_restore_worker_frames_are_closed() {
-        for operation in [33, 34] {
-            assert!(operation_allowed(false, operation));
-            assert!(!operation_allowed(true, operation));
-        }
-        let probe = ffi::ScsiRequest {
-            operation: 33,
-            timeout_ms: 30000,
-            ..ffi::ScsiRequest::default()
-        };
-        let payload = encode_request(probe);
-        assert!(decode_request(&payload).is_ok());
-        for index in [12, 16] {
-            let mut invalid = payload.clone();
-            invalid[index] = 1;
-            assert!(decode_request(&invalid).is_err());
-        }
-        let mut request = ffi::ScsiRequest {
-            operation: 34,
-            timeout_ms: 30000,
-            data_length: 528,
-            ..ffi::ScsiRequest::default()
-        };
-        request.data[..8].copy_from_slice(b"RDXMFG01");
-        request.data[16..272].fill(0xff);
-        request.data[272..276].copy_from_slice(&[0x78, 0x56, 0x34, 0x12]);
-        let payload = encode_request(request);
-        assert!(decode_request(&payload).is_ok());
-        for index in [
-            12,
-            16,
-            17,
-            17 + 12,
-            17 + 13,
-            17 + 14,
-            17 + 15,
-            17 + 272,
-            17 + 527,
-        ] {
-            let mut invalid = payload.clone();
-            invalid[index] ^= 1;
-            assert!(decode_request(&invalid).is_err());
-        }
-        let mut damaged_current = payload.clone();
-        damaged_current[17 + 16] = 0;
-        assert!(decode_request(&damaged_current).is_ok());
-        let mut erased_desired = payload.clone();
-        erased_desired[17 + 272..].fill(0xff);
-        assert!(decode_request(&erased_desired).is_err());
-        assert!(decode_request(&payload[..payload.len() - 1]).is_err());
-    }
-
-    /// Serial worker framing independently refuses arbitrary chunk bounds, modes, and payloads.
-    #[test]
-    fn serial_worker_frames_are_closed() {
-        for operation in [
-            ScsiOperation::openrdx_serial_capability(),
-            ScsiOperation::openrdx_mechanism_diagnostics(),
-        ] {
-            let payload = encode_request(operation.into_request());
-            assert!(decode_request(&payload).is_ok());
-            for index in [12, 16] {
-                let mut invalid = payload.clone();
-                invalid[index] = 1;
-                assert!(decode_request(&invalid).is_err());
-            }
-        }
-        let mut payload = encode_request(
-            ScsiOperation::openrdx_manufacturing_sector_chunk(31)
-                .unwrap()
-                .into_request(),
-        );
-        assert!(decode_request(&payload).is_ok());
-        payload[12] = 32;
-        assert!(decode_request(&payload).is_err());
-        payload[12] = 31;
-        payload[16] = 1;
-        assert!(decode_request(&payload).is_err());
-        let mut data = vec![0; 280];
-        data[..8].copy_from_slice(b"RDXSER01");
-        data[12] = 1;
-        data[14..24].copy_from_slice(b"0123456789");
-        data[24..].fill(0xff);
-        let payload = encode_request(
-            ScsiOperation::openrdx_set_serial(data)
-                .unwrap()
-                .into_request(),
-        );
-        assert!(decode_request(&payload).is_ok());
-        for index in [12, 16, 17, 17 + 12, 17 + 13, 17 + 14, 17 + 24] {
-            let mut invalid = payload.clone();
-            invalid[index] = 0xfe;
-            assert!(decode_request(&invalid).is_err());
-        }
-    }
-
-    /// Framing rejects an oversized length before allocating its payload.
-    #[test]
-    fn oversized_frame_is_rejected() {
-        let mut bytes = Vec::from(*MAGIC);
-        bytes.extend_from_slice(&[FRAME_COMMAND, 0, 0, 0]);
-        bytes.extend_from_slice(&((MAX_FRAME_BYTES + 1) as u32).to_le_bytes());
-
-        assert_eq!(
-            read_frame(&mut Cursor::new(bytes)),
-            Err(NativeError::ResourceLimit)
-        );
-    }
-
-    /// Request framing round-trips a closed eject operation without padding.
-    #[test]
-    fn request_round_trip_preserves_eject_operation() {
-        let request = ScsiOperation::eject_media().into_request();
-        let decoded = decode_request(&encode_request(request)).expect("valid request");
-
-        assert_eq!(decoded.operation, 21);
-        assert_eq!(decoded.data_length, 0);
-        assert_eq!(decoded.save_pages, 0);
-    }
-
-    /// Factory commands survive the worker boundary with no caller payload.
-    #[test]
-    fn factory_read_request_frames_are_closed() {
-        for operation in [
-            ScsiOperation::vendor_0283_factory_info(),
-            ScsiOperation::vendor_0283_usb_identity(),
-            ScsiOperation::openrdx_manufacturing_record_first(),
-            ScsiOperation::openrdx_manufacturing_record_second(),
-            ScsiOperation::openrdx_operational_state_record(),
-        ] {
-            let payload = encode_request(operation.into_request());
-            assert!(decode_request(&payload).is_ok());
-            for index in [12, 16] {
-                let mut changed = payload.clone();
-                changed[index] = 1;
-                assert!(decode_request(&changed).is_err());
-            }
-            let mut with_data = payload.clone();
-            with_data[8..12].copy_from_slice(&1_u32.to_le_bytes());
-            with_data.push(0);
-            assert!(decode_request(&with_data).is_err());
-        }
-        let mut unknown = encode_request(ScsiOperation::vendor_0283_usb_identity().into_request());
-        unknown[..4].copy_from_slice(&35_u32.to_le_bytes());
-        assert!(decode_request(&unknown).is_err());
-    }
-
-    /// A response's closed shape is checked before reading its declared payload.
-    #[test]
-    fn parent_response_headers_are_closed_before_payload_wait() {
-        assert!(response_length_allowed(FRAME_READY, FRAME_READY, 0));
-        assert!(!response_length_allowed(FRAME_READY, FRAME_READY, 1));
-        assert!(!response_length_allowed(FRAME_ACK, FRAME_RESPONSE, 2));
-        assert!(!response_length_allowed(FRAME_RESPONSE, FRAME_ERROR, 1));
-        assert!(!response_length_allowed(FRAME_RESPONSE, FRAME_RESPONSE, 19));
-        assert!(!response_length_allowed(
-            FRAME_RESPONSE,
-            FRAME_RESPONSE,
-            MAX_FRAME_BYTES
-        ));
-        assert!(response_length_allowed(
-            FRAME_RESPONSE,
-            FRAME_RESPONSE,
-            20 + ffi::MAX_TRANSFER_BYTES + ffi::MAX_SENSE_BYTES
-        ));
-    }
-
-    /// Completion framing retains bounded device data and sense lengths.
-    #[test]
-    fn completion_round_trip_is_bounded() {
-        let completion = Completion::Device {
-            scsi_status: 2,
-            service_response: 2,
-            transferred_length: 3,
-            data: vec![1, 2, 3],
-            sense_reported_length: 2,
-            sense: vec![4, 5],
-        };
-
-        assert_eq!(
-            decode_completion(&encode_completion(&completion)),
-            Ok(completion)
-        );
-    }
-}
+#[path = "scsi_worker_tests.rs"]
+mod tests;

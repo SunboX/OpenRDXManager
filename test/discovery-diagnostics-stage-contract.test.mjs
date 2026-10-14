@@ -24,3 +24,19 @@ test('stage diagnostics retain strict count, privacy and reason bounds', () => {
     const excessive = Array.from({ length: 33 }, (_value, index) => ({ reason: `candidate-stage-${index}`, count: 1 }))
     assert.equal(discoveryDiagnosticsSchema.safeParse({ candidateCount: 33, acceptedCount: 0, rejections: excessive }).success, false)
 })
+
+test('closed worker phase and error buckets retain the existing privacy contract', () => {
+    const rejections = ['candidate-worker-process-spawn-bad-fd', 'candidate-worker-init-write-transport-unavailable', 'candidate-worker-rematch-select-device-removed', 'candidate-worker-usb-capture-device-access-denied', 'candidate-worker-usb-open-bulk-out-evidence-incomplete'].map((reason) => ({ reason, count: 1 }))
+    const evidence = { candidateCount: 5, acceptedCount: 0, rejections }
+    assert.deepEqual(discoveryDiagnosticsSchema.parse(evidence), evidence)
+    for (const extra of [{ nativeCode: 42 }, { nativeCodeKind: 'nserror' }, { nativeStatus: 3 }, { phaseText: 'native secret' }]) {
+        assert.equal(discoveryDiagnosticsSchema.safeParse({ candidateCount: 1, acceptedCount: 0, rejections: [{ reason: rejections[0].reason, count: 1, ...extra }] }).success, false)
+    }
+})
+
+test('31 fixed worker reasons plus merged overflow remain a complete bounded report', () => {
+    const rejections = [{ reason: 'candidate-validation-failed', count: 12 }, ...Array.from({ length: 31 }, (_value, index) => ({ reason: `candidate-worker-phase-${index}-other`, count: 2 }))]
+    const evidence = { candidateCount: 76, acceptedCount: 2, rejections }
+    assert.deepEqual(discoveryDiagnosticsSchema.parse(evidence), evidence)
+    assert.equal(rejections.reduce((total, rejection) => total + rejection.count, 0) + evidence.acceptedCount, evidence.candidateCount)
+})

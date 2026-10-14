@@ -226,6 +226,8 @@ mod windows_impl {
         bounded_multi_wide, bounded_wide, is_error, map_native_error, wide_null,
     };
     mod manager_token;
+    #[cfg(test)]
+    mod restricted_token_probe;
     use manager_token::manager_sid;
     mod queries;
     use queries::{query_service_configuration, read_service_security};

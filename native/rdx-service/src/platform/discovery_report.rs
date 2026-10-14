@@ -47,7 +47,7 @@ impl DiscoveryDiagnostics {
         Self {
             candidate_count,
             accepted_count,
-            rejections,
+            rejections: bound_rejections(rejections),
         }
     }
 
@@ -371,4 +371,69 @@ fn validate_backend_candidates<B: PlatformBackend>(
     let rejections = rejections.into_iter().collect();
     let diagnostics = DiscoveryDiagnostics::new(candidate_count, validated.len(), rejections);
     Ok((validated, diagnostics))
+}
+
+/// Keeps complete counts at the existing wire limit without truncating candidate processing.
+fn bound_rejections(rejections: Vec<(&'static str, usize)>) -> Vec<(&'static str, usize)> {
+    const GENERIC: &str = "candidate-validation-failed";
+    let mut reasons = BTreeMap::new();
+    for (reason, count) in rejections {
+        *reasons.entry(reason).or_default() += count;
+    }
+    if reasons.len() <= 32 {
+        return reasons.into_iter().collect();
+    }
+    let mut overflow = reasons.remove(GENERIC).unwrap_or(0);
+    let mut bounded = BTreeMap::new();
+    for (index, (reason, count)) in reasons.into_iter().enumerate() {
+        if index < 31 {
+            bounded.insert(reason, count);
+        } else {
+            overflow += count;
+        }
+    }
+    bounded.insert(GENERIC, overflow);
+    bounded.into_iter().collect()
+}
+
+#[cfg(test)]
+mod diagnostic_bound_tests {
+    use super::*;
+
+    /// The existing generic bucket merges every overflow count and deterministic ordering.
+    #[test]
+    fn excess_reasons_preserve_all_counts_and_generic_collision() {
+        let reasons = [
+            "r00", "r01", "r02", "r03", "r04", "r05", "r06", "r07", "r08", "r09", "r10", "r11",
+            "r12", "r13", "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21", "r22", "r23",
+            "r24", "r25", "r26", "r27", "r28", "r29", "r30", "r31", "r32", "r33", "r34",
+        ];
+        let mut input: Vec<_> = reasons.into_iter().map(|reason| (reason, 2)).collect();
+        input.push(("candidate-validation-failed", 4));
+        let bounded = DiscoveryDiagnostics::new(76, 2, input.clone());
+        assert_eq!(bounded.rejections().len(), 32);
+        assert_eq!(
+            bounded
+                .rejections()
+                .iter()
+                .map(|(_, count)| count)
+                .sum::<usize>(),
+            74
+        );
+        assert_eq!(bounded.rejections()[0], ("candidate-validation-failed", 12));
+        input.reverse();
+        assert_eq!(bounded, DiscoveryDiagnostics::new(76, 2, input));
+        assert_eq!(bounded.accepted_count(), 2);
+        assert_eq!(bounded.candidate_count(), 76);
+    }
+
+    /// No overflow changes a valid 32-reason report or drops duplicate reason counts.
+    #[test]
+    fn existing_small_reports_keep_all_counts() {
+        assert_eq!(
+            bound_rejections(vec![("media-mounted", 1), ("media-mounted", 2)]),
+            vec![("media-mounted", 3)]
+        );
+        assert!(bound_rejections(Vec::new()).is_empty());
+    }
 }
