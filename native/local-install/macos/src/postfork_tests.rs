@@ -190,26 +190,7 @@ fn postfork_isolated_child() {
     }
     drop(child);
     let mut evidence = Vec::new();
-    let received = (|| -> Result<(), String> {
-        loop {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return Err("postfork test deadline expired".into());
-            }
-            parent
-                .set_read_timeout(Some(remaining))
-                .map_err(|error| error.to_string())?;
-            let mut bytes = [0; 4096];
-            let count = parent.read(&mut bytes).map_err(|error| error.to_string())?;
-            if count == 0 {
-                return Ok(());
-            }
-            if evidence.len() + count > 16384 {
-                return Err("postfork test evidence exceeds bound".into());
-            }
-            evidence.extend_from_slice(&bytes[..count]);
-        }
-    })();
+    let received = receive_fork_evidence(&mut parent, deadline, &mut evidence);
     if received.is_err() {
         unsafe {
             libc::kill(pid, libc::SIGKILL);
@@ -224,4 +205,106 @@ fn postfork_isolated_child() {
     );
     assert_eq!(status, 0, "baseline={baseline}\n{evidence}");
     eprintln!("baseline={baseline}\n{evidence}");
+}
+
+/// Retain bounded test evidence under the original single absolute deadline.
+fn receive_fork_evidence(
+    parent: &mut UnixStream,
+    deadline: Instant,
+    evidence: &mut Vec<u8>,
+) -> Result<(), String> {
+    // Darwin rejects SO_RCVTIMEO updates once a Unix peer closes, even with
+    // complete buffered evidence. Configure nonblocking I/O once, and bound
+    // each kernel wait by the SAME absolute deadline rather than updating it.
+    parent
+        .set_nonblocking(true)
+        .map_err(|error| format!("postfork evidence set_nonblocking failed: {error}"))?;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err("postfork test deadline expired".into());
+        }
+        let mut bytes = [0; 4096];
+        let count = match parent.read(&mut bytes) {
+            Ok(0) => return Ok(()),
+            Ok(count) => count,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                // Floor milliseconds: the final sub-millisecond iteration polls
+                // immediately, so rounding never extends the absolute deadline.
+                let timeout = remaining.as_millis().min(i32::MAX as u128) as i32;
+                let mut waiting = libc::pollfd {
+                    fd: parent.as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                if unsafe { libc::poll(&mut waiting, 1, timeout) } < 0 {
+                    return Err(format!(
+                        "postfork evidence poll failed: {}",
+                        std::io::Error::last_os_error()
+                    ));
+                }
+                continue;
+            }
+            Err(error) => return Err(format!("postfork evidence read failed: {error}")),
+        };
+        if evidence.len() + count > 16384 {
+            return Err("postfork test evidence exceeds bound".into());
+        }
+        evidence.extend_from_slice(&bytes[..count]);
+    }
+}
+
+/// Closing a real peer with complete buffered evidence must preserve its data and EOF.
+#[test]
+fn buffered_evidence_survives_peer_close_before_timeout_update() {
+    let (mut parent, mut child) = UnixStream::pair().unwrap();
+    let bytes = b"result=Ok(())\n";
+    child.write_all(bytes).unwrap();
+    drop(child);
+    let mut evidence = Vec::new();
+    let received = receive_fork_evidence(
+        &mut parent,
+        Instant::now() + Duration::from_secs(1),
+        &mut evidence,
+    );
+    assert!(received.is_ok(), "{received:?}");
+    assert_eq!(evidence, bytes);
+}
+
+/// A connected silent peer cannot extend the receiver's single absolute deadline.
+#[test]
+fn fork_evidence_keeps_absolute_deadline_with_live_silent_peer() {
+    let (mut parent, _child) = UnixStream::pair().unwrap();
+    let mut evidence = Vec::new();
+    let started = Instant::now();
+    let received = receive_fork_evidence(
+        &mut parent,
+        started + Duration::from_millis(20),
+        &mut evidence,
+    );
+    assert_eq!(received.unwrap_err(), "postfork test deadline expired");
+    assert!(evidence.is_empty());
+    assert!(started.elapsed() >= Duration::from_millis(20));
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+/// Real streamed excess bytes remain a failure and never exceed the original 16KiB cap.
+#[test]
+fn fork_evidence_keeps_original_size_bound() {
+    let (mut parent, mut child) = UnixStream::pair().unwrap();
+    let writer = thread::spawn(move || child.write_all(&[b'x'; 16385]));
+    let mut evidence = Vec::new();
+    let received = receive_fork_evidence(
+        &mut parent,
+        Instant::now() + Duration::from_secs(1),
+        &mut evidence,
+    );
+    drop(parent);
+    writer.join().unwrap().unwrap();
+    assert_eq!(
+        received.unwrap_err(),
+        "postfork test evidence exceeds bound"
+    );
+    assert!(evidence.len() <= 16384);
 }
