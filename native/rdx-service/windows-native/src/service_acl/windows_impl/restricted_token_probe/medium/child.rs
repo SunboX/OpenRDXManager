@@ -6,6 +6,8 @@ use super::*;
 #[path = "fixture.rs"]
 mod fixture;
 use fixture::{Fixture, Variant};
+#[path = "desktop_context.rs"]
+mod desktop_context;
 #[path = "../../../../../tests/fixtures/token-child-status.rs"]
 mod exit_status;
 use windows::Win32::Foundation::{DuplicateHandle, WAIT_OBJECT_0, WAIT_TIMEOUT};
@@ -426,6 +428,7 @@ fn observe_child() -> Result<(), NativeError> {
         Ok(OwnedHandle(handle))
     })?;
     checkpoint(ChildPhase::Medium, || set_medium(&derived))?;
+    desktop_context::observe(&source, &derived);
     checkpoint(ChildPhase::PredicateNegatives, || {
         negative_predicates(&original, &derived, &console, session)
     })?;
