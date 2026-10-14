@@ -149,9 +149,9 @@ fn groups(token: &OwnedHandle) -> Result<Groups, NativeError> {
 }
 
 /// Aligned, bounded self-relative security descriptor with private principals.
-struct Descriptor {
-    storage: Vec<usize>,
-    length: usize,
+pub(super) struct Descriptor {
+    pub(super) storage: Vec<usize>,
+    pub(super) length: usize,
 }
 impl Descriptor {
     /// Reads owner/group/DACL only; no SACL, security privilege or mutation request.
@@ -196,7 +196,7 @@ impl Descriptor {
         PSECURITY_DESCRIPTOR(self.storage.as_ptr().cast_mut().cast())
     }
     /// Rejects incomplete/absolute descriptors before passing them to access-check APIs.
-    fn validate(&self) -> Result<(), NativeError> {
+    pub(super) fn validate(&self) -> Result<(), NativeError> {
         // SAFETY: complete aligned fixed header fits inside actual initialized response.
         let header = unsafe {
             self.storage
@@ -335,7 +335,7 @@ fn window_allowed(
 }
 
 /// Checks only DACL masks using an owned query-only copy; it never impersonates a thread.
-fn dacl_access(
+pub(super) fn dacl_access(
     descriptor: &Descriptor,
     token: &OwnedHandle,
     desired: u32,

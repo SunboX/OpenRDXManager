@@ -10,6 +10,8 @@ use fixture::{Fixture, Variant};
 mod desktop_context;
 #[path = "../../../../../tests/fixtures/token-child-status.rs"]
 mod exit_status;
+#[path = "object_context.rs"]
+mod object_context;
 use windows::Win32::Foundation::{DuplicateHandle, WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows::Win32::Security::TOKEN_ASSIGN_PRIMARY;
 use windows::Win32::System::Threading::{
@@ -483,6 +485,7 @@ fn observe_child() -> Result<(), NativeError> {
     checkpoint(ChildPhase::TimeoutProof, || {
         prove_child_quiet(&timeout_child, &wait_fixture, &original, &console, session)
     })?;
+    object_context::observe(&source, &derived, &timeout_child);
     checkpoint(ChildPhase::TimeoutResume, || timeout_child.resume())?;
     checkpoint(ChildPhase::TimeoutWait, || {
         let exit = timeout_child.wait(100)?;

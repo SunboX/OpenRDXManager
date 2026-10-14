@@ -37,7 +37,7 @@ fn restricting_presence(buffer: &TokenBuffer) -> Result<bool, NativeError> {
 /// Emits only complete bounded SID-query facts and independently queried ever-filtered status.
 fn token_fields(subject: &'static str, token: &OwnedHandle) -> Vec<String> {
     let restricted = restricting_sids(token);
-    let filtered = scalar(token, TokenHasRestrictions);
+    let (filtered_api, filtered_size, filtered) = filtered(token);
     let fields = [
         ("restricted-sids-query-ok", restricted.is_ok()),
         (
@@ -48,16 +48,35 @@ fn token_fields(subject: &'static str, token: &OwnedHandle) -> Vec<String> {
             "restricted-sids-present",
             restricted.as_ref().is_ok_and(|value| *value),
         ),
-        ("has-restrictions-query-ok", filtered.is_ok()),
-        (
-            "has-restrictions",
-            filtered.as_ref().is_ok_and(|value| *value != 0),
-        ),
+        ("has-restrictions-api-ok", filtered_api),
+        ("has-restrictions-size-match", filtered_size),
+        ("has-restrictions-query-ok", filtered_api && filtered_size),
+        ("has-restrictions", filtered),
     ];
     fields
         .iter()
         .map(|(key, value)| format!("{subject}-{key}={value}"))
         .collect()
+}
+
+/// Separates actual API success from the documented exact DWORD output-size check.
+/// A failed API or mismatched return length leaves the filtered-state observation unknown.
+fn filtered(token: &OwnedHandle) -> (bool, bool, bool) {
+    let mut value = 0_u32;
+    let mut returned = 0;
+    // SAFETY: initialized exact DWORD storage; only a read-only fixed token class is queried.
+    let api = unsafe {
+        GetTokenInformation(
+            token.0,
+            TokenHasRestrictions,
+            Some((&mut value as *mut u32).cast()),
+            size_of::<u32>() as u32,
+            &mut returned,
+        )
+    }
+    .is_ok();
+    let size_match = api && returned as usize == size_of::<u32>();
+    (api, size_match, size_match && value != 0)
 }
 
 /// Resolves the architecture-correct system directory from the kernel API, never user environment.
