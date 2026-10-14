@@ -15,21 +15,26 @@ const childRequirements = Object.freeze({ 'source-open': true, 'derived-created'
 const diagnosticKeys = new Set([...Object.keys(mediumRequirements), ...Object.keys(childRequirements), 'source-unchanged-after-create', 'source-admin-deny-only', 'source-no-enabled-admins', 'source-integrity-low', 'source-integrity-medium', 'source-integrity-system', 'integrity-low', 'integrity-system', 'elevation-type-default', 'elevation-type-limited'])
 const childPhases = new Set(['source-open', 'source-query', 'console-query', 'source-console', 'derive', 'medium', 'predicate-negatives', 'proof-fixture', 'query-only-token', 'api-denial', 'negative-create', 'negative-proof', 'negative-reap', 'timeout-fixture', 'timeout-create', 'timeout-proof', 'timeout-resume', 'timeout-wait', 'timeout-reap', 'timeout-cleanup', 'positive-create', 'source-requery', 'positive-proof', 'positive-resume', 'positive-wait', 'positive-cleanup'])
 const nativeReasons = new Set(['UnsupportedPlatform', 'InvalidRequest', 'AccessDenied', 'Busy', 'ReadOnly', 'Cancelled', 'TimedOut', 'DeviceRemoved', 'NoMedia', 'EnumerationFailed', 'EvidenceIncomplete', 'ResourceLimit', 'Other'])
+const childExitCategories = new Set(['success', 'self-token-open', 'self-process-session', 'self-console-session', 'self-token-session', 'self-elevation', 'self-ui-access', 'self-sandbox-inert', 'self-primary', 'self-integrity', 'status-dll-not-found', 'status-dll-init-failed', 'status-invalid-image-format', 'unknown'])
 
 /**
  * Reconstructs only bounded, schema-validated partial diagnostics; never authorizes a pass.
  * @param {string} stdout - Captured standard output, never forwarded verbatim.
  * @param {string} stderr - Captured standard error, used only for the combined bound.
- * @returns {{facts: string[], stage: string|null, observedFailure: boolean, seen: Map<string,boolean>, reason: string|null}} Closed evidence.
+ * @returns {{facts: string[], stage: string|null, childExit: string|null, observedFailure: boolean, seen: Map<string,boolean>, reason: string|null}} Closed evidence.
  */
 function closedEvidence(stdout, stderr) {
     /** @param {string} reason Fixed rejection token. @returns {object} Empty fail-closed diagnostics. */
-    const reject = (reason) => ({ facts: [], stage: null, observedFailure: false, seen: new Map(), reason })
+    const reject = (reason) => ({ facts: [], stage: null, childExit: null, observedFailure: false, seen: new Map(), reason })
     if (typeof stdout !== 'string' || typeof stderr !== 'string') return reject('output-type')
     if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) > maximumOutputBytes) return reject('output-bound')
     const facts = []
     let stage = null
     let observedFailure = false
+    let stageFailure = false
+    let childExit = null
+    let childExitFailure = false
+    const exitPhases = new Set()
     const seen = new Map()
     for (const line of stripVTControlCharacters(stdout).split(/\r?\n/u)) {
         if (line.startsWith('openrdx-token-probe ')) {
@@ -47,11 +52,26 @@ function closedEvidence(stdout, stderr) {
             if (match === null || !childPhases.has(match[1]) || (match[2] === 'failed' ? !nativeReasons.has(match[3]) : match[3] !== undefined)) return reject('stage-schema')
             // Keep the first failed transition even if cleanup or contradictory
             // later evidence supplies ok/begin. Later markers cannot authorize a pass.
-            if (!observedFailure) stage = `openrdx-token-probe-stage phase=${match[1]} status=${match[2]}${match[3] === undefined ? '' : ` reason=${match[3]}`}`
-            if (match[2] === 'failed') observedFailure = true
+            if (!stageFailure) stage = `openrdx-token-probe-stage phase=${match[1]} status=${match[2]}${match[3] === undefined ? '' : ` reason=${match[3]}`}`
+            if (match[2] === 'failed') {
+                stageFailure = true
+                observedFailure = true
+            }
+        } else if (line.startsWith('openrdx-token-child-exit ')) {
+            const match = /^openrdx-token-child-exit phase=(timeout-wait|positive-wait) category=([a-z-]+)$/u.exec(line)
+            if (match === null || !childExitCategories.has(match[2])) return reject('child-exit-schema')
+            if (exitPhases.has(match[1])) return reject('child-exit-duplicate')
+            exitPhases.add(match[1])
+            // Any early timeout exit is failure, including zero. Keep its original
+            // category if later contradictory evidence claims successful execution.
+            if (!childExitFailure) childExit = `openrdx-token-child-exit phase=${match[1]} category=${match[2]}`
+            if (match[1] === 'timeout-wait' || match[2] !== 'success') {
+                childExitFailure = true
+                observedFailure = true
+            }
         }
     }
-    return { facts, stage, observedFailure, seen, reason: null }
+    return { facts, stage, childExit, observedFailure, seen, reason: null }
 }
 
 /**
@@ -70,6 +90,8 @@ export function validateRestrictedTokenProbeOutput(stdout, stderr, { mode = 'bas
     const closed = closedEvidence(stdout, stderr)
     if (closed.reason !== null) return failed(closed.reason)
     if (closed.observedFailure || (closed.stage !== null && !closed.stage.includes(' status=ok'))) return failed('stage-result')
+    if (mode === 'child' && closed.childExit !== 'openrdx-token-child-exit phase=positive-wait category=success') return failed('child-exit-evidence')
+    if (mode !== 'child' && closed.childExit !== null) return failed('child-exit-mode')
     const lines = stripVTControlCharacters(stdout).split(/\r?\n/u)
     if (lines.filter((line) => /^running \d+ tests?$/u.test(line)).length !== 1 || !lines.includes('running 1 test')) return failed('running-count')
     if (lines.filter((line) => line.startsWith('test result:')).length !== 1 || !lines.some((line) => /^test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; \d+ filtered out; finished in \d+(?:\.\d+)?s$/u.test(line))) return failed('test-summary')
@@ -111,19 +133,19 @@ async function executeProbe(command, args, options) {
  */
 export async function runRestrictedTokenProbe({ execute = executeProbe, mode = 'baseline' } = {}) {
     try {
-        if (!Object.hasOwn(testNames, mode)) return { exitCode: 1, passed: false, facts: [], stage: null, cargoExitCode: null, failureClass: 'evidence', failureReason: 'mode' }
+        if (!Object.hasOwn(testNames, mode)) return { exitCode: 1, passed: false, facts: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'evidence', failureReason: 'mode' }
         // Serial libtest prints the test-name prefix before nocapture output. Two fixed
         // threads keep the exact standalone name/result and diagnostic line contract.
         const cargoArguments = Object.freeze(['test', '--manifest-path', 'native/rdx-service/windows-native/Cargo.toml', '--locked', '--lib', testNames[mode], '--', '--ignored', '--exact', '--nocapture', '--test-threads=2'])
         const result = await execute('cargo', cargoArguments, { cwd: projectRoot, shell: false, windowsHide: true, encoding: 'utf8', maxBuffer: maximumOutputBytes, timeout: 120_000 })
-        if (result.executionError || !Number.isInteger(result.exitCode) || result.exitCode < 0 || result.exitCode > 255) return { exitCode: 1, passed: false, facts: [], stage: null, cargoExitCode: null, failureClass: 'execution', failureReason: ['timeout', 'buffer', 'signal', 'launch'].includes(result.executionError) ? result.executionError : 'launch' }
+        if (result.executionError || !Number.isInteger(result.exitCode) || result.exitCode < 0 || result.exitCode > 255) return { exitCode: 1, passed: false, facts: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'execution', failureReason: ['timeout', 'buffer', 'signal', 'launch'].includes(result.executionError) ? result.executionError : 'launch' }
         const closed = closedEvidence(result.stdout, result.stderr)
-        const diagnostics = { facts: closed.facts, stage: closed.stage, cargoExitCode: result.exitCode }
+        const diagnostics = { facts: closed.facts, stage: closed.stage, childExit: closed.childExit, cargoExitCode: result.exitCode }
         if (result.exitCode !== 0) return { exitCode: result.exitCode, passed: false, ...diagnostics, failureClass: 'native-exit', failureReason: 'cargo-nonzero' }
         const evidence = validateRestrictedTokenProbeOutput(result.stdout, result.stderr, { mode })
         return { exitCode: evidence.passed ? 0 : 1, passed: evidence.passed, ...diagnostics, failureClass: evidence.passed ? 'none' : 'evidence', failureReason: evidence.reason }
     } catch {
-        return { exitCode: 1, passed: false, facts: [], stage: null, cargoExitCode: null, failureClass: 'execution', failureReason: 'launch' }
+        return { exitCode: 1, passed: false, facts: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'execution', failureReason: 'launch' }
     }
 }
 
@@ -138,6 +160,7 @@ async function main() {
     const result = await runRestrictedTokenProbe({ mode })
     for (const line of result.facts) process.stdout.write(`${line}\n`)
     if (result.stage !== null) process.stdout.write(`${result.stage}\n`)
+    if (result.childExit !== null) process.stdout.write(`${result.childExit}\n`)
     process.stdout.write(`openrdx-token-probe-gate passed=${result.passed} class=${result.failureClass} reason=${result.failureReason} cargo-exit-observed=${result.cargoExitCode !== null} cargo-exit-zero=${result.cargoExitCode === 0} cargo-exit-nonzero=${result.cargoExitCode !== null && result.cargoExitCode !== 0}\n`)
     process.exitCode = result.exitCode
 }

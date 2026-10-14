@@ -6,6 +6,8 @@ use super::*;
 #[path = "fixture.rs"]
 mod fixture;
 use fixture::{Fixture, Variant};
+#[path = "../../../../../tests/fixtures/token-child-status.rs"]
+mod exit_status;
 use windows::Win32::Foundation::{DuplicateHandle, WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows::Win32::Security::TOKEN_ASSIGN_PRIMARY;
 use windows::Win32::System::Threading::{
@@ -76,7 +78,7 @@ impl OwnedChild {
     }
 
     /// Bounds execution/reaping using the retained owned process handle, never a PID.
-    fn wait(&mut self, timeout_ms: u32) -> Result<Option<bool>, NativeError> {
+    fn wait(&mut self, timeout_ms: u32) -> Result<Option<u32>, NativeError> {
         if !(1..=10_000).contains(&timeout_ms) {
             return Err(NativeError::InvalidRequest);
         }
@@ -92,7 +94,8 @@ impl OwnedChild {
         let mut code = u32::MAX;
         // SAFETY: completed owned process and writable scalar output.
         unsafe { GetExitCodeProcess(self.process.0, &mut code) }.map_err(map_native_error)?;
-        Ok(Some(code == 0))
+        // Preserve the exact private DWORD for fixed classification; never print it.
+        Ok(Some(code))
     }
 
     /// Terminates/reaps only this owned child on a failed proof or deadline.
@@ -348,6 +351,15 @@ fn checkpoint<T>(
     result
 }
 
+/// Formats only a closed wait phase and known exit category, never the raw status.
+fn report_child_exit(phase: ChildPhase, code: u32) {
+    println!(
+        "openrdx-token-child-exit phase={} category={}",
+        phase.name(),
+        exit_status::category(code)
+    );
+}
+
 /// Closed checkpoint diagnostics leave the original fieldless error unchanged.
 #[test]
 fn checkpoint_preserves_original_result() {
@@ -470,10 +482,11 @@ fn observe_child() -> Result<(), NativeError> {
     })?;
     checkpoint(ChildPhase::TimeoutResume, || timeout_child.resume())?;
     checkpoint(ChildPhase::TimeoutWait, || {
-        assert!(
-            timeout_child.wait(100)?.is_none(),
-            "timeout-fixture-ended-before-deadline"
-        );
+        let exit = timeout_child.wait(100)?;
+        if let Some(code) = exit {
+            report_child_exit(ChildPhase::TimeoutWait, code);
+        }
+        assert!(exit.is_none(), "timeout-fixture-ended-before-deadline");
         Ok(())
     })?;
     checkpoint(ChildPhase::TimeoutReap, || {
@@ -492,7 +505,11 @@ fn observe_child() -> Result<(), NativeError> {
     })?;
     checkpoint(ChildPhase::PositiveResume, || child.resume())?;
     checkpoint(ChildPhase::PositiveWait, || {
-        if child.wait(10_000)? != Some(true) {
+        let exit = child.wait(10_000)?;
+        if let Some(code) = exit {
+            report_child_exit(ChildPhase::PositiveWait, code);
+        }
+        if exit != Some(0) {
             return Err(NativeError::Other);
         }
         Ok(())

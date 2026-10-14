@@ -13,13 +13,14 @@ const required = { 'source-open': true, 'derived-created': true, 'query-ok': tru
 function output(facts = required) {
     return `running 1 test\nopenrdx-token-probe ${Object.entries(facts)
         .map(([key, value]) => `${key}=${value}`)
-        .join(' ')}\ntest ${name} ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 123 filtered out; finished in 0.00s\n`
+        .join(' ')}\nopenrdx-token-child-exit phase=positive-wait category=success\ntest ${name} ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 123 filtered out; finished in 0.00s\n`
 }
 
 test('child gate requires actual exact test and complete closed execution evidence', () => {
     assert.equal(validateRestrictedTokenProbeOutput(output(), '', { mode: 'child' }).passed, true)
     assert.equal(validateRestrictedTokenProbeOutput(output().replace('running 1 test', 'running 0 tests'), '', { mode: 'child' }).passed, false)
     assert.equal(validateRestrictedTokenProbeOutput(output().replace(name, 'wrong_test'), '', { mode: 'child' }).passed, false)
+    assert.equal(validateRestrictedTokenProbeOutput(output().replace('openrdx-token-child-exit phase=positive-wait category=success\n', ''), '', { mode: 'child' }).passed, false)
 })
 
 for (const [key, expected] of Object.entries(required)) {

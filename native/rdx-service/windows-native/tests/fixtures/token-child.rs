@@ -5,6 +5,9 @@
 use std::ffi::c_void;
 use std::mem::size_of;
 use std::process::ExitCode;
+#[path = "token-child-status.rs"]
+mod exit_status;
+use exit_status::SelfCheckFailure;
 
 type Handle = *mut c_void;
 /// SDK TOKEN_MANDATORY_LABEL header with pointer-width alignment.
@@ -109,34 +112,44 @@ fn medium(token: &Token) -> bool {
 }
 
 /// Independently queries the actual executing child's token and session.
-fn verify_self() -> bool {
+fn verify_self() -> Result<(), SelfCheckFailure> {
     let mut handle = std::ptr::null_mut();
     // SAFETY: process pseudo-handle is borrowed; only TOKEN_QUERY is requested.
     if unsafe { OpenProcessToken(GetCurrentProcess(), 8, &mut handle) } == 0 {
-        return false;
+        return Err(SelfCheckFailure::TokenOpen);
     }
     let token = Token(handle);
     let mut process_session = u32::MAX;
     // SAFETY: output is initialized writable scalar storage; no external process is selected.
     if unsafe { ProcessIdToSessionId(GetCurrentProcessId(), &mut process_session) } == 0 {
-        return false;
+        return Err(SelfCheckFailure::ProcessSession);
     }
     // SAFETY: read-only query has no pointer or resource ownership preconditions.
     let console = unsafe { WTSGetActiveConsoleSessionId() };
-    console != u32::MAX
-        && process_session == console
-        && scalar(&token, 12) == Some(console)
-        && scalar(&token, 20) == Some(0)
-        && scalar(&token, 26) == Some(0)
-        && scalar(&token, 15) == Some(0)
-        && scalar(&token, 8) == Some(1)
-        && medium(&token)
+    if console == u32::MAX || process_session != console {
+        return Err(SelfCheckFailure::ConsoleSession);
+    }
+    for (class, expected, failure) in [
+        (12, console, SelfCheckFailure::TokenSession),
+        (20, 0, SelfCheckFailure::Elevation),
+        (26, 0, SelfCheckFailure::UiAccess),
+        (15, 0, SelfCheckFailure::SandboxInert),
+        (8, 1, SelfCheckFailure::Primary),
+    ] {
+        if scalar(&token, class) != Some(expected) {
+            return Err(failure);
+        }
+    }
+    if !medium(&token) {
+        return Err(SelfCheckFailure::Integrity);
+    }
+    Ok(())
 }
 
 /// Returns only a fixed status, with no identity or protocol output.
 fn main() -> ExitCode {
-    if !verify_self() {
-        return ExitCode::from(17);
+    if let Err(failure) = verify_self() {
+        return ExitCode::from(failure as u8);
     }
     // The second fixed CI build deliberately hangs for bounded terminate/reap proof.
     #[cfg(token_fixture_hang)]
