@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 André Fiedler
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! Opt-in medium-label reduction of an owned token; no process is launched.
+//! Medium-label token reduction and a separate opt-in owned-child verifier.
+mod child;
 use super::*;
 use windows::Win32::Security::{
     LookupAccountNameW, SID_NAME_USE, SetTokenInformation, TOKEN_ADJUST_DEFAULT,

@@ -392,6 +392,18 @@ pub(crate) struct PreparedEnrollment {
     _pins: Vec<File>,
     bytes: Vec<u8>,
 }
+/// Atomically creates only a private test root beneath pinned protected Program Files.
+#[cfg(test)]
+pub(crate) fn token_verifier_fixture_root() -> Result<(PathBuf, Vec<File>), NativeError> {
+    // SAFETY: GUID generation requires no initialization or caller-owned pointers.
+    let id =
+        unsafe { windows::Win32::System::Com::CoCreateGuid() }.map_err(|_| NativeError::Other)?;
+    let root = PathBuf::from(r"C:\Program Files")
+        .join(format!("OpenRDXTokenVerifier-{:032x}", id.to_u128()));
+    let pins = ancestors(&root)?;
+    create_protected_directory(&root)?;
+    Ok((root, pins))
+}
 /// Creates machine policy directories with the final privileged owner at creation.
 pub(super) fn create_protected_directory(path: &Path) -> Result<(), NativeError> {
     let text: Vec<u16> = DIRECTORY_SDDL.encode_utf16().chain([0]).collect();

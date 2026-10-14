@@ -9,9 +9,10 @@ import { promisify, stripVTControlCharacters } from 'node:util'
 const execFileAsync = promisify(execFile)
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 const maximumOutputBytes = 65_536
-const testNames = Object.freeze({ baseline: 'service_acl::windows_impl::restricted_token_probe::native_restricted_token_observations', medium: 'service_acl::windows_impl::restricted_token_probe::medium::native_medium_restricted_token_observations' })
+const testNames = Object.freeze({ baseline: 'service_acl::windows_impl::restricted_token_probe::native_restricted_token_observations', medium: 'service_acl::windows_impl::restricted_token_probe::medium::native_medium_restricted_token_observations', child: 'service_acl::windows_impl::restricted_token_probe::medium::child::native_medium_restricted_child_observations' })
 const mediumRequirements = Object.freeze({ 'source-open': true, 'derived-created': true, 'query-ok': true, 'medium-set-ok': true, 'source-unchanged': true, 'same-user': true, 'same-session': true, 'source-active-console': true, 'derived-active-console': true, 'source-console-user-match': true, 'derived-console-user-match': true, 'source-elevated': true, 'derived-elevated': false, 'source-integrity-high': true, 'admin-deny-only': true, 'no-enabled-admins': true, 'enabled-privilege-whitelist': true, 'present-privilege-whitelist': true, 'privileges-reduced': true, 'no-added-privileges': true, 'integrity-medium': true, 'integrity-high': false, 'integrity-reduced': true, 'ui-access-zero': true, 'sandbox-inert-zero': true, 'primary-token': true, 'elevation-type-known': true, 'elevation-type-full': false })
-const diagnosticKeys = new Set([...Object.keys(mediumRequirements), 'source-admin-deny-only', 'source-no-enabled-admins', 'source-integrity-low', 'source-integrity-medium', 'source-integrity-system', 'integrity-low', 'integrity-system', 'elevation-type-default', 'elevation-type-limited'])
+const childRequirements = Object.freeze({ 'source-open': true, 'derived-created': true, 'query-ok': true, 'fixture-protected': true, 'child-created': true, 'child-image-match': true, 'child-same-user': true, 'child-same-session': true, 'child-console-user-match': true, 'child-active-console': true, 'child-elevated': false, 'child-admin-deny-only': true, 'child-no-enabled-admins': true, 'child-present-privilege-whitelist': true, 'child-medium': true, 'child-ui-access-zero': true, 'child-sandbox-inert-zero': true, 'child-primary': true, 'child-suspended-proof': true, 'child-resumed': true, 'child-exited': true, 'child-exit-zero': true, 'owned-child-cleanup': true, 'negative-proof-reaped': true, 'timeout-reaped': true, 'api-error-rejected': true })
+const diagnosticKeys = new Set([...Object.keys(mediumRequirements), ...Object.keys(childRequirements), 'source-unchanged-after-create', 'source-admin-deny-only', 'source-no-enabled-admins', 'source-integrity-low', 'source-integrity-medium', 'source-integrity-system', 'integrity-low', 'integrity-system', 'elevation-type-default', 'elevation-type-limited'])
 
 /**
  * Validates exact execution evidence and retains only closed boolean diagnostics.
@@ -19,7 +20,7 @@ const diagnosticKeys = new Set([...Object.keys(mediumRequirements), 'source-admi
  * @param {string} stdout - Bounded Cargo standard output.
  * @param {string} stderr - Bounded Cargo standard error, never forwarded.
  * @param {object} [options] - Fixed experiment selection.
- * @param {'baseline'|'medium'} [options.mode] - Exact approved experiment.
+ * @param {'baseline'|'medium'|'child'} [options.mode] - Exact approved experiment.
  * @returns {{passed: boolean, facts: string[]}} Exact execution verdict and safe facts.
  */
 export function validateRestrictedTokenProbeOutput(stdout, stderr, { mode = 'baseline' } = {}) {
@@ -41,6 +42,7 @@ export function validateRestrictedTokenProbeOutput(stdout, stderr, { mode = 'bas
     }
     if (seen.get('source-open') !== true || seen.get('derived-created') !== true || seen.get('query-ok') !== true) return failed
     if (mode === 'medium' && (Object.entries(mediumRequirements).some(([key, expected]) => seen.get(key) !== expected) || !seen.has('elevation-type-default') || !seen.has('elevation-type-limited') || Number(seen.get('elevation-type-default')) + Number(seen.get('elevation-type-limited')) !== 1)) return failed
+    if (mode === 'child' && Object.entries(childRequirements).some(([key, expected]) => seen.get(key) !== expected)) return failed
     return { passed: true, facts }
 }
 
@@ -67,7 +69,7 @@ async function executeProbe(command, args, options) {
  * Requires one exact native test plus successful closed kernel-query evidence.
  * @param {object} [options] - Test-only execution dependency.
  * @param {Function} [options.execute] - Awaited executor; receives only the fixed command/options.
- * @param {'baseline'|'medium'} [options.mode] - Fixed experiment, never an arbitrary native filter.
+ * @param {'baseline'|'medium'|'child'} [options.mode] - Fixed experiment, never an arbitrary native filter.
  * @returns {Promise<{exitCode: number, passed: boolean, facts: string[]}>} Fail-closed verdict preserving Cargo failure.
  */
 export async function runRestrictedTokenProbe({ execute = executeProbe, mode = 'baseline' } = {}) {
@@ -85,7 +87,7 @@ export async function runRestrictedTokenProbe({ execute = executeProbe, mode = '
 
 /** @returns {Promise<void>} Runs only the fixed gate and emits sanitized evidence. */
 async function main() {
-    const mode = process.argv.length === 2 ? 'baseline' : process.argv.length === 3 && process.argv[2] === '--medium' ? 'medium' : null
+    const mode = process.argv.length === 2 ? 'baseline' : process.argv.length === 3 && process.argv[2] === '--medium' ? 'medium' : process.argv.length === 3 && process.argv[2] === '--child' ? 'child' : null
     if (mode === null) {
         process.stderr.write('openrdx-token-probe-gate passed=false arguments-rejected=true\n')
         process.exitCode = 1

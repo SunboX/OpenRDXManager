@@ -84,6 +84,21 @@ jobs:
                   node scripts/verify-windows-restricted-token-probe.mjs --medium | Tee-Object -FilePath out/verification/windows-token-medium.log
                   $probeExitCode = $LASTEXITCODE
                   exit $probeExitCode
+            - name: Compile private Windows token child fixtures
+              if: matrix.platform == 'win'
+              shell: pwsh
+              run: |
+                  rustc --edition=2024 native/rdx-service/windows-native/tests/fixtures/token-child.rs -o out/verification/openrdx-token-child.exe
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  rustc --edition=2024 --cfg token_fixture_hang native/rdx-service/windows-native/tests/fixtures/token-child.rs -o out/verification/openrdx-token-wait-child.exe
+                  exit $LASTEXITCODE
+            - name: Verify owned medium Windows child on disposable runner
+              if: matrix.platform == 'win'
+              shell: pwsh
+              run: |
+                  node scripts/verify-windows-restricted-token-probe.mjs --child | Tee-Object -FilePath out/verification/windows-token-child.log
+                  $probeExitCode = $LASTEXITCODE
+                  exit $probeExitCode
             - name: Upload closed Windows token evidence
               if: always() && matrix.platform == 'win'
               uses: actions/upload-artifact@v7.0.1
@@ -92,6 +107,7 @@ jobs:
                   path: |
                       out/verification/windows-token-baseline.log
                       out/verification/windows-token-medium.log
+                      out/verification/windows-token-child.log
                   if-no-files-found: ignore
                   retention-days: 3
             - name: Verify Windows PowerShell installer boundary
