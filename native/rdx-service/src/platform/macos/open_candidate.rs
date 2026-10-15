@@ -99,23 +99,23 @@ impl MacOsBackend {
                     }
                 };
                 authority.invalidate_media_mapping_for_rematch();
-                drop(authority);
+                let worker_route = self.worker_route.clone();
                 failure_stage = DiscoveryFailure::WorkerAcquisition;
-                let scsi = rdx_macos_native::MacScsiWorkerLease::spawn(&rematch_identity).map_err(
-                    |error| {
-                        if let Some(diagnostic) =
-                            rdx_macos_native::take_last_worker_startup_failure()
-                        {
-                            failure_stage = DiscoveryFailure::WorkerStartup(diagnostic);
-                        }
-                        // Diagnostic evidence never changes the original native result or Busy policy.
-                        map_native_platform_error(error)
-                    },
-                )?;
+                let scsi = super::scsi_handoff::release_parent_and_spawn(Some(authority), || {
+                    worker_route.spawn(&rematch_identity)
+                })
+                .map_err(|error| {
+                    if let Some(diagnostic) = rdx_macos_native::take_last_worker_startup_failure() {
+                        failure_stage = DiscoveryFailure::WorkerStartup(diagnostic);
+                    }
+                    // Diagnostic evidence never changes the original native result or Busy policy.
+                    map_native_platform_error(error)
+                })?;
                 Ok(CandidateLease::new(MacOsDeviceHandle {
                     _authority: None,
                     rematch_identity,
                     scsi: Some(scsi),
+                    worker_route,
                     cached_host_facts: Some(cached_host_facts),
                     storage_unmounted_for_format: false,
                     safe_eject_dispatched: false,

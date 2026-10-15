@@ -277,6 +277,8 @@ impl RecoveryAttempt for NativeAttempt {
 
     /// Retains one fresh target lease across bootstrap verification and final transfer.
     fn finish_release(&mut self, observer: &mut dyn RecoveryObserver) -> Result<(), RecoveryError> {
+        // Reuse the accepted connection's opaque factory through every fresh application open;
+        // this duplicate cannot renew a revoked peer/session or installation generation.
         let mut backend = MacOsBackend::native_with_context(self.context.duplicate_for_runtime());
         let mut registry = DeviceRegistry::new();
         observer.reached(RecoveryStage::VerifyingBootstrap)?;

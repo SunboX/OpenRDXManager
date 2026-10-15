@@ -27,24 +27,16 @@ impl MacOsDeviceHandle {
     ///
     /// Returns a sanitized spawn, rematch, or native capture failure.
     fn start_scsi_worker(&mut self) -> Result<(), rdx_macos_native::NativeError> {
-        if self.scsi.is_some() {
-            return Ok(());
-        }
-        if let Some(authority) = self._authority.as_mut() {
-            // A prior label/host read returned the disk to macOS storage.
-            // Capture cannot be reacquired until that exact disk is unmounted.
-            self.cached_host_facts = Some(super::scsi_handoff::prepare_capture(
-                authority,
-                self.cached_host_facts,
-                self.storage_unmounted_for_format,
-            )?);
-            authority.invalidate_media_mapping_for_rematch();
-        }
-        self._authority = None;
-        self.scsi = Some(rdx_macos_native::MacScsiWorkerLease::spawn(
-            &self.rematch_identity,
-        )?);
-        Ok(())
+        // A prior label/host read returned the disk to macOS storage. Preserve exact
+        // preparation/unmount/invalidation/drop before a new factory spawn. A retained
+        // worker skips this path entirely, including after request admission is revoked.
+        super::scsi_handoff::start_worker(
+            &mut self._authority,
+            &mut self.scsi,
+            &mut self.cached_host_facts,
+            self.storage_unmounted_for_format,
+            || self.worker_route.spawn(&self.rematch_identity),
+        )
     }
 
     /// Surrenders child-owned USB capture without exposing that lifecycle to the parent.

@@ -12,6 +12,36 @@ pub(super) trait CaptureAuthority {
     fn facts(&mut self) -> Result<HostVolumeFacts, NativeError>;
     /// Flushes and unmounts only this authority's exact volume tree.
     fn unmount(&mut self) -> Result<(), NativeError>;
+    /// Invalidates the prepared mapping before parent authority is surrendered for capture.
+    fn invalidate(&mut self);
+}
+
+/// Closes parent IOKit ownership before the retained factory can create an independent capture owner.
+pub(super) fn release_parent_and_spawn<A, W>(
+    parent: Option<A>,
+    spawn: impl FnOnce() -> Result<W, NativeError>,
+) -> Result<W, NativeError> {
+    drop(parent);
+    spawn()
+}
+
+/// Reuses a retained worker or performs the exact existing preparation/release/new-worker handoff.
+pub(super) fn start_worker<A: CaptureAuthority, W>(
+    authority: &mut Option<A>,
+    worker: &mut Option<W>,
+    cached: &mut Option<HostVolumeFacts>,
+    format_unmounted: bool,
+    spawn: impl FnOnce() -> Result<W, NativeError>,
+) -> Result<(), NativeError> {
+    if worker.is_some() {
+        return Ok(());
+    }
+    if let Some(parent) = authority.as_mut() {
+        *cached = Some(prepare_capture(parent, *cached, format_unmounted)?);
+        parent.invalidate();
+    }
+    *worker = Some(release_parent_and_spawn(authority.take(), spawn)?);
+    Ok(())
 }
 
 /// Preserves the pre-capture proof while preparing the exact storage handoff.
@@ -66,6 +96,10 @@ pub(super) fn capture_facts(
 
 #[cfg(target_os = "macos")]
 impl CaptureAuthority for rdx_macos_native::MacDevice {
+    /// Preserves the original second invalidation after exact storage preparation succeeds.
+    fn invalidate(&mut self) {
+        self.invalidate_media_mapping_for_rematch();
+    }
     /// Refreshes the DA graph on the same USB authority before handoff.
     fn facts(&mut self) -> Result<HostVolumeFacts, NativeError> {
         self.invalidate_media_mapping_for_rematch();
@@ -97,6 +131,8 @@ mod tests {
     }
 
     impl CaptureAuthority for Storage {
+        /// Existing pure mount-state fixtures have no native mapping to invalidate.
+        fn invalidate(&mut self) {}
         /// Supplies independently specified physical and host facts.
         fn facts(&mut self) -> Result<HostVolumeFacts, NativeError> {
             Ok(self.facts)
@@ -232,3 +268,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "worker_lifecycle_tests.rs"]
+mod lifecycle_tests;

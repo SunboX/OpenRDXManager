@@ -32,6 +32,8 @@ mod label_rematch;
 mod refresh;
 #[cfg(any(target_os = "macos", test))]
 mod scsi_handoff;
+#[cfg(any(target_os = "macos", test))]
+mod worker_route;
 
 #[cfg(target_os = "macos")]
 use authority::{PendingCandidateAuthority, StagedCandidateAuthority};
@@ -198,6 +200,8 @@ pub fn evaluate_macos_readiness(facts: MacOsReadinessFacts) -> MacOsReadinessRep
 pub struct MacOsBackend {
     last_open_failure: Option<super::DiscoveryFailure>,
     backup_owner: Option<u32>,
+    #[cfg(target_os = "macos")]
+    worker_route: worker_route::MacWorkerRoute,
     report: MacOsReadinessReport,
     native_active: bool,
     candidate_outcomes: Vec<MacOsCandidateProbeOutcome>,
@@ -220,6 +224,8 @@ impl MacOsBackend {
         Self {
             last_open_failure: None,
             backup_owner: None,
+            #[cfg(target_os = "macos")]
+            worker_route: worker_route::WorkerRoute::Denied,
             report: evaluate_macos_readiness(facts),
             native_active,
             candidate_outcomes: Vec::new(),
@@ -258,6 +264,7 @@ impl MacOsBackend {
                 true,
             );
             backend.backup_owner = context.backup_owner();
+            backend.worker_route = worker_route::MacWorkerRoute::from_context(&context);
             backend
         }
         #[cfg(not(target_os = "macos"))]
@@ -436,6 +443,7 @@ struct MacOsDeviceHandle {
     _authority: Option<rdx_macos_native::MacDevice>,
     rematch_identity: rdx_macos_native::MacRematchIdentity,
     scsi: Option<rdx_macos_native::MacScsiWorkerLease>,
+    worker_route: worker_route::MacWorkerRoute,
     cached_host_facts: Option<crate::operations::HostVolumeFacts>,
     storage_unmounted_for_format: bool,
     safe_eject_dispatched: bool,
