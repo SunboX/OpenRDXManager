@@ -179,6 +179,106 @@ pub(super) fn preservation_result<E, const N: usize>(results: [Result<(), E>; N]
         .map_or(Ok(()), Err)
 }
 
+/// Closed lifecycle failure, never a process/PID cleanup instruction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum LifeError {
+    Busy,
+    State,
+    TimedOut,
+}
+/// One possible live factory-owned child; uncertainty permanently blocks later launches.
+pub(super) struct Lifecycle {
+    active: bool,
+    unresolved: bool,
+    blocked: bool,
+    resumed: bool,
+}
+impl Lifecycle {
+    /// Starts with no possible child and therefore safe fixture cleanup.
+    pub(super) fn new() -> Self {
+        Self {
+            active: false,
+            unresolved: false,
+            blocked: false,
+            resumed: false,
+        }
+    }
+    /// Reserves ownership uncertainty before entering the existing constructor.
+    pub(super) fn begin_creation(&mut self, remaining: u128) -> Result<(), LifeError> {
+        if !self.may_launch() {
+            return Err(LifeError::Busy);
+        }
+        if remaining < 19_000 {
+            return Err(LifeError::TimedOut);
+        }
+        self.unresolved = true;
+        self.resumed = false;
+        Ok(())
+    }
+    /// Err may hide post-create cleanup; only a returned owned guard establishes known ownership.
+    pub(super) fn record_creation(&mut self, created: bool) {
+        if !self.unresolved || self.active || !created {
+            self.blocked = true;
+        }
+        self.active = created;
+    }
+    /// Called only after inseparable fresh proof; repeated/missing proof cannot authorize Resume.
+    pub(super) fn admit_resume(&mut self, fresh: bool) -> Result<(), LifeError> {
+        if !self.active || !self.unresolved || self.blocked || self.resumed || !fresh {
+            return Err(LifeError::State);
+        }
+        self.resumed = true;
+        Ok(())
+    }
+    /// The caller supplies true only after held-handle termination WAIT succeeds.
+    pub(super) fn record_reap(&mut self, verified: bool) {
+        if verified {
+            self.active = false;
+            self.unresolved = false;
+            self.resumed = false;
+        } else {
+            self.unresolved = true;
+            self.blocked = true;
+        }
+    }
+    /// A primary failure stops all subsequent launch attempts.
+    pub(super) fn block(&mut self) {
+        self.blocked = true;
+    }
+    /// Never opens a second child or revokes an earlier fatal outcome.
+    pub(super) fn may_launch(&self) -> bool {
+        !self.active && !self.unresolved && !self.blocked
+    }
+    /// Retains exact fixture leases whenever termination remains unknown.
+    pub(super) fn unresolved(&self) -> bool {
+        self.unresolved
+    }
+    /// Does not execute any delete/release callback while a possible child remains alive.
+    pub(super) fn cleanup_fixture<T>(&self, operation: impl FnOnce() -> T) -> Option<T> {
+        if self.unresolved {
+            None
+        } else {
+            Some(operation())
+        }
+    }
+}
+/// Full requested observation plus three seconds of held-handle reap reserve, without capping.
+pub(super) fn wait_budget(remaining: u128, requested: u32) -> Option<u32> {
+    ((1..=10_000).contains(&requested) && remaining >= u128::from(requested) + 3000)
+        .then_some(requested)
+}
+
+/// Reporting always executes, but a preexisting primary failure wins over a later writer failure.
+pub(super) fn after_report<T, E>(
+    primary: Result<T, E>,
+    report: impl FnOnce(bool) -> Result<(), E>,
+) -> Result<T, E> {
+    let reported = report(primary.is_ok());
+    let value = primary?;
+    reported?;
+    Ok(value)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -437,5 +537,91 @@ mod tests {
         assert!(calls.get() == 3);
         assert!(result == Err(1));
         assert!(preservation_result::<u8, 2>([Ok(()), Ok(())]).is_ok());
+    }
+    /// Unknown constructor/reap retains fixtures without running delete/release callbacks.
+    #[test]
+    fn uncertain_creation_and_failed_reap_never_release_or_relaunch() {
+        for known_child in [false, true] {
+            let mut life = Lifecycle::new();
+            let deletes = std::cell::Cell::new(0);
+            assert!(life.begin_creation(19_000).is_ok());
+            life.record_creation(known_child);
+            life.record_reap(false);
+            assert!(life.unresolved());
+            assert!(!life.may_launch());
+            assert!(life.begin_creation(19_000).is_err());
+            assert!(
+                life.cleanup_fixture(|| deletes.set(deletes.get() + 1))
+                    .is_none()
+            );
+            assert!(deletes.get() == 0);
+        }
+    }
+    /// Only verified held-handle termination permits cleanup; failed reap remains launch-sticky.
+    #[test]
+    fn held_reap_controls_cleanup_and_final_retry_never_reopens_launch() {
+        let mut life = Lifecycle::new();
+        assert!(life.begin_creation(19_000).is_ok());
+        life.record_creation(true);
+        assert!(life.admit_resume(true).is_ok());
+        assert!(life.admit_resume(true).is_err());
+        life.record_reap(false);
+        life.record_reap(true);
+        assert!(!life.unresolved());
+        assert!(!life.may_launch());
+        let deleted = std::cell::Cell::new(0);
+        assert!(life.cleanup_fixture(|| deleted.set(1)).is_some());
+        assert!(deleted.get() == 1);
+    }
+    /// Sequential successful children are allowed; proof failure and insufficient reserve deny.
+    #[test]
+    fn no_second_live_child_or_resume_without_fresh_proof() {
+        let mut life = Lifecycle::new();
+        assert!(life.admit_resume(true).is_err());
+        assert!(life.begin_creation(18_999).is_err());
+        assert!(life.begin_creation(19_000).is_ok());
+        assert!(life.begin_creation(19_000).is_err());
+        life.record_creation(true);
+        assert!(life.admit_resume(false).is_err());
+        life.block();
+        assert!(life.admit_resume(true).is_err());
+        life.record_reap(true);
+        assert!(!life.may_launch());
+        let mut clean = Lifecycle::new();
+        for _ in 0..2 {
+            assert!(clean.begin_creation(19_000).is_ok());
+            clean.record_creation(true);
+            assert!(clean.admit_resume(true).is_ok());
+            clean.record_reap(true);
+        }
+    }
+    /// Survival requires the whole duration plus reap reserve, never shortened or zero wait.
+    #[test]
+    fn fixed_wait_duration_is_never_capped() {
+        assert!(wait_budget(3100, 100) == Some(100));
+        assert!(wait_budget(3099, 100).is_none());
+        assert!(wait_budget(13000, 10000) == Some(10000));
+        assert!(wait_budget(12999, 10000).is_none());
+        assert!(wait_budget(20000, 0).is_none());
+        assert!(wait_budget(20000, 10001).is_none());
+    }
+    /// A diagnostic writer failure cannot replace a preexisting creation/proof/cleanup failure.
+    #[test]
+    fn original_error_survives_reporting_failure_and_report_always_runs() {
+        let calls = std::cell::Cell::new(0);
+        let result = after_report::<(), u8>(Err(1), |ok| {
+            assert!(!ok);
+            calls.set(1);
+            Err(2)
+        });
+        assert!(result == Err(1));
+        assert!(calls.get() == 1);
+        assert!(
+            after_report::<(), u8>(Ok(()), |ok| {
+                assert!(ok);
+                Err(2)
+            }) == Err(2)
+        );
+        assert!(after_report::<u8, u8>(Ok(3), |_| Ok(())) == Ok(3));
     }
 }

@@ -115,6 +115,21 @@ impl State {
         }
         Ok(())
     }
+    /// Silent same-instance/full-state guard for the inseparable final child proof.
+    fn same_quiet(&self, previous: &Self) -> Result<(), NativeError> {
+        let ids = self.statistics.compare(previous.statistics);
+        if !policy::preserved(
+            ids,
+            [
+                self.snapshot == previous.snapshot,
+                self.default == previous.default,
+                self.descriptor == previous.descriptor,
+            ],
+        ) {
+            return Err(denial(Boundary::Preservation));
+        }
+        Ok(())
+    }
 }
 /// Converts only fixed internal boundary categories; SDK errors use their existing NativeError mapping.
 fn denial(boundary: Boundary) -> NativeError {
@@ -484,7 +499,7 @@ fn discover(
     Ok((rows, root))
 }
 /// Privately retained ordinary donor; no raw handle adoption, token setter or mutable source API.
-struct DonorLease {
+pub(super) struct DonorLease {
     caller: Caller,
     runtime: RuntimePins,
     process: ProcessLease,
@@ -495,7 +510,7 @@ struct DonorLease {
 }
 impl DonorLease {
     /// Acquires a real ordinary donor without launching Manager or granting pipe delegation.
-    fn acquire_fixed() -> Result<Self, NativeError> {
+    pub(super) fn acquire_fixed() -> Result<Self, NativeError> {
         let deadline = Instant::now() + Duration::from_secs(90);
         let caller = checkpoint(Phase::Caller, Caller::capture)?;
         let result = (|| {
@@ -571,7 +586,7 @@ impl DonorLease {
         ])
     }
     /// Duplicates only the retained donor's current primary token; no owner/ACL/reduction changes.
-    fn duplicate_primary(&mut self) -> Result<OrdinaryCopy, NativeError> {
+    pub(super) fn duplicate_primary(&mut self) -> Result<OrdinaryCopy, NativeError> {
         self.revalidate()?;
         let source = observe_token(self.process.handle.0, true)?;
         State::read(&source)?.same(&self.state)?;
@@ -608,6 +623,76 @@ impl DonorLease {
         self.revalidate()?;
         Ok(OrdinaryCopy { handle, state })
     }
+    /// Shares the original90-second native deadline without creating a new budget.
+    pub(super) fn remaining_ms(&self) -> u128 {
+        self.deadline
+            .saturating_duration_since(Instant::now())
+            .as_millis()
+    }
+    /// Only the actual elevated caller SID owns fixture preownership; never returns donor SID.
+    pub(super) fn caller_sid(&self) -> Result<OwnedSid, NativeError> {
+        self.caller_quiet()?;
+        token_user_sid(&self.caller.token)
+    }
+    /// Known initial identity equality is observational, and may be false for different-account UAC.
+    pub(super) fn caller_user_equal(&self) -> bool {
+        self.state.snapshot.user == self.caller.state.snapshot.user
+    }
+    /// Independent held/current caller state, including role-bearing groups and fresh console.
+    pub(super) fn caller_quiet(&self) -> Result<(), NativeError> {
+        policy::preservation_result([
+            (|| State::read(&self.caller.token)?.same_quiet(&self.caller.state))(),
+            (|| {
+                let current = observe_token(unsafe { GetCurrentProcess() }, false)?;
+                State::read(&current)?.same_quiet(&self.caller.state)
+            })(),
+            self.console_current(),
+        ])
+    }
+    /// Last read-only console check; never adjusts session, user or desktop state.
+    pub(super) fn console_current(&self) -> Result<(), NativeError> {
+        if self.caller.session != unsafe { WTSGetActiveConsoleSessionId() }
+            || self.caller.console.bytes() != console_sid(self.caller.session)?.bytes()
+        {
+            return Err(denial(Boundary::Identity));
+        }
+        Ok(())
+    }
+    /// Slow current-file/discovery observers precede the final caller/donor token and path reads.
+    /// Every independent observer is evaluated; this emits no output and proves no mapped generation.
+    pub(super) fn quiet_fresh(&mut self) -> Result<(), NativeError> {
+        budget(self.deadline)?;
+        policy::preservation_result([
+            self.runtime.unchanged(self.deadline),
+            (|| {
+                let (rows, root) =
+                    discover(self.caller.session, self.deadline, Some(&self.process))?;
+                let graph = rows.iter().map(|row| row.record).collect::<Vec<_>>();
+                if !policy::same_discovery(&self.graph, &graph, self.process.record, root) {
+                    return Err(denial(Boundary::Identity));
+                }
+                Ok(())
+            })(),
+            self.caller_quiet(),
+            (|| State::read(&self.observer)?.same_quiet(&self.state))(),
+            (|| {
+                let current = observe_token(self.process.handle.0, false)?;
+                State::read(&current)?.same_quiet(&self.state)
+            })(),
+            (|| {
+                if process_record(
+                    self.process.handle.0,
+                    self.process.record.key,
+                    self.process.record.parent,
+                    self.caller.session,
+                )? != Some(self.process.record)
+                {
+                    return Err(denial(Boundary::Identity));
+                }
+                Ok(())
+            })(),
+        ])
+    }
 }
 /// Ordinary source policy is deliberately independent of the old maximum-reduction ceiling.
 fn ordinary(state: &State, caller: &Caller, no_enabled_admins: bool) -> DonorFacts {
@@ -629,7 +714,7 @@ fn ordinary(state: &State, caller: &Caller, no_enabled_admins: bool) -> DonorFac
     }
 }
 /// Only owns DuplicateTokenEx output; there is no raw adoption, setter or launch in Task One.
-struct OrdinaryCopy {
+pub(super) struct OrdinaryCopy {
     handle: OwnedHandle,
     state: State,
 }
@@ -639,6 +724,40 @@ impl OrdinaryCopy {
         policy::preservation_result([
             (|| State::read(&self.handle)?.same(&self.state))(),
             donor.revalidate(),
+        ])
+    }
+    /// Only an immutable borrow of the newly owned primary copy can reach fixed child creation.
+    pub(super) fn launch_token(&self) -> &OwnedHandle {
+        &self.handle
+    }
+    /// Silent copy-only preservation is independent from caller/donor observations.
+    pub(super) fn quiet_unchanged(&self) -> Result<(), NativeError> {
+        State::read(&self.handle)?.same_quiet(&self.state)
+    }
+    /// Returns fixed per-property comparisons from a query-only actual owned-child token.
+    /// Legitimate disabled privileges are preserved exactly; no reduced-token ceiling is imported.
+    pub(super) fn actual_properties(
+        &self,
+        token: &OwnedHandle,
+        donor: &DonorLease,
+    ) -> Result<[bool; 13], NativeError> {
+        let actual = SourceSnapshot::read(token)?;
+        let expected = &self.state.snapshot;
+        let (_, no_enabled_admins) = administrative_groups(token)?;
+        Ok([
+            actual.user == expected.user,
+            actual.session == expected.session,
+            actual.elevation == expected.elevation,
+            actual.integrity == expected.integrity,
+            actual.ui_access == expected.ui_access,
+            actual.sandbox_inert == expected.sandbox_inert,
+            actual.token_type == expected.token_type,
+            actual.elevation_type == expected.elevation_type,
+            actual.groups == expected.groups,
+            actual.privileges == expected.privileges,
+            source_default_dacl(token)? == self.state.default,
+            no_enabled_admins,
+            actual == donor.state.snapshot,
         ])
     }
 }

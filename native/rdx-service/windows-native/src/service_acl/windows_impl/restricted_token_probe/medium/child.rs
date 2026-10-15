@@ -20,6 +20,10 @@ mod effective_context;
 mod exit_status;
 #[path = "manager_source_context.rs"]
 mod manager_source_context;
+#[path = "manager_source_output.rs"]
+mod manager_source_output;
+#[path = "manager_source_proof.rs"]
+mod manager_source_proof;
 #[path = "manager_source_protocol.rs"]
 mod manager_source_protocol;
 #[path = "mandatory_label.rs"]
