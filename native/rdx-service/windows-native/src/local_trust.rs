@@ -4,6 +4,9 @@
 //! Fixed administrator enrollment and complete Windows runtime ACL policy.
 use crate::NativeError;
 
+#[cfg(any(windows, test))]
+mod storage_parent_policy;
+
 /// The sole locally enrolled runtime root; portable copies cannot select policy.
 #[cfg(windows)]
 pub const LOCAL_RUNTIME_ROOT: &str = r"C:\Program Files\OpenRDXManager";

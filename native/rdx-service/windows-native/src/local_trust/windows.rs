@@ -25,6 +25,8 @@ const DIRECTORY_SDDL: &str =
 const FILE_SDDL: &str = "O:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;LS)(A;;FRFX;;;BU)";
 const TRUSTED_INSTALLER: &str = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
 
+pub(super) mod storage_parent;
+
 struct Allocation(*mut std::ffi::c_void);
 impl Drop for Allocation {
     /// Releases only Windows LocalAlloc outputs owned by this wrapper.

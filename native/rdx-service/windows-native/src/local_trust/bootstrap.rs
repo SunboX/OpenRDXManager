@@ -103,12 +103,18 @@ pub(super) fn validate_empty_root(path: &Path) -> Result<File, NativeError> {
 /// Creates the fixed first-install intent and protected empty root before any payload write.
 /// Caller already proved the fixed SCM name is absent; no path or identity is supplied.
 pub(crate) fn prepare_first_install() -> Result<(), NativeError> {
+    let executable = std::env::current_exe().map_err(|_| NativeError::AccessDenied)?;
+    let incoming = diagnostic(Stage::IncomingSource, incoming_source(&executable))?;
+    // Only this absent-service bootstrap may migrate a private backup container.
+    // Keep the selected source and retained storage generations pinned throughout.
+    let _storage = diagnostic(
+        Stage::FreshRoot,
+        super::windows::storage_parent::prepare_storage_parent(),
+    )?;
     diagnostic(
         Stage::FreshRoot,
         super::windows::verify_fresh_install_root(),
     )?;
-    let executable = std::env::current_exe().map_err(|_| NativeError::AccessDenied)?;
-    let incoming = diagnostic(Stage::IncomingSource, incoming_source(&executable))?;
     let runtime = Path::new(LOCAL_RUNTIME_ROOT);
     let existing_root = if runtime.exists() {
         Some(diagnostic(Stage::EmptyRoot, validate_empty_root(runtime))?)
