@@ -2,18 +2,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { copyFile, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { after, before, test } from 'node:test'
-import { promisify } from 'node:util'
 
 import electronPath from 'electron'
+import { runVisualProcess } from './helpers/visual-process.mjs'
 
-const execFileAsync = promisify(execFile)
 const projectDirectory = fileURLToPath(new URL('..', import.meta.url))
 const visualQaPath = fileURLToPath(new URL('../electron-test/visual-qa.mjs', import.meta.url))
 const visualRasterComparePath = fileURLToPath(new URL('../electron-test/visual-raster-compare.mjs', import.meta.url))
@@ -48,7 +46,7 @@ async function runInjectedVisualQa(injectionPoint) {
 
     try {
         try {
-            const { stdout, stderr } = await execFileAsync(electronPath, [visualQaPath, `--visual-qa-inject-console-error=${injectionPoint}`], { cwd: projectDirectory, env: environment, timeout: visualQaProcessTimeoutMs, maxBuffer: 5 * 1024 * 1024 })
+            const { stdout, stderr } = await runVisualProcess(electronPath, [visualQaPath, `--visual-qa-inject-console-error=${injectionPoint}`], { cwd: projectDirectory, env: environment, timeoutMs: visualQaProcessTimeoutMs })
             return { code: 0, output: `${stdout}${stderr}` }
         } catch (error) {
             const processDiagnostic = error.code == null ? `${error.message}\n` : ''
@@ -60,7 +58,7 @@ async function runInjectedVisualQa(injectionPoint) {
 }
 
 /**
- * Runs the public visual-QA npm command with a real Electron process.
+ * Runs the exact public visual-QA entrypoint through its directly owned Electron runtime.
  * @param {string[]} [visualArguments=[]] - Dedicated harness arguments.
  * @param {string|null} [evidenceDirectoryOverride=null] - Optional isolated evidence destination.
  * @returns {Promise<string>} Combined successful process output.
@@ -72,21 +70,13 @@ async function runVisualQaCommand(visualArguments = [], evidenceDirectoryOverrid
     if (evidenceDirectoryOverride !== null) {
         environment.OPENRDX_VISUAL_QA_EVIDENCE_DIRECTORY = evidenceDirectoryOverride
     }
-    // npm pretest prepares the runtime before parallel test workers start.
-    // Never invoke the repair-capable preload hook while sibling workers are
-    // importing packages: npm ci would remove their shared dependencies.
-    const npmArguments = ['--ignore-scripts', 'run', 'test:visual']
-    if (visualArguments.length > 0) npmArguments.push('--', ...visualArguments)
-    // execFile cannot execute npm.cmd. Invoke the current Windows Node install's
-    // npm CLI directly, with an argument array and no command shell.
-    const command = process.platform === 'win32' ? process.execPath : 'npm'
-    const argumentsList = process.platform === 'win32' ? [join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'), ...npmArguments] : npmArguments
-    const result = await execFileAsync(command, argumentsList, {
+    // npm pretest already built this runtime. Keep the public script contract in
+    // project-structure.test.mjs while avoiding npm's signal-forwarding wrapper
+    // in behavior tests, where the deadline must own the actual Electron child.
+    const result = await runVisualProcess(electronPath, [visualQaPath, ...visualArguments], {
         cwd: projectDirectory,
         env: environment,
-        timeout: visualQaProcessTimeoutMs,
-        windowsHide: true,
-        maxBuffer: 5 * 1024 * 1024
+        timeoutMs: visualQaProcessTimeoutMs
     })
     return `${result.stdout}${result.stderr}`
 }
@@ -102,11 +92,10 @@ async function compareNormalizedVisualEvidence(expectedPath, candidatePath) {
     const environment = { ...process.env }
     environment.OPENRDX_ELECTRON_TEST_PROFILE = await mkdtemp(join(evidenceDirectory, 'comparison-profile-'))
     delete environment.ELECTRON_RUN_AS_NODE
-    const result = await execFileAsync(electronPath, [visualRasterComparePath, expectedPath, candidatePath, '--inject-one-channel-delta'], {
+    const result = await runVisualProcess(electronPath, [visualRasterComparePath, expectedPath, candidatePath, '--inject-one-channel-delta'], {
         cwd: projectDirectory,
         env: environment,
-        timeout: 30_000,
-        maxBuffer: 5 * 1024 * 1024
+        timeoutMs: 30_000
     })
     return JSON.parse(result.stdout.trim())
 }
