@@ -10,8 +10,12 @@ typedef struct {
     int32_t pid, input_fd, output_fd, error_fd;
 } rdx_macos_worker_process;
 
-/** Starts only the fixed installed helper via public launchctl asuser; no caller paths/args/FDs. */
+/** Starts only the fixed local standalone helper via public launchctl asuser; no selectors. */
 rdx_macos_status rdx_macos_spawn_gui_worker(const rdx_macos_peer_session *verified_peer,
+    rdx_macos_worker_process *output);
+
+/** Starts only the fixed signed bundled helper via public launchctl asuser; no selectors. */
+rdx_macos_status rdx_macos_spawn_signed_gui_worker(const rdx_macos_peer_session *verified_peer,
     rdx_macos_worker_process *output);
 
 /** Starts only this native process executable and the fixed internal role, never launchctl/asuser. */

@@ -321,10 +321,22 @@ impl SpawnOutput {
 }
 
 /// Calls only the closed fixed-target C launcher after the factory's fresh native validation.
-pub(super) fn spawn_gui(peer: &PeerSession) -> Result<SpawnedProcess, NativeError> {
+pub(super) fn spawn_gui(
+    peer: &PeerSession,
+    location: crate::helper_location::HelperLocation,
+) -> Result<SpawnedProcess, NativeError> {
     let mut output = SpawnOutput::empty();
     // SAFETY: complete retained record and initialized native output remain live; C owns setup cleanup.
-    let status = unsafe { rdx_macos_spawn_gui_worker(peer.record(), &mut output) };
+    let status = unsafe {
+        match location {
+            crate::helper_location::HelperLocation::LocalStandalone => {
+                rdx_macos_spawn_gui_worker(peer.record(), &mut output)
+            }
+            crate::helper_location::HelperLocation::SignedBundled => {
+                rdx_macos_spawn_signed_gui_worker(peer.record(), &mut output)
+            }
+        }
+    };
     // On error PID is undefined: never arm or inspect it, and C transferred no descriptors.
     crate::status_result(status)?;
     output.take()
@@ -363,6 +375,10 @@ pub(crate) fn context_process_fixture(bad: bool) -> (SpawnedProcess, tempfile::T
 // SAFETY: this independent compiler-checked output ABI transfers ownership only on status OK.
 unsafe extern "C" {
     fn rdx_macos_spawn_direct_worker(output: *mut SpawnOutput) -> u32;
+    fn rdx_macos_spawn_signed_gui_worker(
+        peer: *const ffi::PeerSessionRecord,
+        output: *mut SpawnOutput,
+    ) -> u32;
     fn rdx_macos_spawn_gui_worker(
         peer: *const ffi::PeerSessionRecord,
         output: *mut SpawnOutput,

@@ -375,3 +375,35 @@ fn direct_current_executable_fixed_role_has_close_default_pipe_signal_contract()
         "fixed-current-exe direct-role exact-pid pipes env fd signal exit37 reaped"
     );
 }
+
+/// Standalone C fixture exercises both actual wrappers and private path guard, without root or launchctl.
+#[test]
+fn gui_helper_wrappers_bind_fixed_targets_and_reject_cross_mode_executable() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("locations.c");
+    std::fs::write(&source, include_str!("worker_helper_location_fixture.c")).unwrap();
+    let bridge = Path::new(env!("CARGO_MANIFEST_DIR")).join("../native/macos");
+    let executable = directory.path().join("locations");
+    let compile = Command::new("/usr/bin/clang")
+        .args([
+            "-std=c17",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-Wpedantic",
+            "-I",
+        ])
+        .arg(&bridge)
+        .arg(&source)
+        .arg("-o")
+        .arg(&executable)
+        .status()
+        .unwrap();
+    assert!(compile.success());
+    let result = Command::new(&executable).output().unwrap();
+    assert!(result.status.success(), "{result:?}");
+    assert_eq!(
+        String::from_utf8(result.stdout).unwrap().trim(),
+        "fixed-local-and-signed-targets cross-mode-denial argv-env no-fallback no-child"
+    );
+}

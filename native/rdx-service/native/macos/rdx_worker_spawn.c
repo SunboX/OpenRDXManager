@@ -10,6 +10,7 @@
 #include <spawn.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
 _Static_assert(sizeof(rdx_macos_worker_process) == 24, "private process output layout");
@@ -109,21 +110,42 @@ failed:
     return RDX_MACOS_STATUS_TRANSPORT_UNAVAILABLE;
 }
 
-rdx_macos_status rdx_macos_spawn_gui_worker(const rdx_macos_peer_session *verified_peer,
-    rdx_macos_worker_process *output) {
+/** Only fixed compiled wrappers supply a target; actual native executable must match before launch. */
+static rdx_macos_status rdx_spawn_fixed_gui_worker(const rdx_macos_peer_session *verified_peer,
+    const char *helper, rdx_macos_worker_process *output) {
     if (output == NULL) { return RDX_MACOS_STATUS_INVALID_ARGUMENT; }
     *output = (rdx_macos_worker_process){ .version = 1, .size = sizeof(*output),
         .pid = -1, .input_fd = -1, .output_fd = -1, .error_fd = -1 };
     if (getuid() != 0 || geteuid() != 0 || !rdx_macos_peer_session_record_is_valid(verified_peer)) {
         return RDX_MACOS_STATUS_ACCESS_DENIED;
     }
+    char unresolved[PATH_MAX], executable[PATH_MAX];
+    uint32_t capacity = sizeof(unresolved);
+    if (_NSGetExecutablePath(unresolved, &capacity) != 0 ||
+        realpath(unresolved, executable) == NULL || strcmp(executable, helper) != 0) {
+        return RDX_MACOS_STATUS_ACCESS_DENIED;
+    }
     char uid[11];
     const int count = snprintf(uid, sizeof(uid), "%u", rdx_macos_peer_session_user_id(verified_peer));
     if (count <= 0 || (size_t)count >= sizeof(uid)) { return RDX_MACOS_STATUS_INVALID_ARGUMENT; }
     char *const argv[] = {"/bin/launchctl", "asuser", uid,
-        "/Library/PrivilegedHelperTools/openrdx-hardware", "--openrdx-internal-macos-scsi-worker", NULL};
+        (char *)helper, "--openrdx-internal-macos-scsi-worker", NULL};
     char *const environment[] = {"LANG=C", NULL};
     return rdx_spawn_worker("/bin/launchctl", argv, environment, 0, output);
+}
+
+/** Local service launch is permanently bound to its verified standalone executable. */
+rdx_macos_status rdx_macos_spawn_gui_worker(const rdx_macos_peer_session *verified_peer,
+    rdx_macos_worker_process *output) {
+    return rdx_spawn_fixed_gui_worker(verified_peer,
+        "/Library/PrivilegedHelperTools/openrdx-hardware", output);
+}
+
+/** Signed service launch is permanently bound to its verified bundled executable. */
+rdx_macos_status rdx_macos_spawn_signed_gui_worker(const rdx_macos_peer_session *verified_peer,
+    rdx_macos_worker_process *output) {
+    return rdx_spawn_fixed_gui_worker(verified_peer,
+        "/Applications/OpenRDXManager.app/Contents/Library/LaunchServices/openrdx-hardware", output);
 }
 
 /** Resolves only this native process executable; no caller-selected target or argument exists. */

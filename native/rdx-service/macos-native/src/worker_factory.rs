@@ -136,14 +136,14 @@ impl MacWorkerFactory {
             diagnostic::os_failure("process-current-exe", &error);
             NativeError::TransportUnavailable
         })?;
-        if executable != std::path::Path::new(crate::local_trust::HELPER_PATH) {
-            diagnostic::parent_failure("process-current-exe", NativeError::AccessDenied);
-            return Err(NativeError::AccessDenied);
-        }
+        let location = self.state.generation.helper_location();
+        location
+            .verify_current_executable(&executable)
+            .inspect_err(|error| diagnostic::parent_failure("process-current-exe", *error))?;
         if Instant::now() >= deadline {
             return Err(NativeError::TimedOut);
         }
-        let process = crate::worker_process::spawn_gui(&self.state.peer)
+        let process = crate::worker_process::spawn_gui(&self.state.peer, location)
             .inspect_err(|error| diagnostic::parent_failure("process-spawn", *error))?;
         let expected =
             WorkerExpectation::gui(&self.state.peer, self.state.credentials, process.child.id())?;

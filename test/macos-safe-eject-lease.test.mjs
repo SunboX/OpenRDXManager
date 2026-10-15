@@ -246,6 +246,47 @@ async function testRecoveryPreparesNativeAuthorityBeforeAttempt() {
     assert.match(source, /fn finish_release\([\s\S]*?MacOsBackend::native_with_context\(self\.context\.duplicate_for_runtime\(\)\)/u, 'finishing and fresh readback must retain the exact original recovery authority')
 }
 
+/**
+ * Cross-checks generation-bound helper locations against the existing signed and local layouts.
+ *
+ * @returns {Promise<void>} Resolves when every consumed fixed-path contract agrees.
+ */
+async function testGuiWorkerHelperLocationMatchesInstalledMode() {
+    const sources = await Promise.all(['../native/rdx-service/macos-native/src/local_trust.rs', '../native/rdx-service/macos-native/src/helper_location.rs', '../native/rdx-service/macos-native/src/runtime_generation.rs', '../native/rdx-service/macos-native/src/worker_factory.rs', '../native/rdx-service/macos-native/src/worker_process.rs', '../native/rdx-service/native/macos/rdx_worker_spawn.c', '../native/rdx-service/native/macos/rdx_worker_spawn.h', '../native/rdx-service/resources/macos/com.openrdx.hardware.plist', '../native/macos-client-addon/openrdx_macos_client.cc', '../native/local-install/macos/src/install.rs'].map((path) => readFile(new URL(path, import.meta.url), 'utf8')))
+    const [localSource, location, generation, factory, processSource, native, header, signedPlist, client, installer] = sources
+    const local = localSource.match(/pub const HELPER_PATH: &str = "([^"]+)";/u)?.[1]
+    const root = localSource.match(/pub const MANAGER_ROOT: &str = "([^"]+)";/u)?.[1]
+    const bundled = localSource.match(/pub const HELPER_INVENTORY_PATH: &str = "([^"]+)";/u)?.[1]
+    const signed = location.match(/Self::SignedBundled => \{\s*"([^"]+)"/u)?.[1]
+    assert.ok(local && root && bundled && signed)
+    assert.equal(signed, `${root}/${bundled}`)
+    assert.equal(signedPlist.match(/<key>BundleProgram<\/key>\s*<string>([^<]+)<\/string>/u)?.[1], bundled)
+    assert.equal(client.match(/constexpr char kSignedHelper\[\] = "([^"]+)";/u)?.[1], signed)
+    assert.equal(client.match(/constexpr char kHelper\[\] = "([^"]+)";/u)?.[1], local)
+    assert.equal(installer.match(/const HELPER: &str = "([^"]+)";/u)?.[1], local)
+    assert.match(location, /manager_requirement_is_pinned\(text\)/u, 'only the existing canonical pinned requirement may select location')
+    assert.match(location, /Self::LocalStandalone => verifier\.verify\(helper\),\s*Self::SignedBundled => Ok\(\(\)\)/u, 'signed mode must have no standalone verification dependency')
+    assert.match(generation, /helper_location: HelperLocation/u, 'location must participate in retained generation equality')
+    assert.match(generation, /HelperLocation::from_requirement\(requirement\)[\s\S]*?verify_protected_signed_macos_runtime_inventory[\s\S]*?helper_location\.verify_inventory\(&inventory\)[\s\S]*?Self::from_inventory\(helper_location, &inventory\)/u, 'capture must use protected mode-specific inventory and the same consumed helper verifier')
+    assert.match(factory, /let location = self\.state\.generation\.helper_location\(\);[\s\S]*?verify_current_executable\(&executable\)[\s\S]*?spawn_gui\(&self\.state\.peer, location\)/u, 'only retained generation mode may select launch after actual executable proof')
+    const dispatch = processSource.slice(processSource.indexOf('pub(super) fn spawn_gui('), processSource.indexOf('/// Direct process launch'))
+    assert.match(dispatch, /HelperLocation::LocalStandalone => \{\s*rdx_macos_spawn_gui_worker\(peer\.record\(\), &mut output\)/u)
+    assert.match(dispatch, /HelperLocation::SignedBundled => \{\s*rdx_macos_spawn_signed_gui_worker\(peer\.record\(\), &mut output\)/u)
+    assert.doesNotMatch(dispatch, /or_else|spawn_direct/u, 'rejected selected helper must never fall back to another mode')
+    for (const [name, path] of [
+        ['rdx_macos_spawn_gui_worker', local],
+        ['rdx_macos_spawn_signed_gui_worker', signed]
+    ]) {
+        const start = native.indexOf(`rdx_macos_status ${name}(`)
+        const end = native.indexOf('\n}', start)
+        assert.ok(start >= 0 && end > start)
+        const wrapper = native.slice(start, end)
+        assert.ok(wrapper.includes(`rdx_spawn_fixed_gui_worker(verified_peer,\n        "${path}", output)`), `${name} must use only its compiled path`)
+        assert.ok(header.includes(`${name}(const rdx_macos_peer_session *verified_peer,\n    rdx_macos_worker_process *output)`), 'public wrapper must accept no path, mode, argv, UID or environment selector')
+    }
+    assert.match(native, /static rdx_macos_status rdx_spawn_fixed_gui_worker\([\s\S]*?_NSGetExecutablePath\(unresolved, &capacity\)[\s\S]*?realpath\(unresolved, executable\)[\s\S]*?strcmp\(executable, helper\) != 0[\s\S]*?return RDX_MACOS_STATUS_ACCESS_DENIED/u, 'the shared private native launcher must independently pin its actual current executable')
+}
+
 test('macOS host-fact revalidation preserves the retained protocol lease', testRetainedScsiSurvivesHostFactRevalidation)
 test('macOS Safe Eject uses Disk Arbitration after releasing USB capture', testSafeEjectUsesDiskArbitration)
 test('macOS Safe Eject uses a fixed Apple fallback after exact target revalidation', testSafeEjectUsesValidatedAppleFallback)
@@ -258,3 +299,5 @@ test('macOS storage rematch enumerates both direct-access SCSI registry classes'
 test('serial capture retains exact target and direct-only worker policy', testSerialWorkerRetainsExactTargetAndDirectOnlyPolicy)
 
 test('direct recovery prepares native authority before mutation and retains service context', testRecoveryPreparesNativeAuthorityBeforeAttempt)
+
+test('GUI worker helper location matches protected signed and local generations', testGuiWorkerHelperLocationMatchesInstalledMode)

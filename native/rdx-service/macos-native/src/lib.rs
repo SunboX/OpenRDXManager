@@ -20,6 +20,8 @@ mod boundary;
 mod counters;
 mod endpoint;
 mod ffi;
+#[cfg(target_os = "macos")]
+mod helper_location;
 mod host;
 pub mod local_trust;
 mod manufacturing_contract;
