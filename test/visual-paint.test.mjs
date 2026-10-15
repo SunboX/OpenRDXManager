@@ -46,6 +46,42 @@ async function verifyNewFontReadiness() {
     await painted
     assert.equal(layoutFlushed, true)
     assert.equal(paintFrames, 2)
+    assert.equal(context.__openRdxVisualPaintTrace, undefined)
 }
 
 test('visual paint awaits the new locale font-loading cycle before capturing frames', verifyNewFontReadiness)
+
+test('optional paint progress distinguishes fonts and both required frames', async () => {
+    const fonts = Promise.withResolvers()
+    const frames = []
+    const requests = [Promise.withResolvers(), Promise.withResolvers()]
+    const context = {
+        document: {
+            documentElement: {
+                /** @returns {object} Unused box after the test's synchronous layout flush. */
+                getBoundingClientRect() {
+                    return {}
+                }
+            },
+            fonts: { ready: fonts.promise }
+        },
+        /** @param {Function} callback - Required frame callback retained until explicitly released. @returns {void} Reports this frame's admission. */
+        requestAnimationFrame(callback) {
+            frames.push(callback)
+            requests[frames.length - 1].resolve()
+        }
+    }
+    const painted = runInNewContext(`(${waitForRendererVisualPaint.toString()})(true)`, context)
+    assert.equal(context.__openRdxVisualPaintTrace.phase, 'await-fonts')
+    fonts.resolve()
+    await requests[0].promise
+    assert.equal(context.__openRdxVisualPaintTrace.phase, 'await-raf-1')
+    assert.equal(frames.length, 1)
+    frames[0]()
+    await requests[1].promise
+    assert.equal(context.__openRdxVisualPaintTrace.phase, 'await-raf-2')
+    assert.equal(frames.length, 2)
+    frames[1]()
+    await painted
+    assert.equal(context.__openRdxVisualPaintTrace.phase, 'done')
+})

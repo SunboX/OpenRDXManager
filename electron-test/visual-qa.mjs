@@ -15,9 +15,11 @@ import { isTrustedApplicationSender, registerIpcHandlers } from '../src/main/ipc
 import { registerWindowMenu } from '../src/main/window-menu.mjs'
 import { WindowMenuChannel } from '../src/shared/window-menu.mjs'
 import { visualWindowOptions } from './visual-window-options.mjs'
+import { registerVisualBackgroundPolicy } from './visual-background-policy.mjs'
 import { waitForRendererVisualPaint } from './visual-paint.mjs'
 import { reloadVisualRuntimeAtViewport, resizeVisualWindow } from './visual-window-geometry.mjs'
 import { guardVisualOutput } from './visual-output.mjs'
+import { observeVisualPaintWait, traceVisualPhase } from './visual-trace.mjs'
 import { normalizeConsoleMessage, VisualErrorTracker } from './visual-error-tracker.mjs'
 import { isVisualAnchorUnoccluded } from './visual-anchor-visibility.mjs'
 import { initializeIsolatedElectronProfile } from './isolated-profile.mjs'
@@ -65,11 +67,6 @@ if (consoleErrorInjection !== null && !['before-mount', 'during-transition'].inc
 }
 const trustedWebContents = new Set()
 let pendingDeviceList = null
-
-/** @param {string} phase - Bounded owned QA operation. @returns {void} Emits optional progress for hung-process diagnosis. */
-function traceVisualPhase(phase) {
-    if (process.env.OPENRDX_VISUAL_QA_TRACE === '1') console.error(`visual-phase: ${phase}`)
-}
 
 /**
  * Creates a manually controlled promise for the production renderer's initial
@@ -222,7 +219,14 @@ async function waitForSelector(webContents, selector) {
  * @returns {Promise<void>} Resolves after fonts and two animation frames.
  */
 async function waitForPaint(webContents) {
-    await webContents.executeJavaScript(`(${waitForRendererVisualPaint.toString()})()`)
+    traceVisualPhase('paint:renderer-wait')
+    const stopObserving = observeVisualPaintWait(webContents, process.env.OPENRDX_VISUAL_QA_TRACE === '1' ? BrowserWindow.fromWebContents(webContents) : null)
+    try {
+        await webContents.executeJavaScript(`(${waitForRendererVisualPaint.toString()})(${process.env.OPENRDX_VISUAL_QA_TRACE === '1'})`)
+    } finally {
+        stopObserving()
+    }
+    traceVisualPhase('paint:renderer-done')
 }
 
 /**
@@ -233,7 +237,9 @@ async function waitForPaint(webContents) {
  * @returns {Promise<void>} Resolves after layout settles at the exact bounds.
  */
 async function setWindowSize(window, viewport) {
+    traceVisualPhase(`window-size:${viewport.width}:resize`)
     await resizeVisualWindow(window, viewport)
+    traceVisualPhase(`window-size:${viewport.width}:geometry-done`)
     const bounds = window.getBounds()
     assert.equal(bounds.width, viewport.width)
     assert.equal(bounds.height, viewport.height)
@@ -685,9 +691,13 @@ async function inspectRenderer(window, entry, errorTracker, cursor, functionalEv
  * @returns {Promise<object>} Validated inspection result with artifact name.
  */
 async function captureEntry(window, entry, errorTracker, cursor, functionalEvidence = null) {
+    traceVisualPhase(`entry:${entry.state}:${entry.viewport.width}:resize`)
     await setWindowSize(window, entry.viewport)
+    traceVisualPhase(`entry:${entry.state}:${entry.viewport.width}:position`)
     await positionSceneForCapture(window.webContents, entry.state)
+    traceVisualPhase(`entry:${entry.state}:${entry.viewport.width}:interaction`)
     await stabilizeInteractionForCapture(window)
+    traceVisualPhase(`entry:${entry.state}:${entry.viewport.width}:inspect`)
     const inspection = await inspectRenderer(window, entry, errorTracker, cursor, functionalEvidence)
     let candidateImage
     let capture
@@ -697,7 +707,9 @@ async function captureEntry(window, entry, errorTracker, cursor, functionalEvide
         capture = await captureValidatedVisualImage({
             /** @returns {Promise<Electron.NativeImage>} One candidate compositor frame. */
             async capture() {
+                traceVisualPhase(`entry:${entry.state}:${entry.viewport.width}:capture-page`)
                 const image = await window.webContents.capturePage()
+                traceVisualPhase(`entry:${entry.state}:${entry.viewport.width}:capture-page-done`)
                 candidateImage = entry.screenshot === rasterCorruptionInjection ? createFiducialFreeCorruptedCapture(image, entry.viewport.name) : image
                 return candidateImage
             },
@@ -736,6 +748,7 @@ async function captureEntry(window, entry, errorTracker, cursor, functionalEvide
         throw new Error(`Visual QA failed at ${entry.state}/${entry.viewport.name}: ${error.message}`, { cause: error })
     }
     errorTracker.assertEmptySince(cursor, `${entry.state}/${entry.viewport.name} capture`)
+    traceVisualPhase(`entry:${entry.state}:${entry.viewport.width}:persist`)
     const persisted = await persistValidatedVisualImage(
         capture,
         async (image) =>
@@ -828,6 +841,7 @@ async function runVisualQa() {
     const window = new BrowserWindow(visualWindowOptions)
     trustedWebContents.add(window.webContents)
     const errorTracker = new VisualErrorTracker()
+    const disposeBackgroundPolicy = registerVisualBackgroundPolicy(window.webContents, errorTracker)
     const debuggerSession = window.webContents.debugger
 
     /**
@@ -920,6 +934,7 @@ async function runVisualQa() {
         traceVisualPhase('runtime-starting-wait')
         await waitForSelector(window.webContents, '[data-service-pending="starting"]')
         traceVisualPhase('runtime-starting-mounted')
+        errorTracker.assertEmptySince(runtimeLoadCursor, 'real-runtime renderer load')
         for (const entry of matrix.filter(({ state }) => state === 'starting-runtime')) {
             traceVisualPhase(`runtime-capture:${entry.state}:${entry.viewport.width}`)
             results.push(await captureEntry(window, entry, errorTracker, runtimeLoadCursor))
@@ -945,6 +960,7 @@ async function runVisualQa() {
         await writeFile(join(evidenceDirectory, 'visual-qa-results.json'), serializeVisualQaManifest(results))
         await writeFile(join(evidenceDirectory, 'visual-qa-capture-metrics.json'), serializeVisualQaCaptureMetrics(results))
     } finally {
+        disposeBackgroundPolicy()
         window.webContents.removeListener('console-message', handleConsoleMessage)
         window.webContents.removeListener('did-fail-load', handleLoadFailure)
         window.webContents.removeListener('render-process-gone', handleRendererGone)

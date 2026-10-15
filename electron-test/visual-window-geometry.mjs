@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 André Fiedler
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import { traceVisualPhase } from './visual-trace.mjs'
+
 const titlebarInsetsByWindow = new WeakMap()
 
 /**
@@ -64,7 +66,9 @@ export async function resizeVisualWindow(window, viewport, platform = process.pl
     window.setBounds({ x: 40, y: 40, width: viewport.width, height: viewport.height }, false)
     const content = window.getContentBounds()
     const expected = { width: content.width, height: content.height, titlebarInsets: titlebarInsetsByWindow.get(window) }
+    traceVisualPhase(`geometry:${viewport.width}:viewport-wait`)
     await window.webContents.executeJavaScript(`(${waitForRendererViewport.toString()})(${JSON.stringify(expected)})`)
+    traceVisualPhase(`geometry:${viewport.width}:viewport-done`)
     if (platform === 'darwin' && expected.titlebarInsets !== null) {
         // Electron 44's Cocoa resize notification can precede content-view size
         // propagation. Reaffirming the existing visibility explicitly publishes
@@ -74,7 +78,9 @@ export async function resizeVisualWindow(window, viewport, platform = process.pl
         // Electron exposes a setter but no public visibility getter.
         window.setWindowButtonVisibility(true)
     }
+    traceVisualPhase(`geometry:${viewport.width}:overlay-wait`)
     await window.webContents.executeJavaScript(`(${waitForRendererWindowGeometry.toString()})(${JSON.stringify(expected)})`)
+    traceVisualPhase(`geometry:${viewport.width}:overlay-done`)
 }
 
 /**
