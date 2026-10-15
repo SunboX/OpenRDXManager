@@ -342,6 +342,61 @@ fn startup_real_child_stderr_eof_and_silence_are_bounded() {
     assert!(worker.child.is_none());
 }
 
+/// A real child stalls inside one reported native boundary without extending INIT or reaping.
+#[test]
+fn startup_real_child_native_progress_timeout_is_bounded() {
+    let mut worker = startup_fixture(
+        "printf '%s\n' '{\"diagnostic\":\"worker-startup\",\"stage\":\"acquire\",\"status\":0}' '{\"diagnostic\":\"native-acquisition-progress\",\"substage\":\"usb-open-interface\",\"event\":\"enter\"}' >&2; exec /bin/sleep 2",
+    );
+    let started = Instant::now();
+    assert_eq!(
+        worker.read_frame(FRAME_READY, started + Duration::from_millis(100)),
+        Err(NativeError::TimedOut)
+    );
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(worker.child.is_none());
+    assert_eq!(
+        crate::take_last_worker_startup_failure().unwrap().code(),
+        "candidate-worker-usb-open-interface-timed-out"
+    );
+}
+
+/// Flooding after native progress invalidates attribution but never prevents bounded termination.
+#[test]
+fn startup_real_child_native_progress_flood_retains_deadline() {
+    let mut worker = startup_fixture(
+        "printf '%s\n' '{\"diagnostic\":\"worker-startup\",\"stage\":\"acquire\",\"status\":0}' '{\"diagnostic\":\"native-acquisition-progress\",\"substage\":\"usb-open-interface\",\"event\":\"enter\"}' >&2; while :; do printf '%s\n' chatter >&2; done",
+    );
+    let started = Instant::now();
+    assert_eq!(
+        worker.read_frame(FRAME_READY, started + Duration::from_millis(100)),
+        Err(NativeError::TimedOut)
+    );
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(worker.child.is_none());
+    assert_eq!(
+        crate::take_last_worker_startup_failure().unwrap().code(),
+        "candidate-worker-acquire-timed-out"
+    );
+}
+
+/// A completed child timeout response must not be confused with the parent INIT deadline.
+#[test]
+fn startup_real_child_native_progress_completed_error_keeps_result() {
+    let worker = startup_fixture(
+        "printf '%s\n' '{\"diagnostic\":\"worker-startup\",\"stage\":\"acquire\",\"status\":0}' '{\"diagnostic\":\"native-acquisition-progress\",\"substage\":\"usb-open-interface\",\"event\":\"enter\"}' >&2; printf 'RDXSCSI1\\007\\000\\000\\000\\001\\000\\000\\000\\005'; exec /bin/sleep 2",
+    );
+    let identity = crate::synthetic_candidate_for_test().rematch_identity();
+    assert!(matches!(
+        worker.finish_initialization(&identity, Instant::now() + Duration::from_secs(1)),
+        Err(NativeError::TimedOut)
+    ));
+    assert_eq!(
+        crate::take_last_worker_startup_failure().unwrap().code(),
+        "candidate-worker-acquire-timed-out"
+    );
+}
+
 /// Arbitrary/unknown stderr never relaxes malformed stdout framing or publishes child text.
 #[test]
 fn startup_real_child_malicious_diagnostic_does_not_change_protocol_rejection() {

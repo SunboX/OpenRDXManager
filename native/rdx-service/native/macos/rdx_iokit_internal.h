@@ -53,6 +53,16 @@ void rdx_record_acquisition_diagnostic(
     rdx_acquisition_code_kind kind, int64_t native_code
 );
 
+typedef enum rdx_acquisition_progress_event {
+    RDX_ACQUIRE_ENTER = 1,
+    RDX_ACQUIRE_RETURN = 2
+} rdx_acquisition_progress_event;
+
+/* Observed native boundaries only; never an operation result or authority. */
+void rdx_record_acquisition_progress(
+    rdx_acquisition_stage stage, rdx_acquisition_progress_event event
+);
+
 /* Private stderr evidence only; scalar classes never affect native return status. */
 typedef struct rdx_interface_error_evidence {
     uint32_t status;

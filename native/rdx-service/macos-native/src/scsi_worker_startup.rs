@@ -34,7 +34,7 @@ const WORKER_STAGES: &[&str] = &[
     "acquire",
     "ready-write",
 ];
-const NATIVE_STAGES: &[&str] = &[
+pub(super) const NATIVE_STAGES: &[&str] = &[
     "legacy-create-plugin",
     "legacy-query-interface",
     "legacy-obtain-exclusive",
@@ -305,6 +305,7 @@ pub(super) struct StartupDiagnostics {
     active: bool,
     phase: Option<(&'static str, Option<NativeError>)>,
     native: Option<NativeDiagnostic>,
+    progress: crate::scsi_worker_progress::NativeProgress,
     interface: crate::scsi_worker_interface::InterfaceEvidenceState,
 }
 
@@ -387,6 +388,9 @@ impl StartupDiagnostics {
 
     /// Rejects only recognized incomplete reserved records at EOF/read failure; never parses a tail.
     fn finish_pipe(&mut self) {
+        if !self.line.is_empty() || self.dropping_line {
+            self.progress.invalidate();
+        }
         if self
             .line
             .starts_with(b"{\"diagnostic\":\"interface-init-evidence\"")
@@ -409,6 +413,7 @@ impl StartupDiagnostics {
         for &byte in bytes {
             self.bytes += 1;
             if self.bytes > MAX_PARSED_BYTES || self.lines >= MAX_PARSED_LINES {
+                self.progress.invalidate();
                 self.interface.bounded_stop();
                 if self
                     .line
@@ -424,7 +429,9 @@ impl StartupDiagnostics {
                 self.lines += 1;
                 if !self.dropping_line {
                     if let Ok(line) = std::str::from_utf8(&self.line) {
-                        if self.interface.fresh_line(line) {
+                        if self.progress.consume(line) {
+                            // Native entries are observations, never completed acquisition errors.
+                        } else if self.interface.fresh_line(line) {
                             // Fresh constructor evidence is correlated separately from legacy return mapping.
                         } else if let Some(record) = parse_native(line) {
                             if record.failure.stage == "usb-open-interface" { self.interface.legacy(record.status); }
@@ -435,15 +442,19 @@ impl StartupDiagnostics {
                                 || self.phase.is_some_and(|(previous, _)| previous != stage)
                             {
                                 self.native = None;
+                                self.progress.clear();
                                 self.interface.clear();
                             }
                             self.phase = Some((stage, status));
                         } else if line.starts_with("{\"diagnostic\":\"snapshot-native-acquisition\",\"substage\":\"usb-open-interface\"") { self.interface.malformed_legacy(); }
-                    } else if self
-                        .line
-                        .starts_with(b"{\"diagnostic\":\"interface-init-evidence\"")
-                    {
-                        self.interface.malformed();
+                    } else {
+                        self.progress.invalidate();
+                        if self
+                            .line
+                            .starts_with(b"{\"diagnostic\":\"interface-init-evidence\"")
+                        {
+                            self.interface.malformed();
+                        }
                     }
                 }
                 self.line.clear();
@@ -451,6 +462,7 @@ impl StartupDiagnostics {
             } else if self.line.len() < MAX_LINE && !self.dropping_line {
                 self.line.push(byte);
             } else {
+                self.progress.invalidate();
                 if self
                     .line
                     .starts_with(b"{\"diagnostic\":\"interface-init-evidence\"")
@@ -465,10 +477,28 @@ impl StartupDiagnostics {
 
     /// Publishes final failure evidence without mistaking legacy fallback for terminal failure.
     pub(super) fn failure(&mut self, parent_phase: &'static str, error: NativeError) {
+        self.record_failure(parent_phase, error, false);
+    }
+
+    /// Distinguishes a failed parent pipe read from a completed worker error response.
+    pub(super) fn parent_read_failure(&mut self, parent_phase: &'static str, error: NativeError) {
+        self.record_failure(parent_phase, error, true);
+    }
+
+    /// Refines only an actual parent read deadline; all completed-result precedence stays intact.
+    fn record_failure(
+        &mut self,
+        parent_phase: &'static str,
+        error: NativeError,
+        parent_read: bool,
+    ) {
         if !self.active {
             return;
         }
         self.drain();
+        if !self.line.is_empty() || self.dropping_line {
+            self.progress.invalidate();
+        }
         let fallback = WorkerStartupFailure {
             stage: parent_phase,
             bucket: bucket(error),
@@ -505,7 +535,24 @@ impl StartupDiagnostics {
                 || (record.failure.bucket != Bucket::Unavailable
                     && record.failure.bucket == phase.bucket)
         });
-        let mut diagnostic = native.map_or(phase, |record| record.failure);
+        // Refine only the parent's acquisition timeout, never a completed child result.
+        // The stage means entered without an observed return at the parent deadline.
+        let timed_out_phase = if parent_read
+            && parent_phase == "init-read"
+            && error == NativeError::TimedOut
+            && self.phase == Some(("acquire", None))
+        {
+            self.progress
+                .timeout_stage()
+                .map_or(phase, |stage| WorkerStartupFailure {
+                    stage,
+                    bucket: Bucket::Timeout,
+                    detail: None,
+                })
+        } else {
+            phase
+        };
+        let mut diagnostic = native.map_or(timed_out_phase, |record| record.failure);
         if let Some(code) = self.interface.code() {
             diagnostic.detail = Some(code);
         }
@@ -521,6 +568,7 @@ impl StartupDiagnostics {
         self.active = false;
         self.phase = None;
         self.native = None;
+        self.progress.clear();
         self.interface.clear();
         self.line.clear();
         reset();

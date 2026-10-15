@@ -190,9 +190,11 @@ static rdx_macos_status rdx_usb_initialize_interface(
     rdx_interface_error_evidence *out_evidence
 ) {
     NSError *fresh_error = nil;
+    rdx_record_acquisition_progress(RDX_ACQUIRE_USB_OPEN_INTERFACE, RDX_ACQUIRE_ENTER);
     owner.interface = [[interface_class alloc]
         initWithIOService:service options:IOUSBHostObjectInitOptionsNone
         queue:nil error:&fresh_error interestHandler:nil];
+    rdx_record_acquisition_progress(RDX_ACQUIRE_USB_OPEN_INTERFACE, RDX_ACQUIRE_RETURN);
     // Preserve the legacy shared-slot fallback independently from current-call evidence.
     if (fresh_error != nil) { *shared_error = fresh_error; }
     rdx_macos_status status = owner.interface == nil ?
@@ -384,9 +386,11 @@ static rdx_macos_status rdx_usb_open_bulk_pipes(
     rdx_acquisition_stage *stage
 ) {
     *stage = RDX_ACQUIRE_USB_PIPE_DESCRIPTORS;
+    rdx_record_acquisition_progress(*stage, RDX_ACQUIRE_ENTER);
     const IOUSBConfigurationDescriptor *configuration =
         owner.interface.configurationDescriptor;
     const IOUSBInterfaceDescriptor *interface = owner.interface.interfaceDescriptor;
+    rdx_record_acquisition_progress(*stage, RDX_ACQUIRE_RETURN);
     if (configuration == NULL || interface == NULL ||
         interface->bInterfaceClass != 8 || interface->bInterfaceSubClass != 6 ||
         interface->bInterfaceProtocol != 0x50) {
@@ -398,6 +402,7 @@ static rdx_macos_status rdx_usb_open_bulk_pipes(
     uint32_t output_count = 0;
     const IOUSBDescriptorHeader *cursor = NULL;
     const IOUSBEndpointDescriptor *endpoint = NULL;
+    rdx_record_acquisition_progress(RDX_ACQUIRE_USB_PIPE_ENDPOINTS, RDX_ACQUIRE_ENTER);
     while ((endpoint = IOUSBGetNextEndpointDescriptor(
                 configuration,
                 interface,
@@ -417,16 +422,21 @@ static rdx_macos_status rdx_usb_open_bulk_pipes(
         }
     }
     *stage = RDX_ACQUIRE_USB_PIPE_ENDPOINTS;
+    rdx_record_acquisition_progress(*stage, RDX_ACQUIRE_RETURN);
     if (input_count != 1 || output_count != 1) {
         return RDX_MACOS_STATUS_EVIDENCE_INCOMPLETE;
     }
     *stage = RDX_ACQUIRE_USB_PIPE_IN;
+    rdx_record_acquisition_progress(*stage, RDX_ACQUIRE_ENTER);
     owner.bulkIn = [owner.interface copyPipeWithAddress:input_address error:out_error];
+    rdx_record_acquisition_progress(*stage, RDX_ACQUIRE_RETURN);
     if (owner.bulkIn == nil) {
         return rdx_usb_status_from_error(*out_error, RDX_MACOS_STATUS_NATIVE_FAILURE);
     }
     *stage = RDX_ACQUIRE_USB_PIPE_OUT;
+    rdx_record_acquisition_progress(*stage, RDX_ACQUIRE_ENTER);
     owner.bulkOut = [owner.interface copyPipeWithAddress:output_address error:out_error];
+    rdx_record_acquisition_progress(*stage, RDX_ACQUIRE_RETURN);
     if (owner.bulkOut == nil) {
         return rdx_usb_status_from_error(*out_error, RDX_MACOS_STATUS_NATIVE_FAILURE);
     }
@@ -457,22 +467,29 @@ rdx_macos_status rdx_macos_usb_bot_acquire(
         rdx_interface_error_evidence interface_evidence = {0};
         rdx_acquisition_stage stage = RDX_ACQUIRE_USB_ANCESTOR;
         @try {
+            rdx_record_acquisition_progress(stage, RDX_ACQUIRE_ENTER);
             status = rdx_usb_find_device_ancestor(scsi_service, &usb_service);
+            rdx_record_acquisition_progress(stage, RDX_ACQUIRE_RETURN);
             if (status != RDX_MACOS_STATUS_OK) {
                 goto cleanup;
             }
             stage = RDX_ACQUIRE_USB_IDENTITY;
-            if (!rdx_usb_identity_matches(usb_service, expected)) {
+            rdx_record_acquisition_progress(stage, RDX_ACQUIRE_ENTER);
+            bool matches = rdx_usb_identity_matches(usb_service, expected);
+            rdx_record_acquisition_progress(stage, RDX_ACQUIRE_RETURN);
+            if (!matches) {
                 status = RDX_MACOS_STATUS_EVIDENCE_INCOMPLETE;
                 goto cleanup;
             }
             stage = RDX_ACQUIRE_USB_CAPTURE;
+            rdx_record_acquisition_progress(stage, RDX_ACQUIRE_ENTER);
             owner.device = [[IOUSBHostDevice alloc]
                 initWithIOService:usb_service
                             options:IOUSBHostObjectInitOptionsDeviceCapture
                               queue:nil
                               error:&error
                     interestHandler:nil];
+            rdx_record_acquisition_progress(stage, RDX_ACQUIRE_RETURN);
             if (owner.device == nil) {
                 status = rdx_usb_status_from_error(
                     error,
@@ -481,12 +498,17 @@ rdx_macos_status rdx_macos_usb_bot_acquire(
                 goto cleanup;
             }
             stage = RDX_ACQUIRE_USB_CONFIGURE;
-            if (![owner.device configureWithValue:1 matchInterfaces:NO error:&error]) {
+            rdx_record_acquisition_progress(stage, RDX_ACQUIRE_ENTER);
+            BOOL configured = [owner.device configureWithValue:1 matchInterfaces:NO error:&error];
+            rdx_record_acquisition_progress(stage, RDX_ACQUIRE_RETURN);
+            if (!configured) {
                 status = rdx_usb_status_from_error(error, RDX_MACOS_STATUS_NATIVE_FAILURE);
                 goto cleanup;
             }
             stage = RDX_ACQUIRE_USB_FIND_INTERFACE;
+            rdx_record_acquisition_progress(stage, RDX_ACQUIRE_ENTER);
             status = rdx_usb_find_bot_interface(usb_service, &interface_service);
+            rdx_record_acquisition_progress(stage, RDX_ACQUIRE_RETURN);
             if (status != RDX_MACOS_STATUS_OK) {
                 goto cleanup;
             }
@@ -501,7 +523,9 @@ rdx_macos_status rdx_macos_usb_bot_acquire(
                 goto cleanup;
             }
             stage = RDX_ACQUIRE_USB_ALLOCATION;
+            rdx_record_acquisition_progress(stage, RDX_ACQUIRE_ENTER);
             rdx_macos_usb_bot_lease *lease = calloc(1, sizeof(*lease));
+            rdx_record_acquisition_progress(stage, RDX_ACQUIRE_RETURN);
             if (lease == NULL) {
                 status = RDX_MACOS_STATUS_RESOURCE_LIMIT;
                 goto cleanup;

@@ -505,6 +505,7 @@ static rdx_macos_status rdx_create_scsi_plugin(
     }
 #endif
     SInt32 score = 0;
+    rdx_record_acquisition_progress(RDX_ACQUIRE_LEGACY_PLUGIN, RDX_ACQUIRE_ENTER);
     IOReturn io_status = IOCreatePlugInInterfaceForService(
         device->service,
         kIOSCSITaskDeviceUserClientTypeID,
@@ -512,6 +513,7 @@ static rdx_macos_status rdx_create_scsi_plugin(
         out_plugin,
         &score
     );
+    rdx_record_acquisition_progress(RDX_ACQUIRE_LEGACY_PLUGIN, RDX_ACQUIRE_RETURN);
     if (io_status != kIOReturnSuccess || *out_plugin == NULL) {
         rdx_record_acquisition_diagnostic(RDX_ACQUIRE_LEGACY_PLUGIN,
             rdx_status_from_io(io_status, RDX_MACOS_STATUS_TRANSPORT_UNAVAILABLE),
@@ -547,11 +549,13 @@ static rdx_macos_status rdx_query_scsi_interface(
         return RDX_MACOS_STATUS_OK;
     }
 #endif
+    rdx_record_acquisition_progress(RDX_ACQUIRE_LEGACY_INTERFACE, RDX_ACQUIRE_ENTER);
     HRESULT query_status = (*plugin)->QueryInterface(
         plugin,
         CFUUIDGetUUIDBytes(kIOSCSITaskDeviceInterfaceID),
         (LPVOID *)out_interface
     );
+    rdx_record_acquisition_progress(RDX_ACQUIRE_LEGACY_INTERFACE, RDX_ACQUIRE_RETURN);
     if (FAILED(query_status) || *out_interface == NULL) {
         rdx_record_acquisition_diagnostic(RDX_ACQUIRE_LEGACY_INTERFACE,
             RDX_MACOS_STATUS_TRANSPORT_UNAVAILABLE, RDX_ACQUIRE_CODE_HRESULT,
@@ -585,12 +589,15 @@ static rdx_macos_status rdx_obtain_scsi_exclusive(
         return RDX_MACOS_STATUS_OK;
     }
 #endif
+    rdx_record_acquisition_progress(RDX_ACQUIRE_LEGACY_EXCLUSIVE, RDX_ACQUIRE_ENTER);
     if (!(*interface)->IsExclusiveAccessAvailable(interface)) {
+        rdx_record_acquisition_progress(RDX_ACQUIRE_LEGACY_EXCLUSIVE, RDX_ACQUIRE_RETURN);
         rdx_record_acquisition_diagnostic(RDX_ACQUIRE_LEGACY_EXCLUSIVE,
             RDX_MACOS_STATUS_BUSY, RDX_ACQUIRE_CODE_NONE, 0);
         return RDX_MACOS_STATUS_BUSY;
     }
     IOReturn io_status = (*interface)->ObtainExclusiveAccess(interface);
+    rdx_record_acquisition_progress(RDX_ACQUIRE_LEGACY_EXCLUSIVE, RDX_ACQUIRE_RETURN);
     if (io_status != kIOReturnSuccess) {
         rdx_record_acquisition_diagnostic(RDX_ACQUIRE_LEGACY_EXCLUSIVE,
             rdx_status_from_io(io_status, RDX_MACOS_STATUS_TRANSPORT_UNAVAILABLE),

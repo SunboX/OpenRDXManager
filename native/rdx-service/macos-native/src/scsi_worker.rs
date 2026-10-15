@@ -296,7 +296,7 @@ impl MacScsiWorkerLease {
             Ok((kind, payload))
         })();
         if let Err(error) = &result {
-            self.diagnostics.failure(
+            self.diagnostics.parent_read_failure(
                 if *error == NativeError::InvalidRequest {
                     frame_phase
                 } else {

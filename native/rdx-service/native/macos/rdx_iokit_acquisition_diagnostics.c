@@ -6,8 +6,21 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
 
 static _Atomic bool rdx_acquisition_diagnostics_enabled = false;
+
+/** Emits one private fixed progress record without changing caller errno or results. */
+static void rdx_emit_acquisition_progress(
+    FILE *stream, rdx_acquisition_stage stage, rdx_acquisition_progress_event event
+);
+
+/** Records only an opted-in native boundary, never completion status or device values. */
+void rdx_record_acquisition_progress(
+    rdx_acquisition_stage stage, rdx_acquisition_progress_event event
+) {
+    rdx_emit_acquisition_progress(stderr, stage, event);
+}
 
 /** Enables fixed acquisition diagnostics only for an explicitly opted-in process. */
 void rdx_macos_enable_acquisition_diagnostics(void) {
@@ -35,6 +48,27 @@ static const char *rdx_acquisition_stage_name(rdx_acquisition_stage stage) {
         case RDX_ACQUIRE_USB_EXCEPTION: return "usb-acquire-exception";
         default: return "unknown";
     }
+}
+
+/** Emits one bounded enum-only boundary; diagnostic I/O never replaces caller errno. */
+static void rdx_emit_acquisition_progress(
+    FILE *stream, rdx_acquisition_stage stage, rdx_acquisition_progress_event event
+) {
+    const int saved_errno = errno;
+    if (!atomic_load_explicit(&rdx_acquisition_diagnostics_enabled, memory_order_relaxed) ||
+        (unsigned int)stage >= RDX_ACQUIRE_USB_EXCEPTION ||
+        (event != RDX_ACQUIRE_ENTER && event != RDX_ACQUIRE_RETURN)) {
+        return;
+    }
+    char output[192];
+    int length = snprintf(output, sizeof(output),
+        "{\"diagnostic\":\"native-acquisition-progress\",\"substage\":\"%s\",\"event\":\"%s\"}\n",
+        rdx_acquisition_stage_name(stage), event == RDX_ACQUIRE_ENTER ? "enter" : "return");
+    if (length > 0 && (size_t)length < sizeof(output)) {
+        (void)fwrite(output, 1, (size_t)length, stream);
+        (void)fflush(stream);
+    }
+    errno = saved_errno;
 }
 
 /** Formats fixed names and numeric native codes, never NSError text or device data. */
@@ -88,6 +122,55 @@ void rdx_record_interface_error_evidence(const rdx_interface_error_evidence *evi
 }
 
 #if defined(RDX_MACOS_TEST_HOOKS)
+/** Exercises the actual emitter using a private temporary stream, with no stderr redirection. */
+static bool rdx_test_acquisition_progress(void) {
+    FILE *stream = tmpfile();
+    if (stream == NULL) { return false; }
+    errno = EDOM;
+    rdx_emit_acquisition_progress(stream, RDX_ACQUIRE_USB_OPEN_INTERFACE, RDX_ACQUIRE_ENTER);
+    bool valid = errno == EDOM && ftell(stream) == 0;
+    atomic_store_explicit(&rdx_acquisition_diagnostics_enabled, true, memory_order_relaxed);
+    errno = ERANGE;
+    rdx_emit_acquisition_progress(stream, RDX_ACQUIRE_USB_OPEN_INTERFACE, RDX_ACQUIRE_ENTER);
+    valid = valid && errno == ERANGE;
+    rdx_emit_acquisition_progress(stream, RDX_ACQUIRE_USB_OPEN_INTERFACE, RDX_ACQUIRE_RETURN);
+    rdx_emit_acquisition_progress(stream, (rdx_acquisition_stage)999, RDX_ACQUIRE_ENTER);
+    rdx_emit_acquisition_progress(stream, RDX_ACQUIRE_USB_OPEN_INTERFACE, (rdx_acquisition_progress_event)0);
+    FILE *read_only = fopen("/dev/null", "r");
+    if (read_only != NULL) {
+        errno = EDOM;
+        rdx_emit_acquisition_progress(read_only, RDX_ACQUIRE_USB_CAPTURE, RDX_ACQUIRE_ENTER);
+        valid = valid && ferror(read_only) != 0 && errno == EDOM;
+        fclose(read_only);
+    } else { valid = false; }
+    atomic_store_explicit(&rdx_acquisition_diagnostics_enabled, false, memory_order_relaxed);
+    rewind(stream);
+    char actual[512] = {0};
+    size_t length = fread(actual, 1, sizeof(actual) - 1, stream);
+    const char *expected =
+        "{\"diagnostic\":\"native-acquisition-progress\",\"substage\":\"usb-open-interface\",\"event\":\"enter\"}\n"
+        "{\"diagnostic\":\"native-acquisition-progress\",\"substage\":\"usb-open-interface\",\"event\":\"return\"}\n";
+    valid = valid && length == strlen(expected) && strcmp(actual, expected) == 0;
+    // Every eligible fixed boundary fits in one parser line, including a full successful path.
+    atomic_store_explicit(&rdx_acquisition_diagnostics_enabled, true, memory_order_relaxed);
+    for (unsigned int stage = 0; stage < RDX_ACQUIRE_USB_EXCEPTION; ++stage) {
+        rdx_emit_acquisition_progress(stream, (rdx_acquisition_stage)stage, RDX_ACQUIRE_ENTER);
+        rdx_emit_acquisition_progress(stream, (rdx_acquisition_stage)stage, RDX_ACQUIRE_RETURN);
+    }
+    atomic_store_explicit(&rdx_acquisition_diagnostics_enabled, false, memory_order_relaxed);
+    fseek(stream, (long)length, SEEK_SET);
+    unsigned int lines = 0;
+    while (fgets(actual, sizeof(actual), stream) != NULL) {
+        size_t count = strlen(actual);
+        valid = valid && count < 192 && count > 0 && actual[count - 1] == '\n' &&
+            strstr(actual, "\"substage\":\"unknown\"") == NULL;
+        lines += 1;
+    }
+    valid = valid && lines == 2 * RDX_ACQUIRE_USB_EXCEPTION;
+    fclose(stream);
+    return valid;
+}
+
 /** Proves default-off output and bounded enum-only formatting without native I/O. */
 bool rdx_macos_test_acquisition_diagnostics_contract(void) {
     if (atomic_load_explicit(&rdx_acquisition_diagnostics_enabled, memory_order_relaxed)) {
@@ -104,7 +187,7 @@ bool rdx_macos_test_acquisition_diagnostics_contract(void) {
     }
     int length = rdx_format_acquisition_diagnostic(output, RDX_ACQUIRE_USB_CAPTURE,
         RDX_MACOS_STATUS_TRANSPORT_UNAVAILABLE, RDX_ACQUIRE_CODE_IORETURN, INT64_MAX);
-    return length > 0 && length < 256 &&
+    return rdx_test_acquisition_progress() && length > 0 && length < 256 &&
         strstr(output, "\"substage\":\"usb-capture-device\"") != NULL &&
         strstr(output, "\"nativeCodeKind\":\"ioreturn\"") != NULL;
 }

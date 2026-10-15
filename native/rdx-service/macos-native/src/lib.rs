@@ -63,6 +63,8 @@ mod scsi_worker_interface;
 #[cfg(target_os = "macos")]
 mod scsi_worker_io;
 #[cfg(target_os = "macos")]
+mod scsi_worker_progress;
+#[cfg(target_os = "macos")]
 mod scsi_worker_startup;
 #[cfg(target_os = "macos")]
 pub use scsi_worker_startup::{WorkerStartupFailure, take_last_worker_startup_failure};
