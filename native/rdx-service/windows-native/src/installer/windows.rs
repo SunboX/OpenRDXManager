@@ -285,6 +285,13 @@ pub(super) fn apply(command: LocalInstallCommand) -> Result<(), NativeError> {
                 let administrator_sid = installer_sid()?;
                 let candidate =
                     diagnostic(Stage::InstalledRuntime, prepare_runtime(&administrator_sid))?;
+                // Provision the private leaf while elevated, after parent policy is
+                // final. Retain its ancestry through admission and enrollment;
+                // existing storage is verified without rewriting backup records.
+                let _manufacturing_store = diagnostic(
+                    Stage::ManufacturingStorage,
+                    crate::manufacturing_storage::ManufacturingStore::open(),
+                )?;
                 let pid = command
                     .manager_process_id()
                     .ok_or(NativeError::InvalidRequest)?

@@ -126,6 +126,10 @@ ${StrStr}
   ${If} $R5 != ""
     StrCpy $R3 "installed-runtime"
   ${EndIf}
+  ${StrStr} $R5 "$1" "phase=manufacturing-storage reason="
+  ${If} $R5 != ""
+    StrCpy $R3 "manufacturing-storage"
+  ${EndIf}
   ${StrStr} $R5 "$1" "phase=manager-access reason="
   ${If} $R5 != ""
     StrCpy $R3 "manager-access"

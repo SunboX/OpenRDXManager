@@ -469,3 +469,6 @@ fn io_error(_: std::io::Error) -> NativeError {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod installer_tests;

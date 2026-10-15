@@ -51,10 +51,22 @@ impl Policy {
         };
         let mut policy = Self::from_sddl(&STORAGE_SDDL.replacen("O:BA", &format!("O:{owner}"), 1))?;
         policy.accepted.clear();
+        // These three unqualified ALLOW ACEs commute: accept their exact six
+        // orders without accepting a different trustee, mask, flag or ACE count.
+        // Existing protected records are verified in place, never normalized.
         for owner in ["BA", "SY", "LS"] {
-            let descriptor =
-                Self::from_sddl(&STORAGE_SDDL.replacen("O:BA", &format!("O:{owner}"), 1))?;
-            policy.accepted.extend(descriptor.accepted);
+            for order in [
+                ["SY", "BA", "LS"],
+                ["SY", "LS", "BA"],
+                ["BA", "SY", "LS"],
+                ["BA", "LS", "SY"],
+                ["LS", "SY", "BA"],
+                ["LS", "BA", "SY"],
+            ] {
+                let entries = order.map(|sid| format!("(A;;FA;;;{sid})")).concat();
+                let descriptor = Self::from_sddl(&format!("O:{owner}D:P{entries}"))?;
+                policy.accepted.extend(descriptor.accepted);
+            }
         }
         Ok(policy)
     }
@@ -178,4 +190,65 @@ fn descriptor_text(descriptor: PSECURITY_DESCRIPTOR) -> Result<String, NativeErr
     let text = LocalAllocation(text.0.cast());
     // SAFETY: conversion returns a terminated UTF-16 LocalAlloc string.
     unsafe { PWSTR(text.0.cast()).to_string() }.map_err(|_| NativeError::AccessDenied)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Equivalent allow-only private policies have identical authority in every ACE order.
+    #[test]
+    fn production_accepts_every_exact_private_ace_order() {
+        let policy = Policy::production().unwrap();
+        for owner in ["BA", "SY", "LS"] {
+            for order in [
+                ["SY", "BA", "LS"],
+                ["SY", "LS", "BA"],
+                ["BA", "SY", "LS"],
+                ["BA", "LS", "SY"],
+                ["LS", "SY", "BA"],
+                ["LS", "BA", "SY"],
+            ] {
+                let mut text = format!("O:{owner}D:P");
+                for principal in order {
+                    text.push_str(&format!("(A;;FA;;;{principal})"));
+                }
+                let candidate = Policy::from_sddl(&text).unwrap();
+                assert!(policy.accepted.contains(&candidate.accepted[0]), "{text}");
+            }
+        }
+    }
+
+    /// Current-user fixtures retain their sole exact descriptor instead of production variants.
+    #[test]
+    fn current_user_policy_remains_a_single_exact_descriptor() {
+        let policy = Policy::current_user().unwrap();
+        assert_eq!(policy.accepted.len(), 1);
+        let production = Policy::production().unwrap();
+        assert!(
+            production
+                .accepted
+                .iter()
+                .all(|text| !policy.accepted.contains(text))
+        );
+    }
+
+    /// Reordering compatibility never admits changed authority, inheritance or ownership.
+    #[test]
+    fn production_rejects_changed_private_descriptor_authority() {
+        let policy = Policy::production().unwrap();
+        for text in [
+            "O:BUD:P(A;;FA;;;SY)(A;;FA;;;LS)(A;;FA;;;BA)",
+            "O:BAD:(A;;FA;;;SY)(A;;FA;;;LS)(A;;FA;;;BA)",
+            "O:BAD:P(A;OICI;FA;;;SY)(A;;FA;;;LS)(A;;FA;;;BA)",
+            "O:BAD:P(A;;FA;;;SY)(A;;FR;;;LS)(A;;FA;;;BA)",
+            "O:BAD:P(A;;FA;;;SY)(D;;FA;;;LS)(A;;FA;;;BA)",
+            "O:BAD:P(A;;FA;;;SY)(A;;FA;;;LS)",
+            "O:BAD:P(A;;FA;;;SY)(A;;FA;;;LS)(A;;FA;;;LS)",
+            "O:BAD:P(A;;FA;;;SY)(A;;FA;;;LS)(A;;FA;;;BA)(A;;FR;;;BU)",
+        ] {
+            let candidate = Policy::from_sddl(text).unwrap();
+            assert!(!policy.accepted.contains(&candidate.accepted[0]), "{text}");
+        }
+    }
 }

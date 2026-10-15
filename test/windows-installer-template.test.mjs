@@ -114,3 +114,17 @@ test('StdUtils launch diagnostics reconstruct closed result tokens without forwa
     assert.doesNotMatch(sanitizer, /StrCpy \$\{OUTPUT\} "?\$\{INPUT\}/u)
     assert.match(hook, /ExecShellAsUser[^\n]*\n\s*!insertmacro OpenRDXSanitizeLaunchResult "\$0" \$R4\s*\n\s*!insertmacro OpenRDXWriteDiagnostic "OpenRDX Manager launch: result=\$R4"/u)
 })
+
+test('Windows installation retains the private backup store before admission and publishes closed storage errors', async () => {
+    const native = await readFile(new URL('../native/rdx-service/windows-native/src/installer/windows.rs', import.meta.url), 'utf8')
+    const phases = await readFile(new URL('../native/rdx-service/windows-native/src/installer/diagnostics.rs', import.meta.url), 'utf8')
+    const hook = await source('windows-service.nsh')
+    const install = native.slice(native.indexOf('let result = (|| {'), native.indexOf('if let Err(error) = result'))
+    const store = install.indexOf('let _manufacturing_store =')
+    assert.ok(store > install.indexOf('prepare_runtime(&administrator_sid)'))
+    assert.ok(store < install.indexOf('for action in ["provision", "verify"]'))
+    assert.match(install, /let _manufacturing_store = diagnostic\(\s*Stage::ManufacturingStorage,\s*crate::manufacturing_storage::ManufacturingStore::open\(\),\s*\)\?;/u)
+    assert.ok(install.indexOf('commit_enrollment(') > store)
+    assert.ok(phases.includes('=> "manufacturing-storage"'))
+    assert.ok(hook.includes('"phase=manufacturing-storage reason="'))
+})

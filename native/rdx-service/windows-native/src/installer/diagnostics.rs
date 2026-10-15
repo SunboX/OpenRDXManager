@@ -50,6 +50,8 @@ pub(crate) enum InstallStage {
     RuntimeArtifacts,
     /// Sanitized installed runtime history checkpoint.
     RuntimeHistory,
+    /// Sanitized private manufacturing storage checkpoint.
+    ManufacturingStorage,
     /// Sanitized manager-access checkpoint.
     ManagerAccess,
     /// Sanitized manager runtime checkpoint.
@@ -108,6 +110,7 @@ impl InstallStage {
             Self::RuntimeInventory => "runtime-inventory",
             Self::RuntimeArtifacts => "runtime-artifacts",
             Self::RuntimeHistory => "runtime-history",
+            Self::ManufacturingStorage => "manufacturing-storage",
             Self::ManagerAccess => "manager-access",
             Self::ManagerRuntime => "manager-runtime",
             Self::ManagerProcess => "manager-process",
@@ -216,6 +219,13 @@ mod tests {
                 Err(NativeError::AccessDenied)
             );
         }
+        assert_eq!(
+            failure(
+                InstallStage::ManufacturingStorage,
+                NativeError::AccessDenied
+            ),
+            "OpenRDX native failure: phase=manufacturing-storage reason=AccessDenied"
+        );
         assert_eq!(diagnostic(InstallStage::InstalledRuntime, Ok(7)), Ok(7));
         assert_eq!(
             diagnostic::<()>(InstallStage::ManagerAccess, Err(NativeError::Busy)),
