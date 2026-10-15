@@ -108,7 +108,7 @@ test('Windows token evidence captures only sanitized wrapper stdout, preserves n
         assert.ok(workflow.includes(`node scripts/verify-windows-restricted-token-probe.mjs${mode} | Tee-Object -FilePath out/verification/windows-token-${file}.log`))
     }
     const capture = workflow.slice(workflow.indexOf('- name: Observe restricted Windows token'), workflow.indexOf('- name: Verify Windows PowerShell installer boundary'))
-    assert.equal((capture.match(/\$probeExitCode = \$LASTEXITCODE\s*exit \$probeExitCode/gu) ?? []).length, 7)
+    assert.equal((capture.match(/\$probeExitCode = \$LASTEXITCODE\s*exit \$probeExitCode/gu) ?? []).length, 8)
     assert.match(capture, /if: always\(\) && matrix\.platform == 'win'/u)
     assert.match(capture, /name: windows-token-diagnostics-\$\{\{ matrix\.arch \}\}/u)
     assert.match(capture, /retention-days: 3/u)

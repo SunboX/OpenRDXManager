@@ -10,6 +10,8 @@ use fixture::{Fixture, Variant};
 mod actual_token_control;
 #[path = "creation_ownership.rs"]
 mod creation_ownership;
+#[path = "debugger_control.rs"]
+mod debugger_control;
 #[path = "desktop_context.rs"]
 mod desktop_context;
 #[path = "effective_context.rs"]

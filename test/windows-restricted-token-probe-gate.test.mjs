@@ -86,5 +86,5 @@ test('token probe gate passes exact successful execution and sanitizes launch er
             throw new Error('private launch details')
         }
     })
-    assert.deepEqual(failed, { exitCode: 1, passed: false, facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], processControl: [], objectMatrix: [], actualControl: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'execution', failureReason: 'launch' })
+    assert.deepEqual(failed, { exitCode: 1, passed: false, facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], processControl: [], objectMatrix: [], actualControl: [], debuggerControl: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'execution', failureReason: 'launch' })
 })
