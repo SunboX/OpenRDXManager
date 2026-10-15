@@ -5,6 +5,7 @@ import { execFile } from 'node:child_process'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify, stripVTControlCharacters } from 'node:util'
+import { managerSourceEvidence } from './windows-manager-source-evidence.mjs'
 import { debuggerControlEvidence } from './windows-debugger-control-evidence.mjs'
 import { actualTokenControlEvidence } from './windows-actual-token-control-evidence.mjs'
 import { objectMatrixEvidence } from './windows-object-dacl-matrix-evidence.mjs'
@@ -15,6 +16,7 @@ const execFileAsync = promisify(execFile)
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 const maximumOutputBytes = 65_536
 const testNames = Object.freeze({
+    'manager-source-proof': 'service_acl::windows_impl::restricted_token_probe::medium::child::manager_source_proof::native_authenticated_manager_source_proof',
     'debugger-control': 'service_acl::windows_impl::restricted_token_probe::medium::child::debugger_control::native_owned_medium_debugger_control',
     'actual-token-dacl-control': 'service_acl::windows_impl::restricted_token_probe::medium::child::actual_token_control::native_actual_child_token_dacl_control',
     baseline: 'service_acl::windows_impl::restricted_token_probe::native_restricted_token_observations',
@@ -57,9 +59,12 @@ const effectiveContextKeys = new Set([
  */
 function closedEvidence(stdout, stderr) {
     /** @param {string} reason Fixed rejection token. @returns {object} Empty fail-closed diagnostics. */
-    const reject = (reason) => ({ facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], processControl: [], objectMatrix: [], actualControl: [], debuggerControl: [], stage: null, childExit: null, observedFailure: false, seen: new Map(), reason })
+    const reject = (reason) => ({ facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], processControl: [], objectMatrix: [], actualControl: [], debuggerControl: [], managerSource: [], stage: null, childExit: null, observedFailure: false, seen: new Map(), reason })
     if (typeof stdout !== 'string' || typeof stderr !== 'string') return reject('output-type')
     if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) > maximumOutputBytes) return reject('output-bound')
+    const managerEvidence = managerSourceEvidence(stripVTControlCharacters(stdout).split(/\r?\n/u))
+    if (managerEvidence.reason !== null) return reject(managerEvidence.reason)
+    const managerSource = managerEvidence.lines
     const debuggerEvidence = debuggerControlEvidence(stripVTControlCharacters(stdout).split(/\r?\n/u))
     if (debuggerEvidence.reason !== null) return reject(debuggerEvidence.reason)
     const debuggerControl = debuggerEvidence.lines
@@ -182,7 +187,7 @@ function closedEvidence(stdout, stderr) {
             }
         }
     }
-    return { facts, context, mandatoryContext, libraryContext, objectContext, effectiveContext, sourceControl, sourceEvidence, processControl, processEvidence, objectMatrix, matrixEvidence, actualControl, actualEvidence, debuggerControl, debuggerEvidence, stage, childExit, observedFailure, seen, reason: null }
+    return { facts, context, mandatoryContext, libraryContext, objectContext, effectiveContext, sourceControl, sourceEvidence, processControl, processEvidence, objectMatrix, matrixEvidence, actualControl, actualEvidence, debuggerControl, debuggerEvidence, managerSource, managerEvidence, stage, childExit, observedFailure, seen, reason: null }
 }
 
 /**
@@ -191,7 +196,7 @@ function closedEvidence(stdout, stderr) {
  * @param {string} stdout - Bounded Cargo standard output.
  * @param {string} stderr - Bounded Cargo standard error, never forwarded.
  * @param {object} [options] - Fixed experiment selection.
- * @param {'baseline'|'medium'|'child'|'source-control'|'process-dacl-control'|'object-dacl-controls'|'actual-token-dacl-control'|'debugger-control'} [options.mode] - Exact approved experiment.
+ * @param {'baseline'|'medium'|'child'|'source-control'|'process-dacl-control'|'object-dacl-controls'|'actual-token-dacl-control'|'debugger-control'|'manager-source-proof'} [options.mode] - Exact approved experiment.
  * @returns {{passed: boolean, facts: string[], reason: string}} Exact execution verdict and closed rejection reason.
  */
 export function validateRestrictedTokenProbeOutput(stdout, stderr, { mode = 'baseline' } = {}) {
@@ -200,6 +205,8 @@ export function validateRestrictedTokenProbeOutput(stdout, stderr, { mode = 'bas
     if (!Object.hasOwn(testNames, mode)) return failed('mode')
     const closed = closedEvidence(stdout, stderr)
     if (closed.reason !== null) return failed(closed.reason)
+    if (mode !== 'manager-source-proof' && closed.managerSource.length !== 0) return failed('manager-source-mode')
+    if (mode === 'manager-source-proof' && !closed.managerEvidence.complete) return failed('manager-source-evidence')
     if (mode !== 'debugger-control' && closed.debuggerControl.length !== 0) return failed('debugger-control-mode')
     if (mode === 'debugger-control' && ([closed.facts, closed.context, closed.mandatoryContext, closed.libraryContext, closed.objectContext, closed.effectiveContext, closed.sourceControl, closed.processControl, closed.objectMatrix, closed.actualControl].some((lines) => lines.length !== 0) || closed.stage !== null || closed.childExit !== null)) return failed('debugger-control-cross-mode')
     if (mode === 'debugger-control' && (!closed.debuggerEvidence.complete || !closed.debuggerEvidence.reproduced || closed.debuggerEvidence.changed)) return failed('debugger-control-evidence')
@@ -223,7 +230,7 @@ export function validateRestrictedTokenProbeOutput(stdout, stderr, { mode = 'bas
     const namedResults = lines.filter((line) => line.startsWith('test ') && !line.startsWith('test result:'))
     if (namedResults.length !== 1 || namedResults[0] !== `test ${testNames[mode]} ... ok`) return failed('named-result')
     const { seen, facts } = closed
-    if (!['source-control', 'process-dacl-control', 'object-dacl-controls', 'actual-token-dacl-control', 'debugger-control'].includes(mode) && (seen.get('source-open') !== true || seen.get('derived-created') !== true || seen.get('query-ok') !== true)) return failed('query-facts')
+    if (!['manager-source-proof', 'source-control', 'process-dacl-control', 'object-dacl-controls', 'actual-token-dacl-control', 'debugger-control'].includes(mode) && (seen.get('source-open') !== true || seen.get('derived-created') !== true || seen.get('query-ok') !== true)) return failed('query-facts')
     if (mode === 'medium' && (Object.entries(mediumRequirements).some(([key, expected]) => seen.get(key) !== expected) || !seen.has('elevation-type-default') || !seen.has('elevation-type-limited') || Number(seen.get('elevation-type-default')) + Number(seen.get('elevation-type-limited')) !== 1)) return failed('medium-facts')
     if (mode === 'child' && Object.entries(childRequirements).some(([key, expected]) => seen.get(key) !== expected)) return failed('child-facts')
     return { passed: true, facts, reason: 'none' }
@@ -253,30 +260,30 @@ async function executeProbe(command, args, options) {
  * Requires one exact native test plus successful closed kernel-query evidence.
  * @param {object} [options] - Test-only execution dependency.
  * @param {Function} [options.execute] - Awaited executor; receives only the fixed command/options.
- * @param {'baseline'|'medium'|'child'|'source-control'|'process-dacl-control'|'object-dacl-controls'|'actual-token-dacl-control'|'debugger-control'} [options.mode] - Fixed experiment, never an arbitrary native filter.
+ * @param {'baseline'|'medium'|'child'|'source-control'|'process-dacl-control'|'object-dacl-controls'|'actual-token-dacl-control'|'debugger-control'|'manager-source-proof'} [options.mode] - Fixed experiment, never an arbitrary native filter.
  * @returns {Promise<object>} Fail-closed verdict preserving genuine Cargo failure and separately labeling execution errors.
  */
 export async function runRestrictedTokenProbe({ execute = executeProbe, mode = 'baseline' } = {}) {
     try {
-        if (!Object.hasOwn(testNames, mode)) return { exitCode: 1, passed: false, facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], processControl: [], objectMatrix: [], actualControl: [], debuggerControl: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'evidence', failureReason: 'mode' }
+        if (!Object.hasOwn(testNames, mode)) return { exitCode: 1, passed: false, facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], processControl: [], objectMatrix: [], actualControl: [], debuggerControl: [], managerSource: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'evidence', failureReason: 'mode' }
         // Serial libtest prints the test-name prefix before nocapture output. Two fixed
         // threads keep the exact standalone name/result and diagnostic line contract.
         const cargoArguments = Object.freeze(['test', '--manifest-path', 'native/rdx-service/windows-native/Cargo.toml', '--locked', '--lib', testNames[mode], '--', '--ignored', '--exact', '--nocapture', '--test-threads=2'])
         const result = await execute('cargo', cargoArguments, { cwd: projectRoot, shell: false, windowsHide: true, encoding: 'utf8', maxBuffer: maximumOutputBytes, timeout: 120_000 })
-        if (result.executionError || !Number.isInteger(result.exitCode) || result.exitCode < 0 || result.exitCode > 255) return { exitCode: 1, passed: false, facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], processControl: [], objectMatrix: [], actualControl: [], debuggerControl: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'execution', failureReason: ['timeout', 'buffer', 'signal', 'launch'].includes(result.executionError) ? result.executionError : 'launch' }
+        if (result.executionError || !Number.isInteger(result.exitCode) || result.exitCode < 0 || result.exitCode > 255) return { exitCode: 1, passed: false, facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], processControl: [], objectMatrix: [], actualControl: [], debuggerControl: [], managerSource: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'execution', failureReason: ['timeout', 'buffer', 'signal', 'launch'].includes(result.executionError) ? result.executionError : 'launch' }
         const closed = closedEvidence(result.stdout, result.stderr)
-        const diagnostics = { facts: closed.facts, context: closed.context, mandatoryContext: closed.mandatoryContext, libraryContext: closed.libraryContext, objectContext: closed.objectContext, effectiveContext: closed.effectiveContext, sourceControl: closed.sourceControl, processControl: closed.processControl, objectMatrix: closed.objectMatrix, actualControl: closed.actualControl, debuggerControl: closed.debuggerControl, stage: closed.stage, childExit: closed.childExit, cargoExitCode: result.exitCode }
+        const diagnostics = { facts: closed.facts, context: closed.context, mandatoryContext: closed.mandatoryContext, libraryContext: closed.libraryContext, objectContext: closed.objectContext, effectiveContext: closed.effectiveContext, sourceControl: closed.sourceControl, processControl: closed.processControl, objectMatrix: closed.objectMatrix, actualControl: closed.actualControl, debuggerControl: closed.debuggerControl, managerSource: closed.managerSource, stage: closed.stage, childExit: closed.childExit, cargoExitCode: result.exitCode }
         if (result.exitCode !== 0) return { exitCode: result.exitCode, passed: false, ...diagnostics, failureClass: 'native-exit', failureReason: 'cargo-nonzero' }
         const evidence = validateRestrictedTokenProbeOutput(result.stdout, result.stderr, { mode })
         return { exitCode: evidence.passed ? 0 : 1, passed: evidence.passed, ...diagnostics, failureClass: evidence.passed ? 'none' : 'evidence', failureReason: evidence.reason }
     } catch {
-        return { exitCode: 1, passed: false, facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], processControl: [], objectMatrix: [], actualControl: [], debuggerControl: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'execution', failureReason: 'launch' }
+        return { exitCode: 1, passed: false, facts: [], context: [], mandatoryContext: [], libraryContext: [], objectContext: [], effectiveContext: [], sourceControl: [], processControl: [], objectMatrix: [], actualControl: [], debuggerControl: [], managerSource: [], stage: null, childExit: null, cargoExitCode: null, failureClass: 'execution', failureReason: 'launch' }
     }
 }
 
 /** @returns {Promise<void>} Runs only the fixed gate and emits sanitized evidence. */
 async function main() {
-    const mode = process.argv.length === 2 ? 'baseline' : process.argv.length === 3 && process.argv[2] === '--medium' ? 'medium' : process.argv.length === 3 && process.argv[2] === '--child' ? 'child' : process.argv.length === 3 && process.argv[2] === '--source-control' ? 'source-control' : process.argv.length === 3 && process.argv[2] === '--process-dacl-control' ? 'process-dacl-control' : process.argv.length === 3 && process.argv[2] === '--object-dacl-controls' ? 'object-dacl-controls' : process.argv.length === 3 && process.argv[2] === '--actual-token-dacl-control' ? 'actual-token-dacl-control' : process.argv.length === 3 && process.argv[2] === '--debugger-control' ? 'debugger-control' : null
+    const mode = process.argv.length === 2 ? 'baseline' : process.argv.length === 3 && process.argv[2] === '--medium' ? 'medium' : process.argv.length === 3 && process.argv[2] === '--child' ? 'child' : process.argv.length === 3 && process.argv[2] === '--source-control' ? 'source-control' : process.argv.length === 3 && process.argv[2] === '--process-dacl-control' ? 'process-dacl-control' : process.argv.length === 3 && process.argv[2] === '--object-dacl-controls' ? 'object-dacl-controls' : process.argv.length === 3 && process.argv[2] === '--actual-token-dacl-control' ? 'actual-token-dacl-control' : process.argv.length === 3 && process.argv[2] === '--debugger-control' ? 'debugger-control' : process.argv.length === 3 && process.argv[2] === '--manager-source-proof' ? 'manager-source-proof' : null
     if (mode === null) {
         process.stderr.write('openrdx-token-probe-gate passed=false arguments-rejected=true\n')
         process.exitCode = 1
@@ -293,6 +300,7 @@ async function main() {
     for (const line of result.processControl) process.stdout.write(`${line}\n`)
     for (const line of result.objectMatrix) process.stdout.write(`${line}\n`)
     for (const line of result.actualControl) process.stdout.write(`${line}\n`)
+    for (const line of result.managerSource) process.stdout.write(`${line}\n`)
     for (const line of result.debuggerControl) process.stdout.write(`${line}\n`)
     if (result.stage !== null) process.stdout.write(`${result.stage}\n`)
     if (result.childExit !== null) process.stdout.write(`${result.childExit}\n`)
