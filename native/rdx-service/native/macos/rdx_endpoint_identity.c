@@ -119,13 +119,18 @@ static bool rdx_manager_marker_matches(CFDictionaryRef information, const char *
     return marker == NULL;
 }
 
-bool rdx_macos_peer_identity_matches(
+/** Shares the unchanged full seal proof between UID-only and retained-token callers. */
+static bool rdx_peer_identity_matches(
     int peer,
     const char *requirement_text,
     const char *executable_path,
     uint32_t expected_uid,
-    uint32_t *out_user_id
+    uint32_t *out_user_id,
+    uint32_t *out_audit_token
 ) {
+    if (out_user_id == NULL || requirement_text == NULL || executable_path == NULL) { return false; }
+    *out_user_id = 0;
+    if (out_audit_token != NULL) { memset(out_audit_token, 0, sizeof(audit_token_t)); }
     rdx_diagnostic = (rdx_macos_identity_diagnostic){"peer-credentials", 0, 0, 0};
     struct xucred credentials;
     socklen_t credentials_length = (socklen_t)sizeof(credentials);
@@ -234,6 +239,7 @@ bool rdx_macos_peer_identity_matches(
     if (authorized) {
         rdx_identity_step("verified", 0);
         *out_user_id = credentials.cr_uid;
+        if (out_audit_token != NULL) { memcpy(out_audit_token, &audit_token, sizeof(audit_token)); }
     }
 
 cleanup:
@@ -255,6 +261,25 @@ cleanup:
         CFRelease(requirement_string);
     }
     return authorized;
+}
+
+bool rdx_macos_peer_identity_matches(int peer, const char *requirement_text,
+    const char *executable_path, uint32_t expected_uid, uint32_t *out_user_id) {
+    return rdx_peer_identity_matches(peer, requirement_text, executable_path,
+        expected_uid, out_user_id, NULL);
+}
+
+bool rdx_macos_peer_identity_token(int peer, const char *requirement_text,
+    const char *executable_path, uint32_t expected_uid, uint32_t out_audit_token[8]) {
+    if (out_audit_token == NULL) { return false; }
+    memset(out_audit_token, 0, sizeof(audit_token_t));
+    uint32_t user_id = 0;
+    return rdx_peer_identity_matches(peer, requirement_text, executable_path,
+        expected_uid, &user_id, out_audit_token);
+}
+
+void rdx_macos_identity_note_session_failure(void) {
+    rdx_diagnostic = (rdx_macos_identity_diagnostic){"peer-session", -1, 0, 0};
 }
 
 /** Compare Security's own main executable URL, never a user-authored argv value. */

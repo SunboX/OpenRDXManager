@@ -6,6 +6,7 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
+#include <bsm/libbsm.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <launch.h>
@@ -184,18 +185,20 @@ rdx_macos_status rdx_macos_activate_launchd_listener(const char *requirement_tex
     return RDX_MACOS_STATUS_OK;
 }
 
-rdx_macos_status rdx_macos_accept_launchd_manager_from_listener(
+rdx_macos_status rdx_macos_accept_launchd_manager_with_session(
     int listener,
     const char *requirement_text,
     int *out_socket,
-    uint32_t *out_user_id
+    rdx_macos_peer_session *out_session
 ) {
     if (listener < 0 || requirement_text == NULL || out_socket == NULL ||
-        out_user_id == NULL) {
+        out_session == NULL) {
         return RDX_MACOS_STATUS_INVALID_ARGUMENT;
     }
     *out_socket = -1;
-    *out_user_id = 0;
+    if (out_session->version != RDX_MACOS_PEER_SESSION_VERSION ||
+        out_session->size != sizeof(*out_session)) { return RDX_MACOS_STATUS_INVALID_ARGUMENT; }
+    memset(out_session, 0, sizeof(*out_session));
     const rdx_macos_installation_mode mode = rdx_macos_requirement_installation_mode(requirement_text);
     if (mode == RDX_INSTALLATION_DENIED) { return RDX_MACOS_STATUS_INVALID_ARGUMENT; }
     if (!rdx_listener_is_exact(listener, mode)) {
@@ -217,16 +220,29 @@ rdx_macos_status rdx_macos_accept_launchd_manager_from_listener(
         (void)close(peer);
         return RDX_MACOS_STATUS_NATIVE_FAILURE;
     }
-    struct stat console_status;
-    if (stat("/dev/console", &console_status) != 0 || console_status.st_uid == 0 ||
-        !rdx_macos_peer_identity_matches(peer, requirement_text,
-            "/Applications/OpenRDXManager.app/Contents/MacOS/OpenRDXManager",
-            console_status.st_uid, out_user_id)) {
+    if (!rdx_macos_copy_manager_peer_session(peer, requirement_text, out_session)) {
         (void)close(peer);
         return RDX_MACOS_STATUS_ACCESS_DENIED;
     }
     *out_socket = peer;
     return RDX_MACOS_STATUS_OK;
+}
+
+rdx_macos_status rdx_macos_accept_launchd_manager_from_listener(int listener,
+    const char *requirement_text, int *out_socket, uint32_t *out_user_id) {
+    if (out_user_id == NULL) { return RDX_MACOS_STATUS_INVALID_ARGUMENT; }
+    *out_user_id = 0;
+    rdx_macos_peer_session session = {
+        .version = RDX_MACOS_PEER_SESSION_VERSION, .size = sizeof(session)
+    };
+    const rdx_macos_status status = rdx_macos_accept_launchd_manager_with_session(
+        listener, requirement_text, out_socket, &session);
+    if (status == RDX_MACOS_STATUS_OK) {
+        audit_token_t token;
+        memcpy(&token, session.audit_token, sizeof(token));
+        *out_user_id = audit_token_to_euid(token);
+    }
+    return status;
 }
 
 rdx_macos_status rdx_macos_accept_launchd_manager(

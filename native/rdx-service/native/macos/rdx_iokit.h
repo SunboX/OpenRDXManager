@@ -24,6 +24,14 @@ extern "C" {
 #define RDX_MACOS_MAX_DA_CONTEXTS UINT32_C(8)
 
 typedef uint32_t rdx_macos_status;
+
+/* Independently versioned, private kernel evidence; ABI-four layouts stay unchanged. */
+#define RDX_MACOS_PEER_SESSION_VERSION UINT32_C(1)
+typedef struct {
+    uint32_t version;
+    uint32_t size;
+    uint32_t audit_token[8];
+} rdx_macos_peer_session;
 enum {
     RDX_MACOS_STATUS_OK = 0,
     RDX_MACOS_STATUS_INVALID_ARGUMENT = 1,
@@ -336,6 +344,15 @@ rdx_macos_status rdx_macos_accept_launchd_manager_from_listener(
     const char *requirement_text,
     int *out_socket,
     uint32_t *out_user_id
+);
+/* Full token is transferred only after strict Manager identity and GUI-session proof. */
+rdx_macos_status rdx_macos_accept_launchd_manager_with_session(
+    int listener, const char *requirement_text, int *out_socket,
+    rdx_macos_peer_session *out_session
+);
+/* Rechecks live audit-token-bound code identity and exact original GUI session. */
+rdx_macos_status rdx_macos_revalidate_manager_session(
+    int socket, const char *requirement_text, const rdx_macos_peer_session *expected
 );
 void rdx_macos_free_result(void *result);
 void rdx_macos_get_abi_layout(rdx_macos_abi_layout *out_layout);

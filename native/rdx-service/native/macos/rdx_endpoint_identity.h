@@ -4,6 +4,7 @@
 #define OPENRDX_ENDPOINT_IDENTITY_H
 #include <stdbool.h>
 #include <stdint.h>
+#include "rdx_iokit.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -26,6 +27,24 @@ bool rdx_macos_test_listener_state_is_valid(int family, int type, int options);
 /** Checks current kernel credentials/audit token and strict code seal on one retained socket. */
 bool rdx_macos_peer_identity_matches(int peer, const char *requirement_text,
     const char *executable_path, uint32_t expected_uid, uint32_t *out_user_id);
+/** Internal full-token variant; zeroes output and copies only after the complete seal proof. */
+bool rdx_macos_peer_identity_token(int peer, const char *requirement_text,
+    const char *executable_path, uint32_t expected_uid, uint32_t out_audit_token[8]);
+/** Checks bounded metadata only; this predicate does not authenticate a process. */
+bool rdx_macos_peer_session_record_is_valid(const rdx_macos_peer_session *record);
+/** Checks known session bits and exact console/session identity; unknown bits are tolerated. */
+bool rdx_macos_peer_session_metadata_matches(const rdx_macos_peer_session *record,
+    uint32_t expected_uid, uint32_t session_id, uint32_t attributes, uint32_t console_uid_after);
+/** Compares every kernel word; PID/UID equality alone cannot identify a peer generation. */
+bool rdx_macos_peer_session_same_token(const rdx_macos_peer_session *left,
+    const rdx_macos_peer_session *right);
+/** Derives UID from validated private evidence using the public token getter. */
+uint32_t rdx_macos_peer_session_user_id(const rdx_macos_peer_session *record);
+/** Internal fixed-target Manager verifier; returns private token only on full proof. */
+bool rdx_macos_copy_manager_peer_session(int peer, const char *requirement_text,
+    rdx_macos_peer_session *out_session);
+/** Records one closed session-policy failure without exposing native session metadata. */
+void rdx_macos_identity_note_session_failure(void);
 /** Verifies current process occupies the fixed installed Manager executable path. */
 bool rdx_macos_current_process_is_installed_manager(void);
 /** Verifies current Manager dynamic/static code against the administrator-enrolled generation. */

@@ -5,6 +5,16 @@
 use std::ffi::c_void;
 
 pub(crate) const ABI_VERSION: u32 = 4;
+
+/// Independent version-one session evidence; existing ABI-four records are unchanged.
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct PeerSessionRecord {
+    pub(crate) version: u32,
+    pub(crate) size: u32,
+    pub(crate) audit_token: [u32; 8],
+}
 pub(crate) const MAX_CANDIDATES: usize = 128;
 pub(crate) const MAX_TEXT_BYTES: usize = 128;
 pub(crate) const MAX_TRANSFER_BYTES: usize = 4096;
@@ -255,6 +265,32 @@ pub(crate) struct ScsiLease {
 // SAFETY: declarations mirror the compiler-checked C header; the safe wrapper
 // validates the complete ABI layout before tests and owns every pointer result.
 unsafe extern "C" {
+    pub(crate) fn rdx_macos_peer_session_record_is_valid(record: *const PeerSessionRecord) -> bool;
+    #[cfg(test)]
+    pub(crate) fn rdx_macos_peer_session_metadata_matches(
+        record: *const PeerSessionRecord,
+        expected_uid: u32,
+        session_id: u32,
+        attributes: u32,
+        console_uid_after: u32,
+    ) -> bool;
+    #[cfg(test)]
+    pub(crate) fn rdx_macos_peer_session_same_token(
+        left: *const PeerSessionRecord,
+        right: *const PeerSessionRecord,
+    ) -> bool;
+    pub(crate) fn rdx_macos_peer_session_user_id(record: *const PeerSessionRecord) -> u32;
+    pub(crate) fn rdx_macos_accept_launchd_manager_with_session(
+        listener: std::ffi::c_int,
+        requirement: *const std::ffi::c_char,
+        socket: *mut std::ffi::c_int,
+        session: *mut PeerSessionRecord,
+    ) -> u32;
+    pub(crate) fn rdx_macos_revalidate_manager_session(
+        socket: std::ffi::c_int,
+        requirement: *const std::ffi::c_char,
+        session: *const PeerSessionRecord,
+    ) -> u32;
     pub(crate) fn rdx_macos_log_endpoint_native_code(phase: *const std::ffi::c_char, code: i32);
     pub(crate) fn rdx_macos_log_endpoint_phase(
         phase: *const std::ffi::c_char,
@@ -328,6 +364,7 @@ unsafe extern "C" {
         requirement: *const std::ffi::c_char,
         listener: *mut std::ffi::c_int,
     ) -> u32;
+    #[cfg(test)]
     pub(crate) fn rdx_macos_accept_launchd_manager_from_listener(
         listener: std::ffi::c_int,
         requirement_text: *const std::ffi::c_char,

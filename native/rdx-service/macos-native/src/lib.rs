@@ -30,6 +30,8 @@ mod ownership;
 #[cfg(not(target_os = "macos"))]
 #[path = "ownership_unsupported.rs"]
 mod ownership;
+#[cfg(target_os = "macos")]
+mod peer_session;
 mod recovery_tty;
 mod rom;
 mod rom_inventory;

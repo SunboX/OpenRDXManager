@@ -53,6 +53,10 @@ pub const fn launchd_endpoint_contract() -> LaunchdEndpointContract {
 pub struct ManagerEndpointConnection {
     #[cfg(target_os = "macos")]
     stream: UnixStream,
+    #[cfg(target_os = "macos")]
+    peer_session: crate::peer_session::PeerSession,
+    #[cfg(target_os = "macos")]
+    requirement: CString,
     user_id: u32,
 }
 
@@ -81,39 +85,21 @@ impl LaunchdManagerEndpointListener {
         #[cfg(target_os = "macos")]
         {
             log_endpoint_phase("session-runtime-verification-start", None);
-            if self
-                .requirement
-                .to_bytes()
-                .starts_with(b"identifier \"com.openrdx.manager\" and cdhash ")
-            {
-                let inventory = crate::local_trust::verify_installed_local_trust()?;
-                let expected = local_manager_requirement(&inventory.manager_cd_hash)?;
-                if self.requirement.to_bytes() != expected.as_bytes() {
-                    return Err(NativeError::AccessDenied);
-                }
-            } else {
-                // Team authenticity is proven against the accepted audit token
-                // below. Before admission, independently refuse older/unfused
-                // signed apps and user-owned/writable or redirected runtimes.
-                // Native peer validation then checks the whole nested seal and
-                // refuses sealed local markers on this distinct signed route.
-                rdx_local_trust::verify_protected_signed_macos_runtime()
-                    .map_err(|_| NativeError::AccessDenied)?;
-            }
+            verify_pinned_runtime(&self.requirement)?;
             log_endpoint_phase("session-runtime-verification-ok", None);
             let mut socket = -1;
-            let mut user_id = 0_u32;
+            let mut session = crate::peer_session::PeerSession::output_record();
             // SAFETY: the listener and requirement are owned and live, and C
             // transfers exactly one accepted descriptor only on STATUS_OK.
             let status = unsafe {
-                crate::ffi::rdx_macos_accept_launchd_manager_from_listener(
+                crate::ffi::rdx_macos_accept_launchd_manager_with_session(
                     self.listener.as_raw_fd(),
                     self.requirement.as_ptr(),
                     &mut socket,
-                    &mut user_id,
+                    &mut session,
                 )
             };
-            connection_from_status(status, socket, user_id)
+            connection_from_status(status, socket, session, self.requirement.clone())
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -123,6 +109,25 @@ impl LaunchdManagerEndpointListener {
 }
 
 impl ManagerEndpointConnection {
+    /// Rechecks protected runtime and live exact authenticated peer/session evidence.
+    ///
+    /// # Errors
+    /// Returns sanitized failure on peer exit, ineligible session, protected-runtime
+    /// verification or pinned Manager requirement mismatch.
+    /// This does not create a worker capability or prolong the framed connection lifetime.
+    pub fn revalidate_peer_session(&self) -> Result<(), NativeError> {
+        #[cfg(target_os = "macos")]
+        {
+            verify_pinned_runtime(&self.requirement)?;
+            self.peer_session
+                .revalidate(self.stream.as_raw_fd(), &self.requirement)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Err(NativeError::UnsupportedPlatform)
+        }
+    }
+
     /// Returns the kernel-reported effective peer user identifier.
     #[must_use]
     pub const fn user_id(&self) -> u32 {
@@ -158,6 +163,8 @@ impl ManagerEndpointConnection {
                 .try_clone()
                 .map(|stream| Self {
                     stream,
+                    peer_session: self.peer_session.clone(),
+                    requirement: self.requirement.clone(),
                     user_id: self.user_id,
                 })
                 .map_err(|_| NativeError::Other)
@@ -290,7 +297,8 @@ pub fn activate_launchd_manager_endpoint(
 fn connection_from_status(
     status: u32,
     socket: std::ffi::c_int,
-    user_id: u32,
+    session: crate::ffi::PeerSessionRecord,
+    requirement: CString,
 ) -> Result<ManagerEndpointConnection, NativeError> {
     if status != crate::ffi::STATUS_OK {
         log_endpoint_native_code("accepted-native-status", status as i32);
@@ -302,6 +310,9 @@ fn connection_from_status(
     }
     // SAFETY: successful C accept transfers sole ownership of this descriptor.
     let stream = unsafe { UnixStream::from_raw_fd(socket) };
+    // Adopt the descriptor before validating the record so every malformed result closes it.
+    let peer_session = crate::peer_session::PeerSession::from_record(session)?;
+    let user_id = peer_session.user_id();
     stream
         .set_read_timeout(Some(Duration::from_secs(300)))
         .map_err(|error| {
@@ -314,7 +325,33 @@ fn connection_from_status(
             log_endpoint_native_code("accepted-write-timeout", error.raw_os_error().unwrap_or(-1));
             NativeError::Other
         })?;
-    Ok(ManagerEndpointConnection { stream, user_id })
+    Ok(ManagerEndpointConnection {
+        stream,
+        user_id,
+        peer_session,
+        requirement,
+    })
+}
+
+/// Reuses protected runtime proof without adopting a replacement local Manager requirement.
+#[cfg(target_os = "macos")]
+fn verify_pinned_runtime(requirement: &std::ffi::CStr) -> Result<(), NativeError> {
+    if requirement
+        .to_bytes()
+        .starts_with(b"identifier \"com.openrdx.manager\" and cdhash ")
+    {
+        let inventory = crate::local_trust::verify_installed_local_trust()?;
+        let expected = local_manager_requirement(&inventory.manager_cd_hash)?;
+        if requirement.to_bytes() != expected.as_bytes() {
+            return Err(NativeError::AccessDenied);
+        }
+    } else {
+        // Dynamic team identity remains bound to the accepted audit token by C;
+        // this independently enforces root protection and the strict installed runtime.
+        rdx_local_trust::verify_protected_signed_macos_runtime()
+            .map_err(|_| NativeError::AccessDenied)?;
+    }
+    Ok(())
 }
 
 /// Accepts only canonical signed-team or locally enrolled generation requirements.
@@ -397,5 +434,53 @@ fn log_endpoint_native_code(phase: &str, code: i32) {
     // SAFETY: the bounded internal string remains owned until the log returns.
     unsafe {
         crate::ffi::rdx_macos_log_endpoint_native_code(phase.as_ptr(), code);
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod session_result_tests {
+    use super::*;
+    use std::os::fd::IntoRawFd;
+
+    /// A malformed successful C record must close its transferred descriptor before returning.
+    #[test]
+    fn peer_session_malformed_record_closes_transferred_socket() {
+        let (socket, mut peer) = UnixStream::pair().unwrap();
+        let requirement = CString::new("private-test-requirement").unwrap();
+        let result = connection_from_status(
+            crate::ffi::STATUS_OK,
+            socket.into_raw_fd(),
+            crate::peer_session::PeerSession::output_record(),
+            requirement,
+        );
+        assert_eq!(result.unwrap_err(), NativeError::AccessDenied);
+        peer.set_nonblocking(true).unwrap();
+        assert_eq!(peer.read(&mut [0; 1]).unwrap(), 0);
+    }
+
+    /// Stream duplication retains the full private record and does not expose it through Debug.
+    #[test]
+    fn peer_session_stream_clone_retains_private_evidence() {
+        let (socket, _peer) = UnixStream::pair().unwrap();
+        let record = crate::ffi::PeerSessionRecord {
+            version: 1,
+            size: 40,
+            audit_token: [502, 502, 20, 502, 20, 123, 100_014, 7],
+        };
+        let connection = connection_from_status(
+            crate::ffi::STATUS_OK,
+            socket.into_raw_fd(),
+            record,
+            CString::new("private-test-requirement").unwrap(),
+        )
+        .unwrap();
+        let copy = connection.try_clone().unwrap();
+        assert_eq!(copy.user_id(), 502);
+        assert_eq!(
+            copy.peer_session.user_id(),
+            connection.peer_session.user_id()
+        );
+        assert_eq!(copy.requirement, connection.requirement);
+        assert_eq!(format!("{copy:?}"), "ManagerEndpointConnection(<private>)");
     }
 }

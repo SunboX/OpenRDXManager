@@ -43,6 +43,7 @@ fn main() {
         "rdx_endpoint.c",
         "rdx_endpoint_identity.c",
         "rdx_endpoint_identity.h",
+        "rdx_peer_session.c",
     ] {
         println!("cargo:rerun-if-changed={}", bridge.join(file).display());
     }
@@ -70,6 +71,7 @@ fn main() {
         .file(bridge.join("rdx_usb_bot.c"))
         .file(bridge.join("rdx_endpoint.c"))
         .file(bridge.join("rdx_endpoint_identity.c"))
+        .file(bridge.join("rdx_peer_session.c"))
         .std("c17")
         .warnings(true)
         .extra_warnings(true)

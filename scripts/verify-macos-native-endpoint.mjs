@@ -34,7 +34,7 @@ export async function verifyMacOsNativeEndpoint() {
     }
     const output = join(root, 'out/verification/macos-native/endpoint-peer-verification-test')
     await mkdir(join(root, 'out/verification/macos-native'), { recursive: true })
-    await execFileAsync('/usr/bin/xcrun', ['clang', '-std=c17', '-Wall', '-Wextra', '-Werror', '-DRDX_MACOS_ENDPOINT_TEST_HOOKS=1', '-DOPENRDX_MACOS_TEAM_ID="ABCD123456"', '-I', join(root, 'native/rdx-service/native/macos'), join(root, 'native/macos-client-addon/endpoint_identity_test.c'), join(root, 'native/rdx-service/native/macos/rdx_endpoint_identity.c'), join(root, 'native/rdx-service/native/macos/rdx_endpoint.c'), '-framework', 'Security', '-framework', 'CoreFoundation', '-lbsm', '-lproc', '-o', output], {
+    await execFileAsync('/usr/bin/xcrun', ['clang', '-std=c17', '-Wall', '-Wextra', '-Werror', '-DRDX_MACOS_ENDPOINT_TEST_HOOKS=1', '-DOPENRDX_MACOS_TEAM_ID="ABCD123456"', '-I', join(root, 'native/rdx-service/native/macos'), join(root, 'native/macos-client-addon/endpoint_identity_test.c'), join(root, 'native/rdx-service/native/macos/rdx_endpoint_identity.c'), join(root, 'native/rdx-service/native/macos/rdx_endpoint.c'), join(root, 'native/rdx-service/native/macos/rdx_peer_session.c'), '-framework', 'Security', '-framework', 'CoreFoundation', '-lbsm', '-lproc', '-o', output], {
         env: { ...process.env, SDKROOT: sdk },
         maxBuffer: 1024 * 1024
     })
@@ -87,7 +87,7 @@ async function verifyActualLaunchdListener(project, environment) {
         } catch {
             domain = `user/${uid}`
         }
-        await execFileAsync('/usr/bin/xcrun', ['clang', '-std=c17', '-Wall', '-Wextra', '-Werror', '-DRDX_MACOS_ENDPOINT_TEST_HOOKS=1', '-I', join(project, 'native/rdx-service/native/macos'), join(project, 'native/macos-client-addon/launchd_listener_helper.c'), join(project, 'native/rdx-service/native/macos/rdx_endpoint.c'), join(project, 'native/rdx-service/native/macos/rdx_endpoint_identity.c'), '-framework', 'Security', '-framework', 'CoreFoundation', '-lbsm', '-lproc', '-o', helper], { env: environment })
+        await execFileAsync('/usr/bin/xcrun', ['clang', '-std=c17', '-Wall', '-Wextra', '-Werror', '-DRDX_MACOS_ENDPOINT_TEST_HOOKS=1', '-I', join(project, 'native/rdx-service/native/macos'), join(project, 'native/macos-client-addon/launchd_listener_helper.c'), join(project, 'native/rdx-service/native/macos/rdx_endpoint.c'), join(project, 'native/rdx-service/native/macos/rdx_peer_session.c'), join(project, 'native/rdx-service/native/macos/rdx_endpoint_identity.c'), '-framework', 'Security', '-framework', 'CoreFoundation', '-lbsm', '-lproc', '-o', helper], { env: environment })
         await execFileAsync('/usr/bin/codesign', ['--force', '--sign', '-', '--identifier', 'com.openrdx.fixture', helper])
         await writeFile(legacyPlistPath, plist.build({ Label: legacyLabel, ProgramArguments: [helper], Sockets: { Listener: { SockPathName: legacySocketPath, SockPathMode: 384 } }, StandardErrorPath: join(fixture, 'legacy.log') }), { mode: 0o600 })
         await execFileAsync('/bin/launchctl', ['bootstrap', domain, legacyPlistPath])

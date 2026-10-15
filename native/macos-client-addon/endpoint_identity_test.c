@@ -3,9 +3,11 @@
 /** Hardware-free native audit-token/code/path rejection tests; never uses system enrollment. */
 #include "rdx_endpoint_identity.h"
 #include <Security/Security.h>
+#include <bsm/libbsm.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
 #include <sys/acl.h>
 #include <membership.h>
@@ -131,6 +133,13 @@ int main(void) {
     if (uid != getuid()) { result = 5; }
     const rdx_macos_identity_diagnostic verified = rdx_macos_last_identity_diagnostic();
     if (strcmp(verified.stage, "verified") != 0 || verified.code != 0 || verified.peer_uid != getuid() || verified.peer_pid != getpid()) { result = 33; }
+    audit_token_t actual_token = {{0}};
+    socklen_t token_size = sizeof(actual_token);
+    uint32_t retained_token[8] = {0};
+    if (getsockopt(descriptors[0], SOL_LOCAL, LOCAL_PEERTOKEN, &actual_token, &token_size) != 0 ||
+        token_size != sizeof(actual_token) ||
+        !rdx_macos_peer_identity_token(descriptors[0], requirement, (const char *)path,
+            getuid(), retained_token) || memcmp(retained_token, &actual_token, sizeof(actual_token)) != 0) { result = 41; }
     if (rdx_macos_peer_identity_matches(descriptors[0], requirement, "/Applications/OpenRDXManager.app/Contents/MacOS/OpenRDXManager", getuid(), &uid)) { result = 6; }
     if (rdx_macos_peer_identity_matches(descriptors[0], requirement, (const char *)path, getuid() + 1, &uid)) { result = 7; }
     const char *signed_requirement = "identifier \"com.openrdx.manager\" and anchor apple generic and certificate leaf[subject.OU] = \"ABCD123456\"";
@@ -140,6 +149,10 @@ int main(void) {
     if (rdx_macos_peer_identity_matches(descriptors[0], wrong, (const char *)path, getuid(), &uid)) { result = 8; }
     const rdx_macos_identity_diagnostic denied = rdx_macos_last_identity_diagnostic();
     if (strcmp(denied.stage, "peer-dynamic-seal") != 0 || denied.code == 0) { result = 34; }
+    // Full-token output must be cleared even after a previous successful seal proof.
+    const uint32_t zero_token[8] = {0};
+    if (rdx_macos_peer_identity_token(descriptors[0], wrong, (const char *)path, getuid(), retained_token) ||
+        memcmp(retained_token, zero_token, sizeof(retained_token)) != 0) { result = 42; }
     if (rdx_macos_current_process_is_installed_manager() || rdx_macos_current_manager_matches(requirement)) { result = 9; }
     (void)close(descriptors[0]); (void)close(descriptors[1]);
     CFRelease(information); CFRelease(code);

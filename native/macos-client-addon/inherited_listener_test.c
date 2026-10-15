@@ -73,14 +73,29 @@ int main(int argc, char **argv) {
     const int token_result = getsockopt(client, SOL_LOCAL, LOCAL_PEERTOKEN, &token, &size);
     if (token_result != 0 || audit_token_to_pid(token) != child ||
         !rdx_macos_peer_identity_matches(client, requirement, argv[1], getuid(), &uid)) { result = 10; goto cleanup; }
+    uint32_t retained_token[8] = {0};
+    if (!rdx_macos_peer_identity_token(client, requirement, argv[1], getuid(), retained_token) ||
+        memcmp(retained_token, &token, sizeof(token)) != 0) { result = 14; goto cleanup; }
     // Expected code, uid and path continue to be enforced after activation.
     if (rdx_macos_peer_identity_matches(client, requirement, argv[1], getuid() + 1, &uid) ||
         rdx_macos_peer_identity_matches(client, requirement, "/tmp/wrong-helper", getuid(), &uid)) { result = 11; goto cleanup; }
 cleanup:
     if (result != 0) { const rdx_macos_identity_diagnostic detail = rdx_macos_last_identity_diagnostic(); fprintf(stderr, "identity stage=%s code=%d pid=%d uid=%u\n", detail.stage, detail.code, detail.peer_pid, detail.peer_uid); }
     (void)write(control[1], "q", 1);
-    if (client >= 0) { close(client); } close(listener); close(control[1]); close(ready[0]);
-    if (child > 0) { int status; if (waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) { result = result == 0 ? 12 : result; } }
+    close(listener); close(control[1]); close(ready[0]);
+    if (child > 0) {
+        int status;
+        if (waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+            result = result == 0 ? 12 : result;
+        } else if (result == 0) {
+            // Retain the exact socket across real peer exit/reap: its cached audit
+            // token cannot replace a fresh live PID-version-bound code lookup.
+            const uint32_t zero_token[8] = {0};
+            if (rdx_macos_peer_identity_token(client, requirement, argv[1], getuid(), retained_token) ||
+                memcmp(retained_token, zero_token, sizeof(retained_token)) != 0) { result = 15; }
+        }
+    }
+    if (client >= 0) { close(client); }
     unlink(address.sun_path); rmdir(directory);
     if (result == 0) { puts("inherited listener: queued peer denied; accepted helper audit token/code verified before protocol bytes"); }
     else { fprintf(stderr, "inherited listener test failed: %d errno=%d\n", result, errno); }
