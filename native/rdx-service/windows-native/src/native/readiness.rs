@@ -18,8 +18,8 @@ use windows::Win32::Storage::FileSystem::{BY_HANDLE_FILE_INFORMATION, GetFileInf
 use windows::Win32::System::Services::{
     CloseServiceHandle, OpenSCManagerW, OpenServiceW, QUERY_SERVICE_CONFIGW, QueryServiceConfigW,
     QueryServiceStatusEx, SC_HANDLE, SC_MANAGER_CONNECT, SC_STATUS_PROCESS_INFO,
-    SERVICE_DEMAND_START, SERVICE_QUERY_CONFIG, SERVICE_QUERY_STATUS, SERVICE_RUNNING,
-    SERVICE_STATUS_PROCESS, SERVICE_WIN32_OWN_PROCESS,
+    SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL, SERVICE_QUERY_CONFIG, SERVICE_QUERY_STATUS,
+    SERVICE_RUNNING, SERVICE_STATUS_PROCESS, SERVICE_WIN32_OWN_PROCESS,
 };
 use windows::Win32::System::Threading::{
     GetCurrentProcessId, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -37,6 +37,24 @@ const SERVICE_NAME: &str = "OpenRDXHardwareService";
 const MAX_SERVICE_CONFIG_BYTES: usize = 65_536;
 const MAX_TOKEN_USER_BYTES: usize = 4_096;
 
+/// Checks endpoint startup authority while retaining the exact enrolled runtime.
+pub(crate) fn verify_service_startup()
+-> Result<crate::local_trust::windows::RuntimeLease, crate::NativeError> {
+    let trust = crate::local_trust::verify_runtime_lease()?;
+    if !collect_service_identity(AuthorityPhase::Startup).startup_authorized()
+        || !current_process_is_fixed_service()
+    {
+        return Err(crate::NativeError::AccessDenied);
+    }
+    Ok(trust)
+}
+
+/// Startup may query the current primary token, never an SCM pending-state PID.
+enum AuthorityPhase {
+    Startup,
+    Running,
+}
+
 struct ServiceHandleCloser;
 
 impl ResourceCloser<isize> for ServiceHandleCloser {
@@ -53,10 +71,12 @@ type ServiceHandle = ResourceGuard<isize, ServiceHandleCloser>;
 struct ServiceConfigEvidence {
     service_type: u32,
     start_type: u32,
+    tag_id: u32,
     binary_command: String,
     account_name: String,
     demand_start: bool,
     binary_matches: bool,
+    exact_contract: bool,
 }
 
 /// Probes metadata and authority without installing, starting, or mutating a service.
@@ -77,6 +97,11 @@ pub(super) fn probe_readiness(adapter_available: bool) -> Readiness {
 
 /// Collects stable PID and constrained configuration evidence for the expected service.
 fn service_identity_evidence() -> ServiceIdentityEvidence {
+    collect_service_identity(AuthorityPhase::Running)
+}
+
+/// Collects shared fixed configuration facts with phase-specific process provenance.
+fn collect_service_identity(phase: AuthorityPhase) -> ServiceIdentityEvidence {
     // SAFETY: GetCurrentProcessId has no pointer or ownership preconditions.
     let current_pid = unsafe { GetCurrentProcessId() };
     let mut evidence = ServiceIdentityEvidence {
@@ -112,14 +137,20 @@ fn service_identity_evidence() -> ServiceIdentityEvidence {
 
     let status_before = query_service_status(&service);
     let config_before = query_service_config(&service);
-    let token_local_service = status_before
-        .as_ref()
-        .filter(|status| status.dwCurrentState == SERVICE_RUNNING && status.dwProcessId != 0)
-        .is_some_and(|status| {
-            process_token_is_local_service(status.dwProcessId)
-                && crate::local_trust::windows::service_sid_enabled(status.dwProcessId)
-                    .unwrap_or(false)
-        });
+    let token_pid = match phase {
+        // QueryServiceStatusEx explicitly does not guarantee dwProcessId during
+        // START_PENDING. Only the private SCM callback may select this branch.
+        // https://learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-queryservicestatusex
+        AuthorityPhase::Startup => Some(current_pid),
+        AuthorityPhase::Running => status_before
+            .as_ref()
+            .filter(|status| status.dwCurrentState == SERVICE_RUNNING && status.dwProcessId != 0)
+            .map(|status| status.dwProcessId),
+    };
+    let token_local_service = token_pid.is_some_and(|process_id| {
+        process_token_is_local_service(process_id)
+            && crate::local_trust::windows::service_sid_enabled(process_id).unwrap_or(false)
+    });
     let config_after = query_service_config(&service);
     let status_after = query_service_status(&service);
 
@@ -131,6 +162,7 @@ fn service_identity_evidence() -> ServiceIdentityEvidence {
     }
     if let (Some(before), Some(after)) = (config_before, config_after) {
         evidence.config_stable = before == after
+            && before.exact_contract
             && crate::registry_acl::registry_acl_ready()
             && crate::verify_installed_local_trust().is_ok();
         if evidence.config_stable {
@@ -259,14 +291,29 @@ fn query_service_config(service: &ServiceHandle) -> Option<ServiceConfigEvidence
     let config = unsafe { config_pointer.read() };
     let binary = bounded_config_string(&storage, config.lpBinaryPathName.0)?;
     let account = bounded_config_string(&storage, config.lpServiceStartName.0)?;
+    let exact_command = format!(
+        "\"{}\" --service-mode named-pipe --protocol-version 1",
+        crate::local_trust::LOCAL_SERVICE_BINARY
+    );
+    let exact_contract = config.dwServiceType == SERVICE_WIN32_OWN_PROCESS
+        && config.dwStartType == SERVICE_DEMAND_START
+        && config.dwErrorControl == SERVICE_ERROR_NORMAL
+        && config.dwTagId == 0
+        && binary == exact_command
+        && account == "NT AUTHORITY\\LocalService"
+        && bounded_config_string(&storage, config.lpDisplayName.0)? == "OpenRDX Hardware Service"
+        && bounded_optional_config_string(&storage, config.lpLoadOrderGroup.0)?.is_empty()
+        && bounded_optional_config_string(&storage, config.lpDependencies.0)?.is_empty();
 
     Some(ServiceConfigEvidence {
         service_type: config.dwServiceType.0,
         start_type: config.dwStartType.0,
+        tag_id: config.dwTagId,
         binary_command: binary.clone(),
         account_name: account,
         demand_start: config.dwStartType == SERVICE_DEMAND_START,
         binary_matches: service_binary_matches_current_process(&binary),
+        exact_contract,
     })
 }
 
@@ -383,22 +430,22 @@ fn token_user_is_local_service(token: HANDLE) -> bool {
 
 /// Copies a NUL-terminated UTF-16 string only after bounding its in-buffer pointer.
 fn bounded_config_string(storage: &[usize], pointer: *mut u16) -> Option<String> {
-    let base = storage.as_ptr() as usize;
-    let end = base.checked_add(storage.len().checked_mul(size_of::<usize>())?)?;
-    let address = pointer as usize;
-    let strings_start = base.checked_add(size_of::<QUERY_SERVICE_CONFIGW>())?;
-    if address < strings_start || address >= end || address % align_of::<u16>() != 0 {
-        return None;
-    }
-    let units = end.checked_sub(address)?.checked_div(size_of::<u16>())?;
-    if units == 0 {
-        return None;
-    }
-    // SAFETY: address was proven aligned and inside the live storage allocation;
-    // units is the exact remaining capacity rounded down to whole u16 values.
-    let text = unsafe { std::slice::from_raw_parts(pointer.cast_const(), units) };
-    let terminator = text.iter().position(|unit| *unit == 0)?;
-    String::from_utf16(&text[..terminator]).ok()
+    crate::readiness::config_strings::bounded_config_string(
+        storage,
+        size_of::<QUERY_SERVICE_CONFIGW>(),
+        pointer,
+        crate::readiness::config_strings::ConfigStringKind::Required,
+    )
+}
+
+/// Accepts documented NULL-as-empty only for optional dependency/group fields.
+fn bounded_optional_config_string(storage: &[usize], pointer: *mut u16) -> Option<String> {
+    crate::readiness::config_strings::bounded_config_string(
+        storage,
+        size_of::<QUERY_SERVICE_CONFIGW>(),
+        pointer,
+        crate::readiness::config_strings::ConfigStringKind::OptionalEmpty,
+    )
 }
 
 /// Accepts only the fixed endpoint command identifying the current executable file.
@@ -416,6 +463,20 @@ fn service_binary_matches_current_process(command_line: &str) -> bool {
         return false;
     };
     same_file(&configured, &current)
+}
+
+/// Binds current-process file identity to the pinned fixed enrolled service image.
+fn current_process_is_fixed_service() -> bool {
+    let Ok(current_path) = std::env::current_exe() else {
+        return false;
+    };
+    let Ok(current) = File::open(current_path) else {
+        return false;
+    };
+    let Ok(expected) = File::open(crate::local_trust::LOCAL_SERVICE_BINARY) else {
+        return false;
+    };
+    same_file(&current, &expected)
 }
 
 /// Compares stable volume/file-index identity instead of path spelling or case.

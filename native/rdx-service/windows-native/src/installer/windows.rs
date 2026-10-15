@@ -388,7 +388,9 @@ fn revoke_admission(service: &Service) -> Result<(), NativeError> {
     use windows::Win32::Security::{
         DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
     };
-    let text = wide("D:P(A;;0x000f01ff;;;SY)(A;;0x000f01ff;;;BA)(A;;0x00000004;;;LS)");
+    // Keep the daemon's independent read-only identity checks available while
+    // ordinary-user START is revoked during installation or repair.
+    let text = wide("D:P(A;;0x000f01ff;;;SY)(A;;0x000f01ff;;;BA)(A;;0x00000005;;;LS)");
     let mut sd = PSECURITY_DESCRIPTOR::default();
     unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(

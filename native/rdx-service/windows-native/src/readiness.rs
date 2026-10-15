@@ -4,6 +4,9 @@
 //! Portable readiness evidence and fail-closed authority evaluation.
 
 #[cfg(any(windows, test))]
+pub(crate) mod config_strings;
+
+#[cfg(any(windows, test))]
 const MIN_SERVICE_STATUS_PROCESS_BYTES: usize = 9 * std::mem::size_of::<u32>();
 #[cfg(any(windows, test))]
 const MAX_SERVICE_STATUS_PROCESS_BYTES: usize = 8_192;
@@ -75,6 +78,19 @@ pub(super) struct ServiceIdentityEvidence {
 
 #[cfg(any(windows, test))]
 impl ServiceIdentityEvidence {
+    /// Allows only private SCM startup proofs, without trusting a pending SCM PID.
+    ///
+    /// Native startup collection proves the actual current primary token and
+    /// fixed executable separately; the callback capability supplies provenance.
+    pub(super) const fn startup_authorized(self) -> bool {
+        self.installed
+            && self.current_pid != 0
+            && self.config_stable
+            && self.demand_start
+            && self.binary_matches
+            && self.token_local_service
+    }
+
     /// Returns whether both runtime snapshots prove one unchanged running process.
     const fn stable_running(self) -> bool {
         self.status_before.running == self.status_after.running

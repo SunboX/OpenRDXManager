@@ -77,6 +77,7 @@ mod layout;
 mod mac_layout;
 mod mutations;
 mod readiness;
+pub(crate) use readiness::verify_service_startup;
 mod safe_eject;
 mod vds;
 mod volume_label;

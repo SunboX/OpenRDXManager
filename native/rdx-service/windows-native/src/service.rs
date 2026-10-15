@@ -8,6 +8,9 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use crate::NativeError;
 use crate::endpoint::NamedPipeManagerEndpointListener;
 
+#[cfg(any(windows, test))]
+mod startup;
+
 #[cfg(windows)]
 use std::ffi::c_void;
 #[cfg(windows)]
@@ -27,6 +30,32 @@ use windows::core::{PCWSTR, PWSTR};
 const MAX_SERVICE_CONNECTIONS: u32 = 8;
 #[cfg(windows)]
 const SERVICE_NAME: &str = "OpenRDXHardwareService";
+
+/// Endpoint-creation capability minted only in the private registered SCM callback.
+#[cfg(windows)]
+pub(crate) struct RegisteredServiceStartup {
+    trust: Arc<crate::local_trust::windows::RuntimeLease>,
+}
+
+#[cfg(windows)]
+impl RegisteredServiceStartup {
+    /// Verifies native startup facts after handler registration and status publication.
+    fn verify(lifecycle: &WindowsServiceLifecycle) -> Result<Self, NativeError> {
+        if lifecycle.snapshot().state() != WindowsServiceState::StartPending {
+            return Err(NativeError::AccessDenied);
+        }
+        let trust = Arc::new(crate::native::verify_service_startup()?);
+        if lifecycle.stop_requested() {
+            return Err(NativeError::Cancelled);
+        }
+        Ok(Self { trust })
+    }
+
+    /// Transfers retained runtime protection into the sole authoritative listener.
+    pub(crate) fn into_runtime(self) -> Arc<crate::local_trust::windows::RuntimeLease> {
+        self.trust
+    }
+}
 
 /// Main-owned work executed only inside the registered SCM service callback.
 pub type WindowsServiceRunner =
@@ -440,25 +469,19 @@ fn run_registered_service() -> Result<(), NativeError> {
         .unwrap_or_else(PoisonError::into_inner)
         .handle = handle.0 as isize;
     let run_result = (|| {
-        control.publish()?;
-        if lifecycle.stop_requested() {
-            return Ok(());
+        let listener = startup::start_endpoint(
+            &lifecycle,
+            || control.publish(),
+            || {
+                NamedPipeManagerEndpointListener::bind(RegisteredServiceStartup::verify(
+                    &lifecycle,
+                )?)
+            },
+        )?;
+        match listener {
+            Some(listener) => runner(lifecycle.clone(), listener),
+            None => Ok(()),
         }
-        let listener = NamedPipeManagerEndpointListener::bind()?;
-        if lifecycle.stop_requested() {
-            return Ok(());
-        }
-        lifecycle.mark_endpoint_bound()?;
-        match lifecycle.mark_running() {
-            Ok(()) => {}
-            Err(NativeError::AccessDenied) if lifecycle.stop_requested() => return Ok(()),
-            Err(error) => return Err(error),
-        }
-        control.publish()?;
-        if lifecycle.stop_requested() {
-            return Ok(());
-        }
-        runner(lifecycle.clone(), listener)
     })();
     lifecycle.request_stop();
     let pending_result = control.publish();

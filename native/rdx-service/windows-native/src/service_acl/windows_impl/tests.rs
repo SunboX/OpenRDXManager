@@ -3,6 +3,7 @@
 
 //! Causal service-security fixtures; never production service or user authentication.
 use super::*;
+use windows::Win32::Security::EqualSid;
 use windows::Win32::System::Services::{CreateServiceW, DeleteService, SC_MANAGER_CREATE_SERVICE};
 use windows::Win32::System::Threading::GetCurrentProcess;
 
@@ -76,6 +77,42 @@ fn native_service_setter_retains_exact_protected_dacl() {
         exact_dacl_matches(&fixture.0, &creator, true).unwrap(),
         "setter must retain canonical protected descriptor"
     );
+    // Reproduce only the legacy LocalService query-status mask on this owned,
+    // never-started fixture. Verification must reject it rather than accepting
+    // both policies; elevated provisioning must materialize the exact new ACL.
+    let mut legacy = read_service_security(&fixture.0).unwrap();
+    let descriptor = PSECURITY_DESCRIPTOR(legacy.as_mut_ptr().cast());
+    let mut present = false.into();
+    let mut defaulted = false.into();
+    let mut dacl = std::ptr::null_mut();
+    unsafe { GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted) }
+        .unwrap();
+    assert!(present.as_bool() && !dacl.is_null());
+    let local_service = well_known_sid(WinLocalServiceSid).unwrap();
+    let mut changed = false;
+    for index in 0..unsafe { (*dacl).AceCount } {
+        let mut pointer = std::ptr::null_mut();
+        unsafe { GetAce(dacl, u32::from(index), &mut pointer) }.unwrap();
+        let ace = unsafe { &mut *pointer.cast::<ACCESS_ALLOWED_ACE>() };
+        let sid = PSID((&raw mut ace.SidStart).cast());
+        if unsafe { EqualSid(sid, local_service.pointer()) }.is_ok() {
+            assert_eq!(ace.Mask, 5);
+            ace.Mask = 4;
+            changed = true;
+        }
+    }
+    assert!(changed);
+    unsafe {
+        SetServiceObjectSecurity(
+            fixture.0.0,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            descriptor,
+        )
+    }
+    .unwrap();
+    assert!(!exact_dacl_matches(&fixture.0, &creator, true).unwrap());
+    set_exact_dacl(&fixture.0, &creator, true).unwrap();
+    assert!(exact_dacl_matches(&fixture.0, &creator, true).unwrap());
     set_exact_dacl(&fixture.0, &creator, false).unwrap();
     assert!(exact_dacl_matches(&fixture.0, &creator, false).unwrap());
     assert!(!exact_dacl_matches(&fixture.0, &creator, true).unwrap());

@@ -7,6 +7,21 @@ use rdx_windows_native::{
     service_dacl_contract,
 };
 
+/// The daemon must query its fixed configuration without receiving control rights.
+#[test]
+fn local_service_can_query_configuration_and_status_but_cannot_control_service() {
+    let contract = service_dacl_contract();
+    let local_service = contract
+        .entries
+        .iter()
+        .find(|entry| entry.principal == ServiceDaclPrincipal::LocalService)
+        .expect("fixed LocalService entry");
+    // OpenService requires every requested bit, even when one query right exists.
+    assert_eq!(local_service.access_mask & 0x0000_0005, 0x0000_0005);
+    // No start, stop, reconfiguration, deletion, owner, or DACL mutation rights.
+    assert_eq!(local_service.access_mask & !0x0000_0005, 0);
+}
+
 #[test]
 fn service_dacl_is_protected_exact_and_manager_cannot_stop_or_reconfigure() {
     let contract = service_dacl_contract();

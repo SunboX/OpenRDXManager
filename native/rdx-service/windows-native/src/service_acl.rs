@@ -7,7 +7,9 @@ use crate::NativeError;
 const SERVICE_NAME: &str = "OpenRDXHardwareService";
 const LOCAL_SYSTEM_ACCESS: u32 = 0x000F_01FF;
 const ADMINISTRATORS_ACCESS: u32 = 0x000F_01FF;
-const LOCAL_SERVICE_ACCESS: u32 = 0x0000_0004;
+// The daemon independently verifies its registration and running PID; these
+// query-only rights grant no activation, stop, configuration or ACL mutation.
+const LOCAL_SERVICE_ACCESS: u32 = 0x0000_0005;
 const MANAGER_USER_ACCESS: u32 = 0x0000_0015;
 /// Fixed principal roles admitted by the protected service DACL.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -16,7 +18,7 @@ pub enum ServiceDaclPrincipal {
     LocalSystem,
     /// Built-in administrators service authority.
     Administrators,
-    /// The service's LocalService account with query-status only.
+    /// The service's LocalService account with query-config/query-status only.
     LocalService,
     /// The exact active manager user with query-config/query-status/start only.
     ManagerUser,

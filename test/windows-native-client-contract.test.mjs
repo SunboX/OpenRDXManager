@@ -144,12 +144,15 @@ test('Windows cold activation uses one deadline and retries only delayed pipe ap
     assert.doesNotMatch(activation, /VerifyServer[\s\S]*(?:continue|Sleep)/u)
 })
 
-test('Windows service binds the authoritative first pipe before publishing running', async () => {
+test('Windows SCM callback owns startup-authorized endpoint creation', async () => {
     const [service, serviceBinary] = await Promise.all([readFile(join(projectRoot, 'native/rdx-service/windows-native/src/service.rs'), 'utf8'), readFile(join(projectRoot, 'native/rdx-service/src/bin/openrdx-hardware.rs'), 'utf8')])
     const registered = service.slice(service.indexOf('fn run_registered_service'), service.indexOf('fn wide_null'))
     const serviceLoop = serviceBinary.slice(serviceBinary.indexOf('fn run_windows_service_generation'), serviceBinary.indexOf('struct StopAwareReader'))
 
-    assert.match(registered, /NamedPipeManagerEndpointListener::bind\(\)[\s\S]*mark_endpoint_bound[\s\S]*mark_running[\s\S]*control\.publish\(\)/u)
+    // The portable production startup seam tests binding/publication order;
+    // this integration contract keeps that seam attached to the SCM callback.
+    assert.match(registered, /startup::start_endpoint/u)
+    assert.match(registered, /NamedPipeManagerEndpointListener::bind\(\s*RegisteredServiceStartup::verify/u)
     assert.match(serviceLoop, /listener:\s*rdx_windows_native::NamedPipeManagerEndpointListener/u)
     assert.doesNotMatch(serviceLoop, /NamedPipeManagerEndpointListener::bind/u)
 })

@@ -15,6 +15,9 @@ use std::mem::{size_of, zeroed};
 
 use crate::NativeError;
 
+#[cfg(any(windows, test))]
+mod admission;
+
 /// Portable installation contract for the protected local named pipe.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NamedPipeEndpointContract {
@@ -213,6 +216,8 @@ pub struct ManagerEndpointConnection {
     #[cfg(windows)]
     trust: std::sync::Arc<crate::local_trust::windows::RuntimeLease>,
     #[cfg(windows)]
+    startup_trust: std::sync::Arc<crate::local_trust::windows::RuntimeLease>,
+    #[cfg(windows)]
     read_deadline: Option<Instant>,
     session_id: u32,
 }
@@ -287,6 +292,11 @@ impl NamespaceOwnership {
 }
 
 /// Process-lifetime named-pipe factory retaining first-instance ownership.
+///
+/// A downstream caller cannot bind the privileged endpoint or supply startup authority.
+/// ```compile_fail
+/// let _ = rdx_windows_native::NamedPipeManagerEndpointListener::bind();
+/// ```
 pub struct NamedPipeManagerEndpointListener {
     #[cfg(windows)]
     authority: EndpointAuthority,
@@ -294,6 +304,10 @@ pub struct NamedPipeManagerEndpointListener {
     pending: Option<PendingPipe>,
     #[cfg(windows)]
     ownership: NamespaceOwnership,
+    // Fields drop in declaration order: close the pending pipe before releasing
+    // the pinned runtime. Connections independently retain their own Arc.
+    #[cfg(windows)]
+    startup_trust: std::sync::Arc<crate::local_trust::windows::RuntimeLease>,
 }
 
 impl Debug for NamedPipeManagerEndpointListener {
@@ -310,22 +324,20 @@ impl NamedPipeManagerEndpointListener {
     ///
     /// Returns a sanitized authority or native failure without publishing a
     /// partially protected endpoint.
-    pub fn bind() -> Result<Self, NativeError> {
-        #[cfg(windows)]
-        {
-            let authority = endpoint_authority()?;
-            let ownership = NamespaceOwnership::new();
-            let pending = create_pending_pipe(&authority, ownership.pending_policy())?;
-            Ok(Self {
-                authority,
-                pending: Some(pending),
-                ownership,
-            })
-        }
-        #[cfg(not(windows))]
-        {
-            Err(NativeError::UnsupportedPlatform)
-        }
+    #[cfg(windows)]
+    pub(crate) fn bind(
+        startup: crate::service::RegisteredServiceStartup,
+    ) -> Result<Self, NativeError> {
+        let startup_trust = startup.into_runtime();
+        let authority = endpoint_authority()?;
+        let ownership = NamespaceOwnership::new();
+        let pending = create_pending_pipe(&authority, ownership.pending_policy())?;
+        Ok(Self {
+            startup_trust,
+            authority,
+            pending: Some(pending),
+            ownership,
+        })
     }
 
     /// Creates and authenticates the next protected named-pipe instance.
@@ -370,6 +382,7 @@ impl NamedPipeManagerEndpointListener {
             Ok(ManagerEndpointConnection {
                 handle: connected.into_raw(),
                 trust,
+                startup_trust: self.startup_trust.clone(),
                 read_deadline: None,
                 session_id: self.authority.session_id,
             })
@@ -452,6 +465,7 @@ impl ManagerEndpointConnection {
             Ok(Self {
                 handle: duplicate,
                 trust: self.trust.clone(),
+                startup_trust: self.startup_trust.clone(),
                 read_deadline: self.read_deadline,
                 session_id: self.session_id,
             })
@@ -544,9 +558,6 @@ impl Write for ManagerEndpointConnection {
 
 #[cfg(windows)]
 fn endpoint_authority() -> Result<EndpointAuthority, NativeError> {
-    if !crate::probe_readiness().current_process_authorized() {
-        return Err(NativeError::AccessDenied);
-    }
     // SAFETY: this query has no pointer arguments and returns a scalar session ID.
     let session_id = unsafe { WTSGetActiveConsoleSessionId() };
     if session_id == u32::MAX {
@@ -680,7 +691,7 @@ fn authenticate_client(
     }
     // SAFETY: connected local pipe is valid for bounded impersonation.
     unsafe { ImpersonateNamedPipeClient(handle) }.map_err(|_| NativeError::AccessDenied)?;
-    let guard = ImpersonationGuard;
+    let guard = ImpersonationGuard { active: true };
     let mut token = HANDLE::default();
     // SAFETY: the current thread is impersonating and output owns one token.
     unsafe { OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, true, &mut token) }
@@ -696,19 +707,49 @@ fn authenticate_client(
         }
         .map_err(|_| NativeError::AccessDenied)
     });
-    drop(guard);
-    result
+    admission::finish_authentication(
+        result,
+        || guard.revert(),
+        || {
+            // This independent RUNNING proof uses the daemon's primary identity,
+            // never the identification-only client token or a startup capability.
+            if crate::probe_readiness().current_process_authorized() {
+                Ok(())
+            } else {
+                Err(NativeError::AccessDenied)
+            }
+        },
+    )
 }
 
 #[cfg(windows)]
-struct ImpersonationGuard;
+struct ImpersonationGuard {
+    active: bool,
+}
+
+#[cfg(windows)]
+impl ImpersonationGuard {
+    /// Explicitly records reversion success before a connection can be admitted.
+    fn revert(mut self) -> Result<(), NativeError> {
+        // SAFETY: this guard exists only after successful pipe impersonation.
+        if unsafe { RevertToSelf() }.is_err() {
+            // Windows requires terminating when reversion fails: returning
+            // would leave later code executing under a foreign thread token.
+            std::process::abort();
+        }
+        self.active = false;
+        Ok(())
+    }
+}
 
 #[cfg(windows)]
 impl Drop for ImpersonationGuard {
     /// Reverts the pipe impersonation on every exit path.
     fn drop(&mut self) {
         // SAFETY: this guard exists only after successful impersonation.
-        let _ = unsafe { RevertToSelf() };
+        if self.active && unsafe { RevertToSelf() }.is_err() {
+            std::process::abort();
+        }
     }
 }
 
