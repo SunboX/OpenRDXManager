@@ -54,9 +54,7 @@ pub struct ManagerEndpointConnection {
     #[cfg(target_os = "macos")]
     stream: UnixStream,
     #[cfg(target_os = "macos")]
-    peer_session: crate::peer_session::PeerSession,
-    #[cfg(target_os = "macos")]
-    requirement: CString,
+    session_state: std::sync::Arc<crate::worker_factory::PeerSessionState>,
     user_id: u32,
 }
 
@@ -85,7 +83,8 @@ impl LaunchdManagerEndpointListener {
         #[cfg(target_os = "macos")]
         {
             log_endpoint_phase("session-runtime-verification-start", None);
-            verify_pinned_runtime(&self.requirement)?;
+            let generation =
+                crate::runtime_generation::RuntimeGeneration::capture(&self.requirement)?;
             log_endpoint_phase("session-runtime-verification-ok", None);
             let mut socket = -1;
             let mut session = crate::peer_session::PeerSession::output_record();
@@ -99,7 +98,16 @@ impl LaunchdManagerEndpointListener {
                     &mut session,
                 )
             };
-            connection_from_status(status, socket, session, self.requirement.clone())
+            let connection = connection_from_status(
+                status,
+                socket,
+                session,
+                self.requirement.clone(),
+                generation,
+            )?;
+            // The accepted token's live strict seal proof brackets the signed runtime snapshot.
+            connection.revalidate_peer_session()?;
+            Ok(connection)
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -109,6 +117,14 @@ impl LaunchdManagerEndpointListener {
 }
 
 impl ManagerEndpointConnection {
+    /// Creates the sole revocable lifetime owner across all clones of this accepted connection.
+    /// # Errors
+    /// Returns access denied when an owner was already minted or the state is revoked.
+    #[cfg(target_os = "macos")]
+    pub fn begin_worker_session(&mut self) -> Result<crate::MacManagerSessionLease, NativeError> {
+        self.session_state.begin()
+    }
+
     /// Rechecks protected runtime and live exact authenticated peer/session evidence.
     ///
     /// # Errors
@@ -118,9 +134,7 @@ impl ManagerEndpointConnection {
     pub fn revalidate_peer_session(&self) -> Result<(), NativeError> {
         #[cfg(target_os = "macos")]
         {
-            verify_pinned_runtime(&self.requirement)?;
-            self.peer_session
-                .revalidate(self.stream.as_raw_fd(), &self.requirement)
+            self.session_state.revalidate_peer()
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -163,8 +177,7 @@ impl ManagerEndpointConnection {
                 .try_clone()
                 .map(|stream| Self {
                     stream,
-                    peer_session: self.peer_session.clone(),
-                    requirement: self.requirement.clone(),
+                    session_state: std::sync::Arc::clone(&self.session_state),
                     user_id: self.user_id,
                 })
                 .map_err(|_| NativeError::Other)
@@ -299,6 +312,7 @@ fn connection_from_status(
     socket: std::ffi::c_int,
     session: crate::ffi::PeerSessionRecord,
     requirement: CString,
+    generation: crate::runtime_generation::RuntimeGeneration,
 ) -> Result<ManagerEndpointConnection, NativeError> {
     if status != crate::ffi::STATUS_OK {
         log_endpoint_native_code("accepted-native-status", status as i32);
@@ -313,6 +327,12 @@ fn connection_from_status(
     // Adopt the descriptor before validating the record so every malformed result closes it.
     let peer_session = crate::peer_session::PeerSession::from_record(session)?;
     let user_id = peer_session.user_id();
+    let session_state = std::sync::Arc::new(crate::worker_factory::PeerSessionState::new(
+        stream.try_clone().map_err(|_| NativeError::Other)?,
+        peer_session,
+        requirement,
+        generation,
+    ));
     stream
         .set_read_timeout(Some(Duration::from_secs(300)))
         .map_err(|error| {
@@ -328,30 +348,8 @@ fn connection_from_status(
     Ok(ManagerEndpointConnection {
         stream,
         user_id,
-        peer_session,
-        requirement,
+        session_state,
     })
-}
-
-/// Reuses protected runtime proof without adopting a replacement local Manager requirement.
-#[cfg(target_os = "macos")]
-fn verify_pinned_runtime(requirement: &std::ffi::CStr) -> Result<(), NativeError> {
-    if requirement
-        .to_bytes()
-        .starts_with(b"identifier \"com.openrdx.manager\" and cdhash ")
-    {
-        let inventory = crate::local_trust::verify_installed_local_trust()?;
-        let expected = local_manager_requirement(&inventory.manager_cd_hash)?;
-        if requirement.to_bytes() != expected.as_bytes() {
-            return Err(NativeError::AccessDenied);
-        }
-    } else {
-        // Dynamic team identity remains bound to the accepted audit token by C;
-        // this independently enforces root protection and the strict installed runtime.
-        rdx_local_trust::verify_protected_signed_macos_runtime()
-            .map_err(|_| NativeError::AccessDenied)?;
-    }
-    Ok(())
 }
 
 /// Accepts only canonical signed-team or locally enrolled generation requirements.
@@ -452,6 +450,7 @@ mod session_result_tests {
             socket.into_raw_fd(),
             crate::peer_session::PeerSession::output_record(),
             requirement,
+            crate::runtime_generation::RuntimeGeneration::fixture(),
         );
         assert_eq!(result.unwrap_err(), NativeError::AccessDenied);
         peer.set_nonblocking(true).unwrap();
@@ -467,20 +466,26 @@ mod session_result_tests {
             size: 40,
             audit_token: [502, 502, 20, 502, 20, 123, 100_014, 7],
         };
-        let connection = connection_from_status(
+        let mut connection = connection_from_status(
             crate::ffi::STATUS_OK,
             socket.into_raw_fd(),
             record,
             CString::new("private-test-requirement").unwrap(),
+            crate::runtime_generation::RuntimeGeneration::fixture(),
         )
         .unwrap();
-        let copy = connection.try_clone().unwrap();
+        let mut copy = connection.try_clone().unwrap();
         assert_eq!(copy.user_id(), 502);
-        assert_eq!(
-            copy.peer_session.user_id(),
-            connection.peer_session.user_id()
-        );
-        assert_eq!(copy.requirement, connection.requirement);
+        assert_eq!(copy.user_id(), connection.user_id());
+        assert!(std::sync::Arc::ptr_eq(
+            &copy.session_state,
+            &connection.session_state
+        ));
+        let owner = connection.begin_worker_session().unwrap();
+        assert!(copy.begin_worker_session().is_err());
+        let factory = owner.factory();
+        drop(owner);
+        assert_eq!(factory.ensure_active(), Err(NativeError::AccessDenied));
         assert_eq!(format!("{copy:?}"), "ManagerEndpointConnection(<private>)");
     }
 }

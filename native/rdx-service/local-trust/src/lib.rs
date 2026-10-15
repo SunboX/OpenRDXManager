@@ -12,7 +12,9 @@ mod runtime;
 #[cfg(target_os = "macos")]
 mod signed_macos;
 #[cfg(target_os = "macos")]
-pub use signed_macos::verify_protected_signed_macos_runtime;
+pub use signed_macos::{
+    verify_protected_signed_macos_runtime, verify_protected_signed_macos_runtime_inventory,
+};
 #[cfg(unix)]
 mod budget;
 #[cfg(unix)]

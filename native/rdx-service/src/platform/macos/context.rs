@@ -10,7 +10,7 @@ use super::MacOsReadinessFacts;
 /// Applies one explicit execution context without changing endpoint facts.
 pub(super) const fn apply(
     mut facts: MacOsReadinessFacts,
-    context: ServiceExecutionContext,
+    context: &ServiceExecutionContext,
 ) -> MacOsReadinessFacts {
     facts.direct_process_authorized = context.direct_process_authorized();
     facts
@@ -31,7 +31,7 @@ mod tests {
         let context = ServiceExecutionContext::privileged_direct_cli(true);
         let facts = super::apply(
             MacOsReadinessFacts::new(true, true, false, false, false),
-            context,
+            &context,
         );
         let report = evaluate_macos_readiness(facts);
         let backend = MacOsBackend::from_readiness(facts, true);

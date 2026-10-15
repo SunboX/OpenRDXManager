@@ -8,16 +8,52 @@
 /// This value is constructed by the service entrypoint after it has selected
 /// development stdio or accepted the fixed authenticated platform endpoint. It
 /// never reads environment variables and carries no user-controlled path.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(not(target_os = "macos"), derive(Copy))]
 pub struct ServiceExecutionContext {
     endpoint_authenticated: bool,
     development_ipc: bool,
     direct_cli: bool,
     process_authorized: bool,
     backup_owner: Option<u32>,
+    #[cfg(target_os = "macos")]
+    macos_worker_factory: Option<rdx_macos_native::MacWorkerFactory>,
 }
 
 impl ServiceExecutionContext {
+    /// Duplicates the shared context without cloning Copy-only non-macOS values.
+    #[must_use]
+    pub fn duplicate_for_runtime(&self) -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            self.clone()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            *self
+        }
+    }
+
+    /// Attaches opaque native connection authority only to an authorized endpoint context.
+    #[cfg(target_os = "macos")]
+    #[must_use]
+    pub fn with_macos_worker_factory(
+        mut self,
+        factory: rdx_macos_native::MacWorkerFactory,
+    ) -> Self {
+        if self.endpoint_authenticated && self.process_authorized {
+            self.macos_worker_factory = Some(factory);
+        }
+        self
+    }
+
+    /// Borrows existing native authority; flags and backup ownership never manufacture it.
+    #[cfg(target_os = "macos")]
+    #[must_use]
+    pub fn macos_worker_factory(&self) -> Option<&rdx_macos_native::MacWorkerFactory> {
+        self.macos_worker_factory.as_ref()
+    }
+
     /// Creates the unprivileged development-stdio execution context.
     #[must_use]
     pub const fn development_stdio() -> Self {
@@ -27,6 +63,8 @@ impl ServiceExecutionContext {
             direct_cli: false,
             process_authorized: false,
             backup_owner: None,
+            #[cfg(target_os = "macos")]
+            macos_worker_factory: None,
         }
     }
 
@@ -43,6 +81,8 @@ impl ServiceExecutionContext {
             direct_cli: false,
             process_authorized,
             backup_owner: None,
+            #[cfg(target_os = "macos")]
+            macos_worker_factory: None,
         }
     }
 
@@ -58,6 +98,8 @@ impl ServiceExecutionContext {
             direct_cli: false,
             process_authorized,
             backup_owner: None,
+            #[cfg(target_os = "macos")]
+            macos_worker_factory: None,
         }
     }
 
@@ -76,6 +118,8 @@ impl ServiceExecutionContext {
             direct_cli: true,
             process_authorized,
             backup_owner: None,
+            #[cfg(target_os = "macos")]
+            macos_worker_factory: None,
         }
     }
 
@@ -90,38 +134,38 @@ impl ServiceExecutionContext {
 
     /// Returns the accepted desktop owner; an absent owner prevents manufacturing storage.
     #[must_use]
-    pub const fn backup_owner(self) -> Option<u32> {
+    pub const fn backup_owner(&self) -> Option<u32> {
         self.backup_owner
     }
 
     /// Returns whether startup accepted the fixed privileged endpoint.
     #[must_use]
-    pub const fn endpoint_authenticated(self) -> bool {
+    pub const fn endpoint_authenticated(&self) -> bool {
         self.endpoint_authenticated
     }
 
     /// Returns whether native process-account evidence authorized this service.
     #[must_use]
-    pub const fn process_authorized(self) -> bool {
+    pub const fn process_authorized(&self) -> bool {
         self.process_authorized
     }
 
     /// Returns whether this is the explicit privileged direct-CLI route.
     #[must_use]
-    pub const fn direct_cli_authorized(self) -> bool {
+    pub const fn direct_cli_authorized(&self) -> bool {
         self.direct_cli && self.process_authorized
     }
 
     /// Returns whether direct process evidence authorizes CLI or private development IPC.
     #[must_use]
-    pub const fn direct_process_authorized(self) -> bool {
+    pub const fn direct_process_authorized(&self) -> bool {
         (self.direct_cli || self.development_ipc) && self.process_authorized
     }
 
     /// Returns whether a service endpoint or direct CLI has complete native
     /// process authority for hardware access.
     #[must_use]
-    pub const fn hardware_authorized(self) -> bool {
+    pub const fn hardware_authorized(&self) -> bool {
         self.process_authorized
             && (self.endpoint_authenticated || self.direct_cli || self.development_ipc)
     }
@@ -165,5 +209,19 @@ mod tests {
         assert!(privileged.hardware_authorized());
         assert!(!unprivileged.direct_process_authorized());
         assert!(!unprivileged.hardware_authorized());
+    }
+
+    /// Flags, direct CLI and backup storage ownership cannot mint native GUI-session authority.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn context_flags_and_backup_owner_do_not_create_worker_factory() {
+        for context in [
+            ServiceExecutionContext::authenticated_platform_endpoint(true).with_backup_owner(502),
+            ServiceExecutionContext::privileged_direct_cli(true).with_backup_owner(502),
+            ServiceExecutionContext::privileged_development_stdio(true),
+        ] {
+            assert!(context.macos_worker_factory().is_none());
+            assert_eq!(context, context.duplicate_for_runtime());
+        }
     }
 }

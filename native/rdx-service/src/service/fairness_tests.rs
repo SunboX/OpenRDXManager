@@ -625,6 +625,7 @@ fn continuously_refilled_events_cannot_starve_shutdown_or_eof() {
         &receiver,
         &crashes,
         &mut output,
+        &super::session_admission::SessionAdmission::default(),
     );
     stop.store(true, Ordering::Release);
     producer.join().unwrap();

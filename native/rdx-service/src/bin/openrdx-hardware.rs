@@ -124,10 +124,14 @@ fn run_stdio_session(platform: ServicePlatform) -> Result<(), ()> {
     let context =
         ServiceExecutionContext::privileged_development_stdio(current_process_is_authorized());
     // sudo itself supplies SUDO_UID for this debug-only inherited-pipe launch.
-    let context = std::env::var("SUDO_UID")
+    let context = if let Some(owner) = std::env::var("SUDO_UID")
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
-        .map_or(context, |owner| context.with_backup_owner(owner));
+    {
+        context.with_backup_owner(owner)
+    } else {
+        context
+    };
     #[cfg(target_os = "macos")]
     let _ownership = if context.hardware_authorized() {
         // These guards must outlive the framed runtime and its joined recovery
@@ -140,7 +144,7 @@ fn run_stdio_session(platform: ServicePlatform) -> Result<(), ()> {
         None
     };
     run_framed_service_with_context(
-        readiness_backend(platform, context),
+        readiness_backend(platform, context.duplicate_for_runtime()),
         io::stdin(),
         io::stdout(),
         context,
@@ -202,7 +206,7 @@ fn run_platform_endpoint(platform: ServicePlatform) -> Result<(), ()> {
         })?;
     log_endpoint_phase("launchd-activation", None);
     for _ in 0..rdx_macos_native::launchd_endpoint_contract().max_connections {
-        let connection = match listener.accept() {
+        let mut connection = match listener.accept() {
             Ok(connection) => {
                 log_endpoint_phase("authenticated-accept", None);
                 connection
@@ -212,6 +216,7 @@ fn run_platform_endpoint(platform: ServicePlatform) -> Result<(), ()> {
                 return classify_macos_endpoint_failure(error).map_err(|_| ());
             }
         };
+        let worker_session = connection.begin_worker_session().map_err(|_| ())?;
         let reader = connection.try_clone().map_err(|_| ())?;
         let reader =
             HandshakeDeadlineReader::new(reader, FIRST_FRAME_TIMEOUT, |reader, timeout| {
@@ -221,13 +226,15 @@ fn run_platform_endpoint(platform: ServicePlatform) -> Result<(), ()> {
         let context = ServiceExecutionContext::authenticated_platform_endpoint(
             rdx_macos_native::current_process_is_privileged_service(),
         );
-        let context = context.with_backup_owner(connection.user_id());
+        let context = context
+            .with_backup_owner(connection.user_id())
+            .with_macos_worker_factory(worker_session.factory());
         let outcome = run_owned_service_session(
             rdx_macos_native::try_acquire_hardware_ownership,
             macos_ownership_is_busy,
             || {
                 run_framed_service_with_context(
-                    readiness_backend(platform, context),
+                    readiness_backend(platform, context.duplicate_for_runtime()),
                     reader,
                     connection,
                     context,
@@ -281,7 +288,7 @@ fn run_platform_endpoint(platform: ServicePlatform) -> Result<(), ()> {
             linux_ownership_is_busy,
             || {
                 run_framed_service_with_context(
-                    readiness_backend(platform, context),
+                    readiness_backend(platform, context.duplicate_for_runtime()),
                     reader,
                     connection,
                     context,

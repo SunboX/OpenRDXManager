@@ -32,6 +32,12 @@ mod ownership;
 mod ownership;
 #[cfg(target_os = "macos")]
 mod peer_session;
+#[cfg(target_os = "macos")]
+mod runtime_generation;
+#[cfg(target_os = "macos")]
+mod worker_factory;
+#[cfg(target_os = "macos")]
+pub use worker_factory::{MacManagerSessionLease, MacWorkerFactory};
 mod recovery_tty;
 mod rom;
 mod rom_inventory;

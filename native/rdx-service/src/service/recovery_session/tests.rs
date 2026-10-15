@@ -557,10 +557,98 @@ fn service_writer_failure_does_not_release_recovery_mutation() {
             &input_receiver,
             &event_receiver,
             &crashes,
-            &mut BrokenWriter
+            &mut BrokenWriter,
+            &super::super::session_admission::SessionAdmission::default()
         ),
         Err(ServiceProtocolError::Io)
     );
     drop(runtime);
     assert_eq!(harness.driver.writes.load(Ordering::SeqCst), 0);
+}
+
+/// Writer failure, protocol return and unwind revoke before an actual held recovery join completes.
+#[cfg(unix)]
+#[test]
+fn session_admission_revokes_before_recovery_join_on_error_and_unwind() {
+    use super::super::session_admission::SessionAdmission;
+    for mode in 0..5 {
+        let (_harness, session) = Harness::new(true);
+        let mut runtime = runtime(session);
+        let (entered, waiting) = mpsc::sync_channel(0);
+        let (release, resume) = mpsc::sync_channel(0);
+        runtime.recovery.worker = Some(thread::spawn(move || {
+            entered.send(()).unwrap();
+            resume.recv_timeout(Duration::from_secs(4)).unwrap();
+        }));
+        waiting.recv_timeout(Duration::from_secs(2)).unwrap();
+        let admission = SessionAdmission::fixture();
+        let observer = admission.clone();
+        let (done, completed) = mpsc::sync_channel(1);
+        let worker = thread::spawn(move || {
+            let (input, input_receiver) = mpsc::sync_channel(1);
+            use super::super::runtime_loop::InputSignal;
+            input
+                .send(match mode {
+                    1 => InputSignal::Message(json!({"unexpected":"invalid"})),
+                    3 => InputSignal::End,
+                    4 => InputSignal::Failure(ServiceProtocolError::InvalidFrameLength),
+                    _ => InputSignal::Message(
+                        json!({"type":"handshake-request","protocolVersion":1}),
+                    ),
+                })
+                .unwrap();
+            let (_events, event_receiver) = mpsc::sync_channel(1);
+            let crashes = super::super::crash::CrashAdmission::new();
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                super::super::runtime_loop::service_loop(
+                    &mut runtime,
+                    &input_receiver,
+                    &event_receiver,
+                    &crashes,
+                    &mut ExitWriter { panic: mode == 2 },
+                    &admission,
+                )
+            }));
+            // This really enters RecoverySession::drop and joins the held worker.
+            drop(runtime);
+            done.send(outcome).unwrap();
+        });
+        let revoked = observer.wait_revoked();
+        let still_joining = matches!(completed.try_recv(), Err(mpsc::TryRecvError::Empty));
+        // Release before assertions so a failing regression cannot strand its fixture thread.
+        release.send(()).unwrap();
+        let outcome = completed.recv_timeout(Duration::from_secs(2)).unwrap();
+        worker.join().unwrap();
+        assert!(revoked, "mode {mode} did not revoke before recovery join");
+        assert!(still_joining);
+        match mode {
+            0 => assert_eq!(outcome.unwrap(), Err(ServiceProtocolError::Io)),
+            1 => assert_eq!(outcome.unwrap(), Err(ServiceProtocolError::MalformedFrame)),
+            3 => assert_eq!(outcome.unwrap(), Ok(super::super::ServiceExit::EndOfInput)),
+            4 => assert_eq!(
+                outcome.unwrap(),
+                Err(ServiceProtocolError::InvalidFrameLength)
+            ),
+            _ => assert!(outcome.is_err()),
+        }
+    }
+}
+
+/// Fails only inside the framed writer, preserving the actual error/unwind path.
+#[cfg(unix)]
+struct ExitWriter {
+    panic: bool,
+}
+
+#[cfg(unix)]
+impl std::io::Write for ExitWriter {
+    /// Supplies either a real writer error or an intentional test unwind.
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        assert!(!self.panic, "injected writer unwind");
+        Err(std::io::ErrorKind::BrokenPipe.into())
+    }
+    /// Never claims publication succeeded after a failed write.
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }

@@ -327,7 +327,7 @@ impl LinuxBackend {
                         context.endpoint_authenticated(),
                         context.endpoint_authenticated() && context.process_authorized(),
                     ),
-                    context,
+                    &context,
                 ),
                 true,
             )

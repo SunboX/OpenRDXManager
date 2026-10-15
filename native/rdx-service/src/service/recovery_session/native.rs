@@ -65,6 +65,6 @@ impl Driver for NativeDriver {
         observer: &mut dyn RecoveryObserver,
     ) -> Result<RecoveryOutcome, RecoveryError> {
         self.authorize()?;
-        recover_selected_in_service(selection, observer, self.context)
+        recover_selected_in_service(selection, observer, self.context.duplicate_for_runtime())
     }
 }

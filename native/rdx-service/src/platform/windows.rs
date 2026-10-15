@@ -136,7 +136,7 @@ impl WindowsBackend {
                         native.service_running(),
                         native.current_process_authorized(),
                     ),
-                    context,
+                    &context,
                 ),
                 true,
             )

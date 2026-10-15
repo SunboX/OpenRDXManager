@@ -277,7 +277,7 @@ impl RecoveryAttempt for NativeAttempt {
 
     /// Retains one fresh target lease across bootstrap verification and final transfer.
     fn finish_release(&mut self, observer: &mut dyn RecoveryObserver) -> Result<(), RecoveryError> {
-        let mut backend = MacOsBackend::native_with_context(self.context);
+        let mut backend = MacOsBackend::native_with_context(self.context.duplicate_for_runtime());
         let mut registry = DeviceRegistry::new();
         observer.reached(RecoveryStage::VerifyingBootstrap)?;
         let bootstrap_epoch;

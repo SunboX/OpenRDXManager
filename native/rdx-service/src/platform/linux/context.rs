@@ -10,7 +10,7 @@ use super::LinuxReadinessFacts;
 /// Applies one explicit execution context without changing endpoint facts.
 pub(super) const fn apply(
     mut facts: LinuxReadinessFacts,
-    context: ServiceExecutionContext,
+    context: &ServiceExecutionContext,
 ) -> LinuxReadinessFacts {
     facts.direct_process_authorized = context.direct_process_authorized();
     facts
@@ -41,7 +41,7 @@ mod tests {
                 false,
                 false,
             ),
-            context,
+            &context,
         );
         let backend = LinuxBackend::from_readiness(facts, true);
 

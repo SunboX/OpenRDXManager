@@ -23,6 +23,12 @@ const ELECTRON_FRAMEWORK: &str =
 /// snapshot supplies no historical enrollment or publisher authority by itself.
 /// Local enrollment failure MUST NOT fall back to this separate signed route.
 pub fn verify_protected_signed_macos_runtime() -> Result<(), TrustError> {
+    verify_protected_signed_macos_runtime_inventory().map(|_| ())
+}
+
+/// Returns the same complete verified snapshot for a caller that pins one connection generation.
+/// The caller must still prove the live Apple/team code identity before and after this check.
+pub fn verify_protected_signed_macos_runtime_inventory() -> Result<RuntimeInventory, TrustError> {
     let root = Path::new(APP_ROOT);
     let inventory = snapshot(root)?;
     ensure_process_descriptor_budget(protected_runtime_handle_requirement(root, &inventory)?)?;
@@ -41,7 +47,8 @@ pub fn verify_protected_signed_macos_runtime() -> Result<(), TrustError> {
     crate::runtime::assert_same(&before, &fs::symlink_metadata(&path)?)?;
     // Bind the inspected fuse payload back to the complete retained snapshot,
     // rejecting any replacement/change between content and fuse verification.
-    crate::unix::verify_protected_file(&path, &expected.sha256, expected.size)
+    crate::unix::verify_protected_file(&path, &expected.sha256, expected.size)?;
+    Ok(inventory)
 }
 
 /// Snapshot bounded actual root-protected files and pinned framework literals.

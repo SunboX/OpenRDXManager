@@ -13,6 +13,7 @@ use serde_json::Value;
 use super::crash::CrashAdmission;
 use super::events::ServiceOperationSignal;
 use super::framing::{read_frame, write_frame};
+use super::session_admission::SessionAdmission;
 use super::{
     EVENT_POLL_INTERVAL, MAX_BACKEND_EVENT_BATCH, MAX_PENDING_SERVICE_EVENTS,
     MAX_PENDING_SERVICE_REQUESTS, ServiceBackend, ServiceEventSink, ServiceExecutionContext,
@@ -30,7 +31,12 @@ pub(super) enum InputSignal {
 }
 
 /// Reads complete bounded frames until EOF or the first protocol failure.
-pub(super) fn read_loop<R: Read>(reader: &mut R, sender: SyncSender<InputSignal>) {
+pub(super) fn read_loop<R: Read>(
+    reader: &mut R,
+    sender: SyncSender<InputSignal>,
+    admission: SessionAdmission,
+) {
+    let _reader_disconnect = admission.disconnect_guard();
     loop {
         let signal = match read_frame(reader) {
             Ok(Some(value)) => InputSignal::Message(value),
@@ -38,6 +44,10 @@ pub(super) fn read_loop<R: Read>(reader: &mut R, sender: SyncSender<InputSignal>
             Err(error) => InputSignal::Failure(error),
         };
         let terminal = !matches!(signal, InputSignal::Message(_));
+        // Revoke at observation, before a full queue can delay the terminal signal.
+        if terminal {
+            admission.revoke();
+        }
         if sender.send(signal).is_err() || terminal {
             return;
         }
@@ -51,13 +61,20 @@ pub(super) fn service_loop<B: ServiceBackend, W: Write>(
     events: &Receiver<Box<ServiceOperationSignal>>,
     crashes: &CrashAdmission,
     writer: &mut W,
+    admission: &SessionAdmission,
 ) -> Result<ServiceExit, ServiceProtocolError> {
+    let _session_disconnect = admission.disconnect_guard();
     let _disconnect_guard = crashes.disconnect_guard();
     loop {
         drain_backend_signals(runtime, events, crashes, writer)?;
         check_active_deadline(runtime)?;
         match input.recv_timeout(EVENT_POLL_INTERVAL) {
             Ok(InputSignal::Message(value)) => {
+                // The reader may have observed EOF with this request still queued.
+                // This short check is its admission boundary, never a primitive-command check.
+                if !admission.is_active() {
+                    return Ok(ServiceExit::EndOfInput);
+                }
                 let (messages, stop) = runtime.handle_message(value)?;
                 for message in messages {
                     write_frame(writer, &message)?;
@@ -173,14 +190,24 @@ where
         mpsc::sync_channel::<Box<ServiceOperationSignal>>(MAX_PENDING_SERVICE_EVENTS);
     let crashes = CrashAdmission::new();
     let event_sink = ServiceEventSink::new(event_sender, crashes.clone());
+    let admission = SessionAdmission::from_context(&context);
     let mut runtime = ServiceRuntime::new_with_context(backend, event_sink, context);
+    // Declared after runtime, this revokes before recovery Drop/join on every path,
+    // including a reader-thread spawn panic before entering service_loop.
+    let _revoke_before_runtime_drop = admission.disconnect_guard();
     // Detach only the stream reader. Recovery's dedicated worker is always joined.
-    let _reader = thread::spawn(move || read_loop(&mut reader, input_sender));
+    let reader_admission = admission.clone();
+    let _reader = thread::spawn(move || read_loop(&mut reader, input_sender, reader_admission));
     service_loop(
         &mut runtime,
         &input_receiver,
         &event_receiver,
         &crashes,
         &mut writer,
+        &admission,
     )
 }
+
+#[cfg(all(test, unix))]
+#[path = "runtime_loop_session_tests.rs"]
+mod session_tests;

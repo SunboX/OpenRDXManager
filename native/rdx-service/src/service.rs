@@ -24,6 +24,7 @@ mod platform_descriptor;
 mod process_security;
 mod recovery_session;
 mod runtime_loop;
+mod session_admission;
 
 /// Stable high-level command-line parsing, output, and exit-code policy.
 pub mod cli;
