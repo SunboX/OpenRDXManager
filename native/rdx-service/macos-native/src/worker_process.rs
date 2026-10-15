@@ -11,24 +11,29 @@ use std::{
         fd::{AsRawFd, FromRawFd, RawFd},
         unix::process::ExitStatusExt,
     },
-    process::{Child, ExitStatus},
+    process::ExitStatus,
     sync::atomic::Ordering,
     thread,
     time::{Duration, Instant},
 };
 
+#[cfg(test)]
+use std::process::Child;
+
 /// Retains the existing standard pipe or the public posix_spawn pipe with identical IO semantics.
 pub(super) enum WorkerPipe<T> {
+    #[cfg(test)]
     Standard(T),
-    Spawned(File),
+    Spawned(File, std::marker::PhantomData<T>),
 }
 
 impl<T: Read> Read for WorkerPipe<T> {
     /// Reads only this retained pipe; deadline policy remains at the existing IO boundary.
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
         match self {
+            #[cfg(test)]
             Self::Standard(pipe) => pipe.read(bytes),
-            Self::Spawned(pipe) => pipe.read(bytes),
+            Self::Spawned(pipe, _) => pipe.read(bytes),
         }
     }
 }
@@ -37,15 +42,17 @@ impl<T: Write> Write for WorkerPipe<T> {
     /// Writes only this retained pipe without resetting caller deadlines.
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         match self {
+            #[cfg(test)]
             Self::Standard(pipe) => pipe.write(bytes),
-            Self::Spawned(pipe) => pipe.write(bytes),
+            Self::Spawned(pipe, _) => pipe.write(bytes),
         }
     }
     /// Preserves the underlying writer's flush contract.
     fn flush(&mut self) -> io::Result<()> {
         match self {
+            #[cfg(test)]
             Self::Standard(pipe) => pipe.flush(),
-            Self::Spawned(pipe) => pipe.flush(),
+            Self::Spawned(pipe, _) => pipe.flush(),
         }
     }
 }
@@ -54,14 +61,16 @@ impl<T: AsRawFd> AsRawFd for WorkerPipe<T> {
     /// Borrows the live owned descriptor; never transfers or fabricates ownership.
     fn as_raw_fd(&self) -> RawFd {
         match self {
+            #[cfg(test)]
             Self::Standard(pipe) => pipe.as_raw_fd(),
-            Self::Spawned(pipe) => pipe.as_raw_fd(),
+            Self::Spawned(pipe, _) => pipe.as_raw_fd(),
         }
     }
 }
 
 /// Existing Child behavior and supported posix_spawn ownership share the lease's original cleanup.
 pub(super) enum WorkerProcess {
+    #[cfg(test)]
     Standard(Child),
     Spawned(OwnedSpawnedChild),
 }
@@ -70,6 +79,7 @@ impl WorkerProcess {
     /// Returns only the actual PID yielded by the successful corresponding spawn API.
     pub(super) fn id(&self) -> u32 {
         match self {
+            #[cfg(test)]
             Self::Standard(child) => child.id(),
             Self::Spawned(child) => child.pid as u32,
         }
@@ -77,6 +87,7 @@ impl WorkerProcess {
     /// Polls one retained process without blocking; only this owner waits for its exact PID.
     pub(super) fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         match self {
+            #[cfg(test)]
             Self::Standard(child) => child.try_wait(),
             Self::Spawned(child) => child.try_wait(),
         }
@@ -84,14 +95,17 @@ impl WorkerProcess {
     /// Signals only the retained, unreaped process; new ownership loss permanently disarms signalling.
     pub(super) fn kill(&mut self, deadline: Instant) -> io::Result<()> {
         match self {
+            #[cfg(test)]
             Self::Standard(child) => child.kill(),
             Self::Spawned(child) => child.kill(deadline),
         }
     }
     /// Ends cleanup after its single bounded attempt; no Drop can start another wait budget.
     pub(super) fn abandon(&mut self) {
-        if let Self::Spawned(child) = self {
-            child.lose(libc::ETIMEDOUT);
+        match self {
+            Self::Spawned(child) => child.lose(libc::ETIMEDOUT),
+            #[cfg(test)]
+            Self::Standard(_) => {}
         }
     }
 }
@@ -316,6 +330,15 @@ pub(super) fn spawn_gui(peer: &PeerSession) -> Result<SpawnedProcess, NativeErro
     output.take()
 }
 
+/// Direct process launch resolves its own current native executable and uses the same closed role.
+pub(super) fn spawn_direct() -> Result<SpawnedProcess, NativeError> {
+    let mut output = SpawnOutput::empty();
+    // SAFETY: no caller target/args enter C; it owns setup and transfers outputs only on success.
+    let status = unsafe { rdx_macos_spawn_direct_worker(&mut output) };
+    crate::status_result(status)?;
+    output.take()
+}
+
 /// Reuses the actual native primitive with a harmless fixed C protocol fixture only in unit tests.
 #[cfg(all(test, feature = "test-hooks"))]
 pub(crate) fn context_process_fixture(bad: bool) -> (SpawnedProcess, tempfile::TempDir) {
@@ -339,6 +362,7 @@ pub(crate) fn context_process_fixture(bad: bool) -> (SpawnedProcess, tempfile::T
 
 // SAFETY: this independent compiler-checked output ABI transfers ownership only on status OK.
 unsafe extern "C" {
+    fn rdx_macos_spawn_direct_worker(output: *mut SpawnOutput) -> u32;
     fn rdx_macos_spawn_gui_worker(
         peer: *const ffi::PeerSessionRecord,
         output: *mut SpawnOutput,

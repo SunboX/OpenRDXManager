@@ -88,6 +88,10 @@ async function testMacOsServiceUsesDisposableScsiWorker() {
     const source = await readFile(platformAdapterUrl, 'utf8')
     const candidateSource = await readFile(candidateAdapterUrl, 'utf8')
     const workerSource = await readFile(workerAdapterUrl, 'utf8')
+    const handoffSource = await readFile(new URL('../native/rdx-service/src/platform/macos/scsi_handoff.rs', import.meta.url), 'utf8')
+    const routeSource = await readFile(new URL('../native/rdx-service/src/platform/macos/worker_route.rs', import.meta.url), 'utf8')
+    const spawnSource = await readFile(new URL('../native/rdx-service/native/macos/rdx_worker_spawn.c', import.meta.url), 'utf8')
+    const contextSource = await readFile(new URL('../native/rdx-service/macos-native/src/scsi_worker_context.rs', import.meta.url), 'utf8')
     const binarySource = await readFile(serviceBinaryUrl, 'utf8')
     const start = source.indexOf('struct MacOsDeviceHandle')
     const end = source.indexOf('/// Converts an exact classified packet', start)
@@ -96,9 +100,22 @@ async function testMacOsServiceUsesDisposableScsiWorker() {
     assert.match(implementation, /Option<rdx_macos_native::MacScsiWorkerLease>/u, 'the service handle must own only the disposable worker proxy')
     assert.doesNotMatch(implementation, /Option<rdx_macos_native::MacScsiLease>/u, 'the long-lived service must not own DeviceCapture directly')
     assert.match(source, /fn open_candidate\([\s\S]*?self\.open_registry_candidate\(candidate\)/u, 'the backend must delegate to the checked candidate acquisition module')
-    // The extracted handoff permits only the inert diagnostic assignment between release and spawn.
-    assert.match(candidateSource, /invalidate_media_mapping_for_rematch\(\);\s*drop\(authority\);\s*failure_stage = DiscoveryFailure::WorkerAcquisition;\s*let scsi = rdx_macos_native::MacScsiWorkerLease::spawn[\s\S]*?_authority: None/u, 'the parent must release every IOKit device client before the worker captures USB')
-    assert.match(workerSource, /Command::new\(executable\)[\s\S]*?\.arg\("--openrdx-internal-macos-scsi-worker"\)/u, 'the proxy must spawn only the current executable in its fixed hidden mode')
+    assert.match(candidateSource, /invalidate_media_mapping_for_rematch\(\);[\s\S]*?failure_stage = DiscoveryFailure::WorkerAcquisition;\s*let scsi = super::scsi_handoff::release_parent_and_spawn\(Some\(authority\), \|\| \{\s*worker_route\.spawn\(&rematch_identity\)[\s\S]*?_authority: None/u, 'the candidate must transfer parent ownership into the actual release-before-factory helper')
+    assert.match(handoffSource, /fn release_parent_and_spawn<A, W>\([\s\S]*?drop\(parent\);\s*spawn\(\)/u, 'the consumed helper must drop every parent client before calling the retained factory')
+    assert.match(routeSource, /Self::Manager\(factory\) \| Self::Direct\(factory\) => factory\.spawn\(identity\)/u, 'capture must require an opaque native GUI or direct capability')
+    assert.doesNotMatch(routeSource, /LegacyDirect|MacScsiWorkerLease::spawn|Command::new/u, 'missing or refused GUI authority must have no raw process fallback')
+    const directStart = spawnSource.indexOf('static rdx_macos_status rdx_spawn_current_worker(')
+    const directEnd = spawnSource.indexOf('rdx_macos_status rdx_macos_spawn_direct_worker(', directStart)
+    assert.notEqual(directStart, -1)
+    assert.notEqual(directEnd, -1)
+    const directLauncher = spawnSource.slice(directStart, directEnd)
+    assert.match(directLauncher, /_NSGetExecutablePath\(unresolved, &capacity\)[\s\S]*?realpath\(unresolved, executable\)[\s\S]*?char \*const argv\[\] = \{executable, "--openrdx-internal-macos-scsi-worker", NULL\};\s*char \*const environment\[\] = \{"LANG=C", NULL\};\s*return rdx_spawn_worker\(executable, argv, environment, 0, output\)/u, 'direct mode must resolve only its actual native current executable and fixed role/environment')
+    assert.doesNotMatch(directLauncher, /launchctl|asuser/u, 'direct authority must preserve its caller session')
+    assert.match(spawnSource, /rdx_macos_spawn_direct_worker\([\s\S]*?getuid\(\) != 0 \|\| geteuid\(\) != 0[\s\S]*?return rdx_spawn_current_worker\(output\)/u, 'the direct native entry must independently require actual root')
+    assert.match(spawnSource, /POSIX_SPAWN_CLOEXEC_DEFAULT \| POSIX_SPAWN_SETSIGMASK \| POSIX_SPAWN_SETSIGDEF/u, 'all native launches must keep the reviewed descriptor/signal setup')
+    assert.doesNotMatch(workerSource, /pub fn spawn\(|pub fn run_scsi_worker</u, 'the public raw spawn and raw INIT entry must remain unavailable')
+    assert.match(contextSource, /fn child_preflight_role\([\s\S]*?ContextRequest::decode\([\s\S]*?expected\.verify\([\s\S]*?FRAME_CONTEXT_PROOF[\s\S]*?FRAME_CONTEXT_OK[\s\S]*?FRAME_INIT/u, 'every production role must prove actual context and receive ACK before INIT')
+    assert.match(workerSource, /drop\(scsi\);\s*drop\(authority\);/u, 'the disposable child must preserve capture-before-parent native release ordering')
     assert.match(binarySource, /--openrdx-internal-macos-scsi-worker[\s\S]*?arguments\.next\(\)\.is_none\(\)[\s\S]*?current_process_is_authorized\(\)[\s\S]*?run_scsi_worker/u, 'the hidden mode must reject extra arguments and require inherited privileged authority')
 }
 
@@ -184,6 +201,51 @@ async function testStorageRematchEnumeratesBothScsiRegistryClasses() {
     assert.match(revalidateSource, /rdx_macos_enumerate[\s\S]*?rdx_stable_candidate_identity_matches/u, 'rebind must use the same two-class, stable-identity enumeration')
 }
 
+/**
+ * Cross-checks the serial route's exact existing target, unmounted-media and USB gates around spawn.
+ *
+ * @returns {Promise<void>} Resolves after every consumed guard remains present and ordered.
+ */
+async function testSerialWorkerRetainsExactTargetAndDirectOnlyPolicy() {
+    const source = await readFile(new URL('../native/rdx-service/src/serial_cli/native.rs', import.meta.url), 'utf8')
+    const binary = await readFile(new URL('../native/rdx-service/src/bin/openrdx-serial.rs', import.meta.url), 'utf8')
+    const worker = await readFile(workerAdapterUrl, 'utf8')
+    assert.match(source, /usb\.vendor_id\(\) == 0x1a5a[\s\S]*?usb\.product_id\(\) == 5[\s\S]*?usb\.location_id\(\) != 0[\s\S]*?usb\.location_id\(\) == target\.location[\s\S]*?usb\.serial\(\) == target\.serial/u, 'only the complete explicit USB target may match')
+    assert.match(source, /fn select\([\s\S]*?if selected\.is_some\(\)[\s\S]*?serial-target-ambiguous/u, 'the exact target must remain unique')
+    assert.match(source, /fn acquire\([\s\S]*?select\(target\)[\s\S]*?pin_media\(\)[\s\S]*?mounted_media_count\(\) != 0[\s\S]*?serial-mounted-media-refused[\s\S]*?matches_usb\(&device\.usb_identity\([\s\S]*?drop\(device\);\s*let mut worker = rdx_macos_native::MacDirectWorkerFactory::for_current_privileged_process\(\)[\s\S]*?factory\.spawn\(&identity\)[\s\S]*?matches_usb\(&worker\.usb_identity\([\s\S]*?worker\.release_for_storage_rematch\(\)/u, 'serial must check exact unmounted parent USB evidence, drop parent before factory spawn, then verify child USB or release it')
+    assert.match(binary, /args_os\(\)\.skip\(1\)\.collect::<Vec<_>>\(\) == \["--openrdx-internal-macos-scsi-worker"\][\s\S]*?run_serial_scsi_worker_stdio\(\)/u, 'serial must keep the existing sole hidden argument and its own closed role')
+    assert.match(worker, /run_serial_scsi_worker_stdio\(\)[\s\S]*?context::run_stdio\(true\)/u, 'serial must use direct preflight and its own command-loop policy')
+    assert.match(worker, /if serial_only[\s\S]*?usb_identity_is_valid[\s\S]*?EvidenceIncomplete[\s\S]*?authority\.acquire_scsi\(\)/u, 'the serial child must validate physical USB evidence before capture')
+    assert.match(worker, /if !operation_allowed\(serial_only, request\.operation\) \{\s*return Err\(NativeError::InvalidRequest\)/u, 'serial must enforce its existing closed semantic operations before native dispatch')
+}
+
+/**
+ * Cross-checks the three explicit recovery entrypoints prepare native direct authority before work.
+ *
+ * @returns {Promise<void>} Resolves after direct and supplied-service routes remain distinct.
+ */
+async function testRecoveryPreparesNativeAuthorityBeforeAttempt() {
+    const source = await readFile(new URL('../native/rdx-service/src/service/recovery/native.rs', import.meta.url), 'utf8')
+    const context = await readFile(new URL('../native/rdx-service/src/service/recovery/native_context.rs', import.meta.url), 'utf8')
+    for (const [startText, endText] of [
+        ['pub(super) fn recover(', '/// Returns only current route'],
+        ['pub(super) fn recover_selected(', '/// Uses only trusted caller-held'],
+        ['pub(super) fn verify_existing(', null]
+    ]) {
+        const start = source.indexOf(startText)
+        assert.notEqual(start, -1)
+        const end = endText === null ? source.length : source.indexOf(endText, start)
+        assert.ok(end > start)
+        const entry = source.slice(start, end)
+        assert.match(entry, /acquire_owner\(\)\?;\s*with_recovery_context\(ContextAuthority::Direct, mint_direct_context, \|context\|/u, 'each direct route must obtain native authority after ownership and before entering its attempt')
+        assert.doesNotMatch(entry, /privileged_direct_cli\(true\)/u, 'bare flags cannot stand in for a native factory')
+    }
+    assert.match(context, /fn mint_direct_context\([\s\S]*?MacDirectWorkerFactory::for_current_privileged_process\(\)[\s\S]*?privileged_direct_cli\(true\)\s*\.with_macos_direct_worker_factory\(factory\)/u, 'only the native-minted direct factory may prepare recovery context')
+    assert.match(context, /ContextAuthority::Direct => mint\(\)\?,\s*ContextAuthority::Service\(context\) => context,[\s\S]*?attempt\(context\)/u, 'mint refusal must precede the attempt and service authority must pass through unchanged')
+    assert.match(source, /fn recover_in_service\([\s\S]*?ContextAuthority::Service\(context\)/u, 'the authenticated service route must retain its original context')
+    assert.match(source, /fn finish_release\([\s\S]*?MacOsBackend::native_with_context\(self\.context\.duplicate_for_runtime\(\)\)/u, 'finishing and fresh readback must retain the exact original recovery authority')
+}
+
 test('macOS host-fact revalidation preserves the retained protocol lease', testRetainedScsiSurvivesHostFactRevalidation)
 test('macOS Safe Eject uses Disk Arbitration after releasing USB capture', testSafeEjectUsesDiskArbitration)
 test('macOS Safe Eject uses a fixed Apple fallback after exact target revalidation', testSafeEjectUsesValidatedAppleFallback)
@@ -192,3 +254,7 @@ test('macOS Safe Eject emits fixed breadcrumbs around every native boundary', te
 test('macOS Safe Eject identifies every fresh-authority reopen boundary', testSafeEjectPublishesAuthorityReopenBreadcrumbs)
 test('macOS Safe Eject confirms departure through Disk Arbitration', testSafeEjectReadbackUsesDiskArbitration)
 test('macOS storage rematch enumerates both direct-access SCSI registry classes', testStorageRematchEnumeratesBothScsiRegistryClasses)
+
+test('serial capture retains exact target and direct-only worker policy', testSerialWorkerRetainsExactTargetAndDirectOnlyPolicy)
+
+test('direct recovery prepares native authority before mutation and retains service context', testRecoveryPreparesNativeAuthorityBeforeAttempt)

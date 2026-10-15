@@ -4,7 +4,7 @@
 //! Private child context preflight shares the original initialization deadline and child owner.
 
 use super::*;
-use crate::worker_context::{WorkerContext, WorkerExpectation};
+use crate::worker_context::{ContextExpectation, ContextRequest, WorkerContext};
 use std::os::fd::AsRawFd;
 
 const FRAME_CONTEXT_REQUEST: u8 = 10;
@@ -51,9 +51,9 @@ impl<T: AsRawFd> Write for RolePipe<'_, T> {
 
 impl MacScsiWorkerLease {
     /// Arms the same lease immediately and shares one pre-spawn budget across setup/proof/INIT.
-    pub(crate) fn initialize_gui_process(
+    pub(crate) fn initialize_context_process(
         process: crate::worker_process::SpawnedProcess,
-        expected: &WorkerExpectation,
+        expected: &impl ContextExpectation,
         identity: &MacRematchIdentity,
         deadline: Instant,
         acknowledge: impl FnOnce(&mut Self) -> Result<(), NativeError>,
@@ -65,10 +65,10 @@ impl MacScsiWorkerLease {
             child,
         } = process;
         let mut worker = Self {
-            input: Some(WorkerPipe::Spawned(input)),
-            output: Some(WorkerPipe::Spawned(output)),
+            input: Some(WorkerPipe::Spawned(input, std::marker::PhantomData)),
+            output: Some(WorkerPipe::Spawned(output, std::marker::PhantomData)),
             diagnostics: crate::scsi_worker_startup::StartupDiagnostics::from_pipe(Some(
-                WorkerPipe::Spawned(error),
+                WorkerPipe::Spawned(error, std::marker::PhantomData),
             )),
             child: Some(WorkerProcess::Spawned(child)),
         };
@@ -87,13 +87,13 @@ impl MacScsiWorkerLease {
     /// Admits initialization only after actual-child proof and the final fresh connection gate.
     fn prove_context(
         &mut self,
-        expected: &WorkerExpectation,
+        expected: &impl ContextExpectation,
         deadline: Instant,
         acknowledge: impl FnOnce(&mut Self) -> Result<(), NativeError>,
     ) -> Result<(), NativeError> {
         let result = (|| {
             self.write_frame_phase(
-                FRAME_CONTEXT_REQUEST,
+                expected.request_kind(),
                 &expected.encode(),
                 deadline,
                 "context-request",
@@ -230,27 +230,28 @@ fn write_bounded(
 }
 
 /// Runs no initializer; returns INIT only after actual current self-proof and final parent ACK.
-fn child_preflight(
+fn child_preflight_role(
     input: &mut (impl Read + AsRawFd),
     output: &mut (impl Write + AsRawFd),
     deadline: Instant,
-    sample: impl FnOnce(&WorkerExpectation) -> Result<WorkerContext, NativeError>,
+    serial_only: bool,
+    sample: impl FnOnce(&ContextRequest) -> Result<WorkerContext, NativeError>,
 ) -> Result<(u8, Vec<u8>), NativeError> {
     let first = read_bounded(
         input,
         deadline,
         &[
-            (FRAME_INIT, IDENTITY_BYTES),
             (
                 FRAME_CONTEXT_REQUEST,
                 crate::worker_context::EXPECTATION_BYTES,
             ),
+            (
+                crate::worker_context::FRAME_DIRECT_CONTEXT_REQUEST,
+                crate::worker_context::DIRECT_EXPECTATION_BYTES,
+            ),
         ],
     )?;
-    if first.0 == FRAME_INIT {
-        return Ok(first);
-    } // Explicit legacy route remains until Tasks 4/5.
-    let expected = WorkerExpectation::decode(&first.1)?;
+    let expected = ContextRequest::decode(first.0, &first.1, serial_only)?;
     let observed = sample(&expected)?;
     expected.verify(&observed, std::process::id())?;
     write_bounded(output, FRAME_CONTEXT_PROOF, &observed.encode(), deadline)?;
@@ -259,19 +260,22 @@ fn child_preflight(
 }
 
 /// Fixed privileged role entry; actual public self-audit precedes any existing native initializer.
-pub(super) fn run_stdio() -> Result<(), NativeError> {
+pub(super) fn run_stdio(serial_only: bool) -> Result<(), NativeError> {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     let input = stdin.lock();
     let output = stdout.lock();
     let deadline = Instant::now() + INIT_TIMEOUT;
-    crate::enable_acquisition_diagnostics();
+    if !serial_only {
+        crate::enable_acquisition_diagnostics();
+    }
     let mut flags = StdioFlags::nonblocking(&input, &output)?;
-    let initial = crate::scsi_worker_startup::step("init-read", true, || {
-        child_preflight(
+    let initial = crate::scsi_worker_startup::step("init-read", !serial_only, || {
+        child_preflight_role(
             &mut RolePipe(&input),
             &mut RolePipe(&output),
             deadline,
+            serial_only,
             |_| WorkerContext::current(),
         )
     })?;
@@ -279,7 +283,18 @@ pub(super) fn run_stdio() -> Result<(), NativeError> {
     if Instant::now() >= deadline {
         return Err(NativeError::TimedOut);
     }
-    run_worker_with_initial(input, output, false, Some(initial))
+    run_worker_with_initial(input, output, serial_only, initial)
+}
+
+/// Shared exact preflight with non-authorizing GUI sampling only for hardware-free unit fixtures.
+#[cfg(test)]
+fn child_preflight(
+    input: &mut (impl Read + AsRawFd),
+    output: &mut (impl Write + AsRawFd),
+    deadline: Instant,
+    sample: impl FnOnce(&ContextRequest) -> Result<WorkerContext, NativeError>,
+) -> Result<(u8, Vec<u8>), NativeError> {
+    child_preflight_role(input, output, deadline, false, sample)
 }
 
 #[cfg(test)]

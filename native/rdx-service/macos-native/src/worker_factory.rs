@@ -147,7 +147,7 @@ impl MacWorkerFactory {
             .inspect_err(|error| diagnostic::parent_failure("process-spawn", *error))?;
         let expected =
             WorkerExpectation::gui(&self.state.peer, self.state.credentials, process.child.id())?;
-        crate::MacScsiWorkerLease::initialize_gui_process(
+        crate::MacScsiWorkerLease::initialize_context_process(
             process,
             &expected,
             identity,

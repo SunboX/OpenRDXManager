@@ -310,6 +310,7 @@ pub(super) struct StartupDiagnostics {
 
 impl StartupDiagnostics {
     /// Takes only the stderr descriptor from this exact already-spawned child.
+    #[cfg(test)]
     pub(super) fn new(pipe: Option<ChildStderr>) -> Self {
         Self::from_pipe(pipe.map(crate::worker_process::WorkerPipe::Standard))
     }
@@ -325,6 +326,7 @@ impl StartupDiagnostics {
     }
 
     /// Checks ownership before setup without ever reading a possibly blocking pipe.
+    #[cfg(test)]
     pub(super) fn has_pipe(&self) -> bool {
         self.pipe.is_some()
     }

@@ -368,11 +368,19 @@ pub(super) fn current_hardware_backend()
         ),
     );
     #[cfg(target_os = "macos")]
-    let backend = crate::platform::macos::MacOsBackend::native_with_context(
-        super::ServiceExecutionContext::privileged_direct_cli(
-            rdx_macos_native::current_process_is_privileged_service(),
-        ),
-    );
+    let backend = {
+        let authorized = rdx_macos_native::current_process_is_privileged_service();
+        let context = super::ServiceExecutionContext::privileged_direct_cli(authorized);
+        let context = if authorized {
+            context.with_macos_direct_worker_factory(
+                rdx_macos_native::MacDirectWorkerFactory::for_current_privileged_process()
+                    .map_err(|_| ServiceProtocolError::BackendContract)?,
+            )
+        } else {
+            context
+        };
+        crate::platform::macos::MacOsBackend::native_with_context(context)
+    };
     #[cfg(windows)]
     let backend = crate::platform::windows::WindowsBackend::native_with_context(
         super::ServiceExecutionContext::privileged_direct_cli(

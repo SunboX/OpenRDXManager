@@ -341,3 +341,37 @@ fn isolated_process_fixture() {
     }
     std::fs::write(report, "passed").unwrap();
 }
+
+/// Actual same-executable resolver uses no launchctl and preserves the reviewed owned pipe contract.
+#[test]
+fn direct_current_executable_fixed_role_has_close_default_pipe_signal_contract() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("direct.c");
+    std::fs::write(&source, include_str!("worker_direct_spawn_fixture.c")).unwrap();
+    let bridge = Path::new(env!("CARGO_MANIFEST_DIR")).join("../native/macos");
+    let executable = directory.path().join("direct");
+    let result = Command::new("/usr/bin/clang")
+        .args([
+            "-std=c17",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-Wpedantic",
+            "-DRDX_MACOS_TEST_HOOKS=1",
+            "-I",
+        ])
+        .arg(&bridge)
+        .arg(&source)
+        .arg(bridge.join("rdx_worker_spawn.c"))
+        .arg("-o")
+        .arg(&executable)
+        .status()
+        .unwrap();
+    assert!(result.success());
+    let result = Command::new(&executable).output().unwrap();
+    assert!(result.status.success(), "{result:?}");
+    assert_eq!(
+        String::from_utf8(result.stdout).unwrap().trim(),
+        "fixed-current-exe direct-role exact-pid pipes env fd signal exit37 reaped"
+    );
+}

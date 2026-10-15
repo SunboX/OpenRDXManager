@@ -4,6 +4,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <mach-o/dyld.h>
+#include <limits.h>
+#include <stdlib.h>
 #include <spawn.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -123,7 +126,31 @@ rdx_macos_status rdx_macos_spawn_gui_worker(const rdx_macos_peer_session *verifi
     return rdx_spawn_worker("/bin/launchctl", argv, environment, 0, output);
 }
 
+/** Resolves only this native process executable; no caller-selected target or argument exists. */
+static rdx_macos_status rdx_spawn_current_worker(rdx_macos_worker_process *output) {
+    char unresolved[PATH_MAX], executable[PATH_MAX];
+    uint32_t capacity = sizeof(unresolved);
+    if (_NSGetExecutablePath(unresolved, &capacity) != 0 ||
+        realpath(unresolved, executable) == NULL || executable[0] != '/') {
+        return RDX_MACOS_STATUS_TRANSPORT_UNAVAILABLE;
+    }
+    char *const argv[] = {executable, "--openrdx-internal-macos-scsi-worker", NULL};
+    char *const environment[] = {"LANG=C", NULL};
+    return rdx_spawn_worker(executable, argv, environment, 0, output);
+}
+
+rdx_macos_status rdx_macos_spawn_direct_worker(rdx_macos_worker_process *output) {
+    if (output == NULL) { return RDX_MACOS_STATUS_INVALID_ARGUMENT; }
+    *output = (rdx_macos_worker_process){ .version = 1, .size = sizeof(*output),
+        .pid = -1, .input_fd = -1, .output_fd = -1, .error_fd = -1 };
+    if (getuid() != 0 || geteuid() != 0) { return RDX_MACOS_STATUS_ACCESS_DENIED; }
+    return rdx_spawn_current_worker(output);
+}
+
 #if defined(RDX_MACOS_TEST_HOOKS)
+rdx_macos_status rdx_macos_test_spawn_current_worker(rdx_macos_worker_process *output) {
+    return rdx_spawn_current_worker(output);
+}
 rdx_macos_status rdx_macos_test_spawn_worker(const char *program, char *const argv[],
     char *const environment[], uint32_t fail_step, rdx_macos_worker_process *output) {
     return rdx_spawn_worker(program, argv, environment, fail_step, output);

@@ -5,6 +5,11 @@
 
 use crate::{NativeError, peer_session::PeerSession};
 
+#[path = "worker_direct_context.rs"]
+mod direct;
+pub(super) use direct::{DIRECT_EXPECTATION_BYTES, FRAME_DIRECT_CONTEXT_REQUEST};
+pub(super) use direct::{DirectBaseline, DirectExpectation};
+
 pub(super) const CONTEXT_BYTES: usize = 72;
 pub(super) const EXPECTATION_BYTES: usize = 40;
 
@@ -224,6 +229,65 @@ impl WorkerContext {
             session: words[16],
             attributes: words[17],
         })
+    }
+}
+
+/// Private proof contract shared by separately encoded GUI and direct expectations.
+pub(super) trait ContextExpectation {
+    /// Closed request frame kind; neither type permits caller arguments or paths.
+    fn request_kind(&self) -> u8;
+    /// Fixed private request with the mode's original native evidence.
+    fn encode(&self) -> Vec<u8>;
+    /// Compares private proof to the actual independently held child PID.
+    fn verify(&self, observed: &WorkerContext, owned_child_pid: u32) -> Result<(), NativeError>;
+}
+
+impl ContextExpectation for WorkerExpectation {
+    /// Preserves the original GUI request kind and wire shape.
+    fn request_kind(&self) -> u8 {
+        10
+    }
+    /// Delegates to the unchanged fixed-width GUI request encoder.
+    fn encode(&self) -> Vec<u8> {
+        Self::encode(self)
+    }
+    /// Keeps the original graphical-session child policy unchanged.
+    fn verify(&self, observed: &WorkerContext, pid: u32) -> Result<(), NativeError> {
+        Self::verify(self, observed, pid)
+    }
+}
+
+/// Closed role request decoded before any public self-audit or native initializer.
+pub(super) enum ContextRequest {
+    Gui(WorkerExpectation),
+    Direct(DirectExpectation),
+}
+
+impl ContextRequest {
+    /// Reads one known private mode; the serial executable never admits a GUI mode.
+    pub(super) fn decode(kind: u8, bytes: &[u8], serial_only: bool) -> Result<Self, NativeError> {
+        match kind {
+            10 if !serial_only => WorkerExpectation::decode(bytes).map(Self::Gui),
+            FRAME_DIRECT_CONTEXT_REQUEST => DirectExpectation::decode(bytes).map(Self::Direct),
+            _ => Err(NativeError::InvalidRequest),
+        }
+    }
+
+    /// Shares exact child policy without allowing the request to select its command-loop policy.
+    pub(super) fn verify(&self, observed: &WorkerContext, pid: u32) -> Result<(), NativeError> {
+        match self {
+            Self::Gui(expected) => expected.verify(observed, pid),
+            Self::Direct(expected) => expected.verify(observed, pid),
+        }
+    }
+
+    /// Synthetic metadata fixture only; neither branch can mint a production native factory.
+    #[cfg(test)]
+    pub(super) fn matching_fixture(&self) -> WorkerContext {
+        match self {
+            Self::Gui(expected) => WorkerContext::matching_fixture(expected),
+            Self::Direct(expected) => expected.matching_fixture(),
+        }
     }
 }
 

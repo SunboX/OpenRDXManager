@@ -18,6 +18,8 @@ pub struct ServiceExecutionContext {
     backup_owner: Option<u32>,
     #[cfg(target_os = "macos")]
     macos_worker_factory: Option<rdx_macos_native::MacWorkerFactory>,
+    #[cfg(target_os = "macos")]
+    macos_direct_worker_factory: Option<rdx_macos_native::MacDirectWorkerFactory>,
 }
 
 impl ServiceExecutionContext {
@@ -54,6 +56,26 @@ impl ServiceExecutionContext {
         self.macos_worker_factory.as_ref()
     }
 
+    /// Retains existing native direct authority only for explicitly selected process-authorized modes.
+    #[cfg(target_os = "macos")]
+    #[must_use]
+    pub fn with_macos_direct_worker_factory(
+        mut self,
+        factory: rdx_macos_native::MacDirectWorkerFactory,
+    ) -> Self {
+        if !self.endpoint_authenticated && self.direct_process_authorized() {
+            self.macos_direct_worker_factory = Some(factory);
+        }
+        self
+    }
+
+    /// Borrows direct authority; flags, endpoint payloads and backup ownership cannot manufacture it.
+    #[cfg(target_os = "macos")]
+    #[must_use]
+    pub fn macos_direct_worker_factory(&self) -> Option<&rdx_macos_native::MacDirectWorkerFactory> {
+        self.macos_direct_worker_factory.as_ref()
+    }
+
     /// Creates the unprivileged development-stdio execution context.
     #[must_use]
     pub const fn development_stdio() -> Self {
@@ -65,6 +87,8 @@ impl ServiceExecutionContext {
             backup_owner: None,
             #[cfg(target_os = "macos")]
             macos_worker_factory: None,
+            #[cfg(target_os = "macos")]
+            macos_direct_worker_factory: None,
         }
     }
 
@@ -83,6 +107,8 @@ impl ServiceExecutionContext {
             backup_owner: None,
             #[cfg(target_os = "macos")]
             macos_worker_factory: None,
+            #[cfg(target_os = "macos")]
+            macos_direct_worker_factory: None,
         }
     }
 
@@ -100,6 +126,8 @@ impl ServiceExecutionContext {
             backup_owner: None,
             #[cfg(target_os = "macos")]
             macos_worker_factory: None,
+            #[cfg(target_os = "macos")]
+            macos_direct_worker_factory: None,
         }
     }
 
@@ -120,6 +148,8 @@ impl ServiceExecutionContext {
             backup_owner: None,
             #[cfg(target_os = "macos")]
             macos_worker_factory: None,
+            #[cfg(target_os = "macos")]
+            macos_direct_worker_factory: None,
         }
     }
 
@@ -221,6 +251,7 @@ mod tests {
             ServiceExecutionContext::privileged_development_stdio(true),
         ] {
             assert!(context.macos_worker_factory().is_none());
+            assert!(context.macos_direct_worker_factory().is_none());
             assert_eq!(context, context.duplicate_for_runtime());
         }
     }

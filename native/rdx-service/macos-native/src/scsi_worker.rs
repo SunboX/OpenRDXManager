@@ -9,7 +9,9 @@
 
 use crate::worker_process::{WorkerPipe, WorkerProcess};
 use std::io::{Read, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+#[cfg(test)]
+use std::process::{Child, Command, Stdio};
+use std::process::{ChildStdin, ChildStdout};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -48,36 +50,8 @@ pub struct MacScsiWorkerLease {
 }
 
 impl MacScsiWorkerLease {
-    /// Starts the current privileged executable in its fixed internal worker mode.
-    ///
-    /// # Errors
-    ///
-    /// Returns a sanitized spawn, identity, initialization, or native-open failure.
-    pub fn spawn(identity: &MacRematchIdentity) -> Result<Self, NativeError> {
-        use crate::scsi_worker_startup as diagnostic;
-        diagnostic::reset();
-        if UNREAPED_WORKER.load(Ordering::Acquire) {
-            diagnostic::parent_failure("process-spawn", NativeError::Busy);
-            return Err(NativeError::Busy);
-        }
-        let executable = std::env::current_exe().map_err(|error| {
-            diagnostic::os_failure("process-current-exe", &error);
-            NativeError::TransportUnavailable
-        })?;
-        let child = Command::new(executable)
-            .arg("--openrdx-internal-macos-scsi-worker")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| {
-                diagnostic::os_failure("process-spawn", &error);
-                NativeError::TransportUnavailable
-            })?;
-        Self::initialize_child(child, identity)
-    }
-
     /// Takes only a retained spawned child and initializes its existing bounded protocol.
+    #[cfg(test)]
     fn initialize_child(child: Child, identity: &MacRematchIdentity) -> Result<Self, NativeError> {
         Self::initialize_child_with(child, identity, |worker| {
             worker.diagnostics.nonblocking()?;
@@ -87,6 +61,7 @@ impl MacScsiWorkerLease {
     }
 
     /// Shares production setup ownership with hardware-free failure-injection fixtures.
+    #[cfg(test)]
     fn initialize_child_with(
         mut child: Child,
         identity: &MacRematchIdentity,
@@ -436,56 +411,31 @@ impl Debug for MacScsiWorkerLease {
     }
 }
 
-/// Runs the fixed internal worker protocol on already selected standard streams.
-///
-/// # Errors
-///
-/// Returns a sanitized framing, identity, device-open, or transport failure.
-pub fn run_scsi_worker<R: Read, W: Write>(input: R, output: W) -> Result<(), NativeError> {
-    run_worker(input, output, false)
-}
-
 /// Runs only the fixed internal stdio role with bounded private context preflight before IOKit.
 /// # Errors
 /// Refuses malformed context, lost credentials, expired handshake or existing native/protocol failure.
 pub fn run_scsi_worker_stdio() -> Result<(), NativeError> {
-    context::run_stdio()
+    context::run_stdio(false)
 }
 
-/// Runs only the serial utility's inquiry, log, sector, capability, serial, and reset operations.
-///
+/// Runs only serial's fixed stdio role, after direct self-audit proof and before its native initializer.
 /// # Errors
-/// Rejects every unrelated semantic operation before native dispatch.
-pub fn run_serial_scsi_worker<R: Read, W: Write>(input: R, output: W) -> Result<(), NativeError> {
-    run_worker(input, output, true)
+/// Refuses GUI requests, missing context proof and unrelated serial operations before native dispatch.
+pub fn run_serial_scsi_worker_stdio() -> Result<(), NativeError> {
+    context::run_stdio(true)
 }
 
-/// Retains exact native authority while enforcing the selected closed worker policy.
-fn run_worker<R: Read, W: Write>(
-    input: R,
-    output: W,
-    serial_only: bool,
-) -> Result<(), NativeError> {
-    run_worker_with_initial(input, output, serial_only, None)
-}
-
-/// Shares all original capture/command semantics after an optional already-read INIT frame.
+/// Runs original capture/command semantics only after a completed preflight supplied this INIT.
 fn run_worker_with_initial<R: Read, W: Write>(
     mut input: R,
     mut output: W,
     serial_only: bool,
-    initial: Option<(u8, Vec<u8>)>,
+    initial: (u8, Vec<u8>),
 ) -> Result<(), NativeError> {
     use crate::scsi_worker_startup::step;
-    if !serial_only && initial.is_none() {
-        crate::enable_acquisition_diagnostics();
-    }
     // Diagnostics precede each existing boundary, never introduce another probe.
     let initialized = (|| {
-        let (kind, payload) = match initial {
-            Some(frame) => frame,
-            None => step("init-read", !serial_only, || read_frame(&mut input))?,
-        };
+        let (kind, payload) = initial;
         step("init-frame", !serial_only, || {
             if kind == FRAME_INIT {
                 Ok(())

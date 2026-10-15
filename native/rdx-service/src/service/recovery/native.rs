@@ -17,6 +17,10 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[path = "native_context.rs"]
+mod context;
+use context::{ContextAuthority, mint_direct_context, with_recovery_context};
+
 /// Owns exact saved inputs and native ROM state, never serializable or Debug.
 struct NativeAttempt {
     prepared: PreparedMigration,
@@ -61,12 +65,9 @@ pub(super) fn recover(
 ) -> Result<RecoveryOutcome, RecoveryError> {
     observer.reached(RecoveryStage::Preparing)?;
     let (_namespace, _ownership) = acquire_owner()?;
-    recover_owned(
-        bundle_id,
-        None,
-        observer,
-        ServiceExecutionContext::privileged_direct_cli(true),
-    )
+    with_recovery_context(ContextAuthority::Direct, mint_direct_context, |context| {
+        recover_owned(bundle_id, None, observer, context)
+    })
 }
 
 /// Returns only current route labels/tokens, never a saved-unit association.
@@ -89,12 +90,14 @@ pub(super) fn recover_selected(
 ) -> Result<RecoveryOutcome, RecoveryError> {
     observer.reached(RecoveryStage::Preparing)?;
     let (_namespace, _ownership) = acquire_owner()?;
-    recover_owned(
-        &selection.bundle_id,
-        Some(&selection.target_token),
-        observer,
-        ServiceExecutionContext::privileged_direct_cli(true),
-    )
+    with_recovery_context(ContextAuthority::Direct, mint_direct_context, |context| {
+        recover_owned(
+            &selection.bundle_id,
+            Some(&selection.target_token),
+            observer,
+            context,
+        )
+    })
 }
 
 /// Uses only trusted caller-held session ownership, with fresh native privilege proof.
@@ -107,11 +110,17 @@ pub(super) fn recover_in_service(
         return Err(RecoveryError::PrivilegeRequired);
     }
     observer.reached(RecoveryStage::Preparing)?;
-    recover_owned(
-        &selection.bundle_id,
-        Some(&selection.target_token),
-        observer,
-        context,
+    with_recovery_context(
+        ContextAuthority::Service(context),
+        mint_direct_context,
+        |context| {
+            recover_owned(
+                &selection.bundle_id,
+                Some(&selection.target_token),
+                observer,
+                context,
+            )
+        },
     )
 }
 
@@ -450,21 +459,22 @@ fn verify_application(
 /// Independent verification is read-only and cannot produce completed-release status.
 pub(super) fn verify_existing(bundle_id: &str) -> Result<(), RecoveryError> {
     let (_namespace, _ownership) = acquire_owner()?;
-    let prepared = PreparedMigration::load_existing(bundle_id)
-        .map_err(|_| RecoveryError::StorageUnavailable)?;
-    let target = DeviceRegistry::migration_target_id(prepared.capture())
-        .map_err(|_| RecoveryError::StorageUnavailable)?;
-    let mut backend =
-        MacOsBackend::native_with_context(ServiceExecutionContext::privileged_direct_cli(true));
-    let mut registry = DeviceRegistry::new();
-    let location = prepared.capture().usb.location_id;
-    let mut resolved = open_application(
-        &mut backend,
-        &mut registry,
-        &target,
-        &prepared,
-        location,
-        None,
-    )?;
-    verify_application(&mut resolved, &prepared, location)
+    with_recovery_context(ContextAuthority::Direct, mint_direct_context, |context| {
+        let prepared = PreparedMigration::load_existing(bundle_id)
+            .map_err(|_| RecoveryError::StorageUnavailable)?;
+        let target = DeviceRegistry::migration_target_id(prepared.capture())
+            .map_err(|_| RecoveryError::StorageUnavailable)?;
+        let mut backend = MacOsBackend::native_with_context(context);
+        let mut registry = DeviceRegistry::new();
+        let location = prepared.capture().usb.location_id;
+        let mut resolved = open_application(
+            &mut backend,
+            &mut registry,
+            &target,
+            &prepared,
+            location,
+            None,
+        )?;
+        verify_application(&mut resolved, &prepared, location)
+    })
 }

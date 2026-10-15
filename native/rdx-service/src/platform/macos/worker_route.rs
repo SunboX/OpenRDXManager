@@ -15,50 +15,56 @@ pub(super) trait WorkerFactory: Clone {
     fn spawn(&self, identity: &Self::Identity) -> Result<Self::Worker, NativeError>;
 }
 
-/// Only an opaque native Manager factory selects GUI launch; explicit process mode is temporary.
+/// Both launch routes require opaque native authority; flags never become a capture capability.
 #[derive(Clone)]
 pub(super) enum WorkerRoute<F> {
     Manager(F),
-    LegacyDirect,
+    Direct(F),
     Denied,
 }
 
 impl<F: WorkerFactory> WorkerRoute<F> {
     /// Selects authority without manufacturing a GUI capability from booleans or backup ownership.
-    fn select(endpoint: bool, direct: bool, factory: Option<F>) -> Self {
+    fn select(endpoint: bool, direct: bool, factory: Option<F>, process: Option<F>) -> Self {
         if endpoint {
             factory.map_or(Self::Denied, Self::Manager)
         } else if direct {
-            Self::LegacyDirect
+            process.map_or(Self::Denied, Self::Direct)
         } else {
             Self::Denied
         }
     }
 
-    /// Dispatches one new worker; a GUI refusal must never invoke the temporary direct route.
-    fn dispatch(
-        &self,
-        identity: &F::Identity,
-        direct: impl FnOnce(&F::Identity) -> Result<F::Worker, NativeError>,
-    ) -> Result<F::Worker, NativeError> {
+    /// Dispatches only the retained native capability; neither route has a raw capture fallback.
+    fn dispatch(&self, identity: &F::Identity) -> Result<F::Worker, NativeError> {
         match self {
-            Self::Manager(factory) => factory.spawn(identity),
-            Self::LegacyDirect => direct(identity),
+            Self::Manager(factory) | Self::Direct(factory) => factory.spawn(identity),
             Self::Denied => Err(NativeError::AccessDenied),
         }
     }
 }
 
 #[cfg(target_os = "macos")]
-pub(super) type MacWorkerRoute = WorkerRoute<rdx_macos_native::MacWorkerFactory>;
+pub(super) type MacWorkerRoute = WorkerRoute<MacWorkerAuthority>;
+
+/// One retained native capability; public context flags cannot construct either variant's payload.
+#[cfg(target_os = "macos")]
+#[derive(Clone)]
+pub(super) enum MacWorkerAuthority {
+    Manager(rdx_macos_native::MacWorkerFactory),
+    Direct(rdx_macos_native::MacDirectWorkerFactory),
+}
 
 #[cfg(target_os = "macos")]
-impl WorkerFactory for rdx_macos_native::MacWorkerFactory {
+impl WorkerFactory for MacWorkerAuthority {
     type Identity = rdx_macos_native::MacRematchIdentity;
     type Worker = rdx_macos_native::MacScsiWorkerLease;
-    /// Native capability performs fresh exact peer/session/generation validation and child preflight.
+    /// Both native factories perform full route-specific proof before capture under one deadline.
     fn spawn(&self, identity: &Self::Identity) -> Result<Self::Worker, NativeError> {
-        rdx_macos_native::MacWorkerFactory::spawn(self, identity)
+        match self {
+            Self::Manager(factory) => factory.spawn(identity),
+            Self::Direct(factory) => factory.spawn(identity),
+        }
     }
 }
 
@@ -69,18 +75,25 @@ impl MacWorkerRoute {
         Self::select(
             context.endpoint_authenticated(),
             context.direct_process_authorized(),
-            context.macos_worker_factory().cloned(),
+            context
+                .macos_worker_factory()
+                .cloned()
+                .map(MacWorkerAuthority::Manager),
+            context
+                .macos_direct_worker_factory()
+                .cloned()
+                .map(MacWorkerAuthority::Direct),
         )
     }
 
-    /// Central new-worker entry; temporary direct mode remains explicit until reviewed Task 5.
+    /// Central new-worker entry requires one native-minted route with no missing-GUI fallback.
     pub(super) fn spawn(
         &self,
         identity: &rdx_macos_native::MacRematchIdentity,
     ) -> Result<rdx_macos_native::MacScsiWorkerLease, NativeError> {
         // The Denied branch also clears stale evidence, without native probing or a raw fallback.
         let _ = rdx_macos_native::take_last_worker_startup_failure();
-        self.dispatch(identity, rdx_macos_native::MacScsiWorkerLease::spawn)
+        self.dispatch(identity)
     }
 }
 

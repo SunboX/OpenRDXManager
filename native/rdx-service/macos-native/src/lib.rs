@@ -37,7 +37,11 @@ mod runtime_generation;
 #[cfg(target_os = "macos")]
 mod worker_context;
 #[cfg(target_os = "macos")]
+mod worker_direct_factory;
+#[cfg(target_os = "macos")]
 mod worker_factory;
+#[cfg(target_os = "macos")]
+pub use worker_direct_factory::MacDirectWorkerFactory;
 #[cfg(target_os = "macos")]
 mod worker_process;
 #[cfg(target_os = "macos")]
@@ -96,9 +100,7 @@ pub use rom::{RomFailure, RomSession};
 pub use rom_inventory::{RomCandidate, enumerate_rom_candidates};
 pub use scsi::{ScsiOperation, enable_acquisition_diagnostics};
 #[cfg(target_os = "macos")]
-pub use scsi_worker::{
-    MacScsiWorkerLease, run_scsi_worker, run_scsi_worker_stdio, run_serial_scsi_worker,
-};
+pub use scsi_worker::{MacScsiWorkerLease, run_scsi_worker_stdio, run_serial_scsi_worker_stdio};
 #[cfg(feature = "test-hooks")]
 pub use test_support::{
     candidate_prefilter_contract_is_enforced_for_test,

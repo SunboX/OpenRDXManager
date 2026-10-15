@@ -123,6 +123,15 @@ fn current_process_is_authorized() -> bool {
 fn run_stdio_session(platform: ServicePlatform) -> Result<(), ()> {
     let context =
         ServiceExecutionContext::privileged_development_stdio(current_process_is_authorized());
+    #[cfg(target_os = "macos")]
+    let context = if context.direct_process_authorized() {
+        context.with_macos_direct_worker_factory(
+            rdx_macos_native::MacDirectWorkerFactory::for_current_privileged_process()
+                .map_err(|_| ())?,
+        )
+    } else {
+        context
+    };
     // sudo itself supplies SUDO_UID for this debug-only inherited-pipe launch.
     let context = if let Some(owner) = std::env::var("SUDO_UID")
         .ok()

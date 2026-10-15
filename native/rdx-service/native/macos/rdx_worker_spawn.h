@@ -14,7 +14,12 @@ typedef struct {
 rdx_macos_status rdx_macos_spawn_gui_worker(const rdx_macos_peer_session *verified_peer,
     rdx_macos_worker_process *output);
 
+/** Starts only this native process executable and the fixed internal role, never launchctl/asuser. */
+rdx_macos_status rdx_macos_spawn_direct_worker(rdx_macos_worker_process *output);
+
 #if defined(RDX_MACOS_TEST_HOOKS)
+/** Ordinary-process fixture for the exact same current-executable resolver and fixed argv builder. */
+rdx_macos_status rdx_macos_test_spawn_current_worker(rdx_macos_worker_process *output);
 /** Native fixtures only: same private primitive with injected target/setup failures, never a factory. */
 rdx_macos_status rdx_macos_test_spawn_worker(const char *program, char *const argv[],
     char *const environment[], uint32_t fail_step, rdx_macos_worker_process *output);

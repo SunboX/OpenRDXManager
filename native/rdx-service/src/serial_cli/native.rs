@@ -78,7 +78,9 @@ fn acquire(target: &Target) -> Result<NativeTransport> {
         return Err("serial-target-identity-changed");
     }
     drop(device);
-    let mut worker = MacScsiWorkerLease::spawn(&identity).map_err(native_error)?;
+    let mut worker = rdx_macos_native::MacDirectWorkerFactory::for_current_privileged_process()
+        .and_then(|factory| factory.spawn(&identity))
+        .map_err(native_error)?;
     if !matches_usb(&worker.usb_identity().map_err(native_error)?, target) {
         worker.release_for_storage_rematch().map_err(native_error)?;
         return Err("serial-target-identity-changed");

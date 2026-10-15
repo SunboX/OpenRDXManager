@@ -11,10 +11,7 @@ mod serial_cli;
 fn main() {
     #[cfg(target_os = "macos")]
     if std::env::args_os().skip(1).collect::<Vec<_>>() == ["--openrdx-internal-macos-scsi-worker"] {
-        let result = rdx_macos_native::run_serial_scsi_worker(
-            std::io::stdin().lock(),
-            std::io::stdout().lock(),
-        );
+        let result = rdx_macos_native::run_serial_scsi_worker_stdio();
         std::process::exit(if result.is_ok() { 0 } else { 1 });
     }
     let result = serial_cli::run(std::env::args_os().skip(1));

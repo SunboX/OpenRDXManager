@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use super::*;
+use crate::worker_context::WorkerExpectation;
 
 /// Uses an actual retained child and real bounded pipes; no fixture can grant GUI/root authority.
 fn fixture(script: &str) -> MacScsiWorkerLease {
@@ -323,7 +324,7 @@ fn native_owned_spawn_context_handoff_and_failed_proof_cleanup() {
         let expected = WorkerExpectation::fixture_for_pid(pid);
         let deadline = Instant::now() + Duration::from_secs(1);
         let mut acks = 0;
-        let result = MacScsiWorkerLease::initialize_gui_process(
+        let result = MacScsiWorkerLease::initialize_context_process(
             process,
             &expected,
             &identity,
@@ -383,12 +384,16 @@ fn context_child_fixture() {
     let mut output = RolePipe(&output);
     let mut flags = StdioFlags::nonblocking(&input, &output).unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);
-    if mode == "valid" || mode == "slow" {
+    if mode == "valid" || mode == "slow" || mode == "direct" || mode == "direct-current" {
         let result = child_preflight(&mut input, &mut output, deadline, |expected| {
             if mode == "slow" {
                 thread::sleep(Duration::from_millis(300));
             }
-            Ok(WorkerContext::matching_fixture(expected))
+            if mode == "direct-current" {
+                WorkerContext::current()
+            } else {
+                Ok(expected.matching_fixture())
+            }
         });
         let Ok((FRAME_INIT, payload)) = result else {
             std::process::exit(3);
@@ -461,4 +466,87 @@ fn context_child_fixture() {
     // Let the real parent's absolute deadline/refusal cleanup terminate this exact child.
     thread::sleep(Duration::from_secs(2));
     std::process::exit(4);
+}
+
+/// An unproved raw INIT must never reach the capture initializer in any production role.
+#[test]
+fn context_raw_init_before_proof_is_rejected() {
+    use std::os::unix::net::UnixStream;
+    let (mut sender, mut input) = UnixStream::pair().unwrap();
+    let (mut output, _receiver) = UnixStream::pair().unwrap();
+    input.set_nonblocking(true).unwrap();
+    output.set_nonblocking(true).unwrap();
+    let identity = crate::synthetic_candidate_for_test().rematch_identity();
+    write_frame(&mut sender, FRAME_INIT, &encode_identity(&identity)).unwrap();
+    let result = child_preflight(
+        &mut input,
+        &mut output,
+        Instant::now() + Duration::from_millis(100),
+        |_| panic!("raw INIT cannot request even a self-audit"),
+    );
+    assert_eq!(result, Err(NativeError::InvalidRequest));
+}
+
+/// Direct private pipes retain actual PID/PPID while synthetic root metadata only tests protocol policy.
+#[test]
+fn real_child_direct_context_ack_then_init_and_actual_unprivileged_refusal() {
+    use crate::worker_context::DirectExpectation;
+    let directory = tempfile::tempdir().unwrap();
+    for (mode, anonymous) in [
+        ("direct", true),
+        ("direct", false),
+        ("direct-current", false),
+    ] {
+        let marker = directory.path().join(format!("{mode}-{anonymous}"));
+        let mut worker = protocol_fixture(mode, &marker);
+        let expected =
+            DirectExpectation::fixture_for_pid(worker.child.as_ref().unwrap().id(), anonymous);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut acks = 0;
+        let proof = worker.prove_context(&expected, deadline, |owned| {
+            acks += 1;
+            owned.acknowledge_context(deadline)
+        });
+        if mode == "direct-current" {
+            assert!(
+                proof.is_err(),
+                "ordinary actual child cannot claim root proof"
+            );
+            assert_eq!(acks, 0);
+            assert!(!marker.exists());
+        } else {
+            proof.unwrap();
+            assert!(!marker.exists(), "ACK alone cannot initialize");
+            let identity = crate::synthetic_candidate_for_test().rematch_identity();
+            let mut worker = worker.finish_initialization(&identity, deadline).unwrap();
+            worker.wait_for_child_exit(deadline).unwrap();
+            assert_eq!(acks, 1);
+            assert_eq!(
+                std::fs::read_to_string(&marker).unwrap(),
+                "initialized-after-proof-ack-and-restoration"
+            );
+        }
+    }
+}
+
+/// The separate serial executable cannot use a GUI request to change its fixed direct-only entry policy.
+#[test]
+fn serial_context_role_rejects_gui_before_sampling_or_initializer() {
+    use std::os::unix::net::UnixStream;
+    let (mut sender, mut input) = UnixStream::pair().unwrap();
+    let (mut output, _receiver) = UnixStream::pair().unwrap();
+    input.set_nonblocking(true).unwrap();
+    output.set_nonblocking(true).unwrap();
+    let expected = WorkerExpectation::fixture_for_pid(std::process::id());
+    write_frame(&mut sender, FRAME_CONTEXT_REQUEST, &expected.encode()).unwrap();
+    assert_eq!(
+        child_preflight_role(
+            &mut input,
+            &mut output,
+            Instant::now() + Duration::from_millis(100),
+            true,
+            |_| panic!("serial rejects GUI before even sampling")
+        ),
+        Err(NativeError::InvalidRequest)
+    );
 }
