@@ -280,6 +280,7 @@ unsafe extern "C" {
         right: *const PeerSessionRecord,
     ) -> bool;
     pub(crate) fn rdx_macos_peer_session_user_id(record: *const PeerSessionRecord) -> u32;
+    pub(crate) fn rdx_macos_peer_session_audit_session_id(record: *const PeerSessionRecord) -> u32;
     pub(crate) fn rdx_macos_accept_launchd_manager_with_session(
         listener: std::ffi::c_int,
         requirement: *const std::ffi::c_char,

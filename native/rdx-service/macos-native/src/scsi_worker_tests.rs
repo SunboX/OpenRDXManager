@@ -252,10 +252,10 @@ fn startup_preserves_precleanup_native_breadcrumb_on_child_eof() {
     diagnostics.nonblocking().unwrap();
     crate::scsi_worker_startup::reset();
     let mut worker = MacScsiWorkerLease {
-        input: child.stdin.take(),
-        output: child.stdout.take(),
+        input: child.stdin.take().map(WorkerPipe::Standard),
+        output: child.stdout.take().map(WorkerPipe::Standard),
         diagnostics,
-        child: Some(child),
+        child: Some(WorkerProcess::Standard(child)),
     };
     crate::scsi_worker_io::nonblocking(worker.output.as_ref().unwrap()).unwrap();
     assert_eq!(
@@ -283,9 +283,9 @@ fn startup_fixture(script: &str) -> MacScsiWorkerLease {
     let mut diagnostics = crate::scsi_worker_startup::StartupDiagnostics::new(child.stderr.take());
     diagnostics.nonblocking().unwrap();
     let worker = MacScsiWorkerLease {
-        input: child.stdin.take(),
-        output: child.stdout.take(),
-        child: Some(child),
+        input: child.stdin.take().map(WorkerPipe::Standard),
+        output: child.stdout.take().map(WorkerPipe::Standard),
+        child: Some(WorkerProcess::Standard(child)),
         diagnostics,
     };
     crate::scsi_worker_io::nonblocking(worker.input.as_ref().unwrap()).unwrap();
@@ -443,10 +443,13 @@ fn startup_real_child_init_write_failure_is_classified_before_kill() {
 fn startup_production_initializer_accepts_ready_without_stale_evidence() {
     crate::scsi_worker_startup::parent_failure("process-spawn", NativeError::Other);
     crate::scsi_worker_startup::reset();
-    let child = Command::new("/bin/sh").arg("-c")
-        .arg("dd bs=1 count=16 of=/dev/null 2>/dev/null; printf 'RDXSCSI1\\002\\000\\000\\000\\000\\000\\000\\000'; exec /bin/sleep 2")
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
     let identity = crate::synthetic_candidate_for_test().rematch_identity();
+    // Consume the whole INIT, including identity: a small nonblocking pipe can accept only
+    // a strict prefix before its reader drains. READY never precedes complete request admission.
+    let frame_bytes = HEADER_BYTES + encode_identity(&identity).len();
+    let child = Command::new("/bin/sh").arg("-c")
+        .arg(format!("dd bs=1 count={frame_bytes} of=/dev/null 2>/dev/null; printf 'RDXSCSI1\\002\\000\\000\\000\\000\\000\\000\\000'; exec /bin/sleep 2"))
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
     let mut worker = MacScsiWorkerLease::initialize_child(child, &identity).unwrap();
     assert!(crate::take_last_worker_startup_failure().is_none());
     worker.terminate_child();

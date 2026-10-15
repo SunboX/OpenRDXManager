@@ -40,6 +40,8 @@ bool rdx_macos_peer_session_same_token(const rdx_macos_peer_session *left,
     const rdx_macos_peer_session *right);
 /** Derives UID from validated private evidence using the public token getter. */
 uint32_t rdx_macos_peer_session_user_id(const rdx_macos_peer_session *record);
+/** Derives the retained ASID through the public token getter; invalid evidence returns zero. */
+uint32_t rdx_macos_peer_session_audit_session_id(const rdx_macos_peer_session *record);
 /** Internal fixed-target Manager verifier; returns private token only on full proof. */
 bool rdx_macos_copy_manager_peer_session(int peer, const char *requirement_text,
     rdx_macos_peer_session *out_session);

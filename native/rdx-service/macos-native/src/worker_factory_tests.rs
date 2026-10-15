@@ -81,8 +81,78 @@ fn worker_factory_failed_validation_cannot_revive_when_evidence_returns() {
     );
 }
 
+/// Revocation observed during expensive proof must prevent the later ACK under the short gate.
+#[test]
+fn worker_factory_final_ack_refuses_revoke_after_proof_and_expired_deadline() {
+    use std::time::{Duration, Instant};
+    let owner = fixture().begin().unwrap();
+    let factory = owner.factory();
+    let mut acknowledgements = 0;
+    assert_eq!(
+        factory.admit_worker_with(
+            Instant::now() + Duration::from_secs(1),
+            || {
+                owner.revoke();
+                Ok(())
+            },
+            || {
+                acknowledgements += 1;
+                Ok(())
+            }
+        ),
+        Err(NativeError::AccessDenied)
+    );
+    assert_eq!(acknowledgements, 0);
+    let owner = fixture().begin().unwrap();
+    assert_eq!(
+        owner.factory().admit_worker_with(
+            Instant::now(),
+            || Ok(()),
+            || {
+                acknowledgements += 1;
+                Ok(())
+            }
+        ),
+        Err(NativeError::TimedOut)
+    );
+    assert_eq!(acknowledgements, 0);
+}
+
+/// A fresh verifier stalled between proof and ACK cannot block EOF revocation or later admit the child.
+#[test]
+fn worker_factory_final_ack_validation_does_not_hold_revocation_gate() {
+    use std::{
+        sync::mpsc,
+        thread,
+        time::{Duration, Instant},
+    };
+    let owner = fixture().begin().unwrap();
+    let factory = owner.factory();
+    let (entered, ready) = mpsc::sync_channel(0);
+    let (release, resume) = mpsc::sync_channel(0);
+    let thread = thread::spawn(move || {
+        factory.admit_worker_with(
+            Instant::now() + Duration::from_secs(2),
+            || {
+                entered.send(()).unwrap();
+                resume.recv_timeout(Duration::from_secs(2)).unwrap();
+                Ok(())
+            },
+            || panic!("revoked validation cannot ACK"),
+        )
+    });
+    ready.recv_timeout(Duration::from_secs(2)).unwrap();
+    owner.revoke();
+    assert_eq!(
+        owner.factory().ensure_active(),
+        Err(NativeError::AccessDenied)
+    );
+    release.send(()).unwrap();
+    assert_eq!(thread.join().unwrap(), Err(NativeError::AccessDenied));
+}
+
 /// Test-only accepted metadata never authenticates an installed Manager or privileged service.
-fn fixture() -> Arc<PeerSessionState> {
+pub(super) fn fixture() -> Arc<PeerSessionState> {
     let (stream, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
     let record = crate::ffi::PeerSessionRecord {
         version: 1,

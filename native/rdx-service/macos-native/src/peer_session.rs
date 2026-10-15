@@ -36,6 +36,17 @@ impl PeerSession {
         unsafe { ffi::rdx_macos_peer_session_user_id(&self.record) }
     }
 
+    /// Returns private audit-session generation for the fixed worker's context expectation only.
+    pub(crate) fn audit_session_id(&self) -> u32 {
+        // SAFETY: previously validated complete record remains owned and unchanged.
+        unsafe { ffi::rdx_macos_peer_session_audit_session_id(&self.record) }
+    }
+
+    /// Borrows full retained evidence only for the closed native launcher, never an external caller.
+    pub(crate) fn record(&self) -> &ffi::PeerSessionRecord {
+        &self.record
+    }
+
     /// Revalidates live exact peer code and session; never treats cached socket metadata as liveness.
     pub(crate) fn revalidate(
         &self,

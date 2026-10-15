@@ -99,6 +99,68 @@ pub struct MacWorkerFactory {
 }
 
 impl MacWorkerFactory {
+    /// Test-only state fixture cannot pass production Security or generation validation.
+    #[cfg(test)]
+    pub(crate) fn fixture_owner() -> MacManagerSessionLease {
+        tests::fixture().begin().unwrap()
+    }
+
+    /// Exercises the real short gate with an injected non-authorizing verifier only in unit tests.
+    #[cfg(test)]
+    pub(crate) fn fixture_admit(
+        &self,
+        deadline: std::time::Instant,
+        verify: impl FnOnce() -> Result<(), NativeError>,
+        acknowledge: impl FnOnce() -> Result<(), NativeError>,
+    ) -> Result<(), NativeError> {
+        self.admit_worker_with(deadline, verify, acknowledge)
+    }
+    /// Starts only a fixed installed helper in this freshly verified peer's exact graphical session.
+    /// # Errors
+    /// Refuses stale/revoked authority, changed generation, wrong child context and bounded IO failures.
+    pub fn spawn(
+        &self,
+        identity: &crate::MacRematchIdentity,
+    ) -> Result<crate::MacScsiWorkerLease, NativeError> {
+        use crate::{scsi_worker_startup as diagnostic, worker_context::WorkerExpectation};
+        use std::time::Instant;
+        diagnostic::reset();
+        let deadline = Instant::now() + crate::scsi_worker::INIT_TIMEOUT;
+        if crate::scsi_worker::UNREAPED_WORKER.load(Ordering::Acquire) {
+            diagnostic::parent_failure("process-spawn", NativeError::Busy);
+            return Err(NativeError::Busy);
+        }
+        self.revalidate()
+            .inspect_err(|error| diagnostic::parent_failure("context-peer", *error))?;
+        let executable = std::env::current_exe().map_err(|error| {
+            diagnostic::os_failure("process-current-exe", &error);
+            NativeError::TransportUnavailable
+        })?;
+        if executable != std::path::Path::new(crate::local_trust::HELPER_PATH) {
+            diagnostic::parent_failure("process-current-exe", NativeError::AccessDenied);
+            return Err(NativeError::AccessDenied);
+        }
+        if Instant::now() >= deadline {
+            return Err(NativeError::TimedOut);
+        }
+        let process = crate::worker_process::spawn_gui(&self.state.peer)
+            .inspect_err(|error| diagnostic::parent_failure("process-spawn", *error))?;
+        let expected =
+            WorkerExpectation::gui(&self.state.peer, self.state.credentials, process.child.id())?;
+        crate::MacScsiWorkerLease::initialize_gui_process(
+            process,
+            &expected,
+            identity,
+            deadline,
+            |worker| {
+                self.admit_worker_with(
+                    deadline,
+                    || self.revalidate(),
+                    || worker.acknowledge_context(deadline),
+                )
+            },
+        )
+    }
     /// Checks only the short shared admission gate; performs no code, filesystem or device IO.
     /// # Errors
     /// Returns access denied after revocation or a poisoned gate.
@@ -151,6 +213,30 @@ impl MacWorkerFactory {
             return Err(error);
         }
         self.ensure_active()
+    }
+
+    /// Separates expensive proof from the short final nonblocking acknowledgement admission gate.
+    fn admit_worker_with(
+        &self,
+        deadline: std::time::Instant,
+        verify: impl FnOnce() -> Result<(), NativeError>,
+        acknowledge: impl FnOnce() -> Result<(), NativeError>,
+    ) -> Result<(), NativeError> {
+        self.ensure_active()?;
+        verify()?; // All native/code/filesystem work stays outside the revocation mutex.
+        let active = self
+            .state
+            .active
+            .lock()
+            .map_err(|_| NativeError::AccessDenied)?;
+        if !*active {
+            return Err(NativeError::AccessDenied);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(NativeError::TimedOut);
+        }
+        // Callback performs one fixed <=PIPE_BUF nonblocking write, never retry/poll/drain/Security.
+        acknowledge()
     }
 }
 

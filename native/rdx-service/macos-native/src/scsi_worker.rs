@@ -7,6 +7,7 @@
 //! is surrendered. Keeping that capture in this child process lets the
 //! long-lived hardware service survive the required storage-driver rematch.
 
+use crate::worker_process::{WorkerPipe, WorkerProcess};
 use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -29,17 +30,20 @@ const FRAME_USB_IDENTITY: u8 = 8;
 const FRAME_USB_IDENTITY_RESPONSE: u8 = 9;
 const RELEASE_TIMEOUT: Duration = Duration::from_secs(5);
 const RELEASE_POLL_INTERVAL: Duration = Duration::from_millis(20);
-const INIT_TIMEOUT: Duration = Duration::from_secs(15);
+pub(super) const INIT_TIMEOUT: Duration = Duration::from_secs(15);
 const IDENTITY_TIMEOUT: Duration = Duration::from_secs(5);
 const REAP_TIMEOUT: Duration = Duration::from_millis(500);
-static UNREAPED_WORKER: AtomicBool = AtomicBool::new(false);
+pub(super) static UNREAPED_WORKER: AtomicBool = AtomicBool::new(false);
 const IDENTITY_BYTES: usize = 4 + 4 + (ffi::MAX_TEXT_BYTES + 1) * 4;
+
+#[path = "scsi_worker_context.rs"]
+mod context;
 
 /// Parent-side proxy to one child process that exclusively owns USB capture.
 pub struct MacScsiWorkerLease {
-    child: Option<Child>,
-    input: Option<ChildStdin>,
-    output: Option<ChildStdout>,
+    child: Option<WorkerProcess>,
+    input: Option<WorkerPipe<ChildStdin>>,
+    output: Option<WorkerPipe<ChildStdout>>,
     diagnostics: crate::scsi_worker_startup::StartupDiagnostics,
 }
 
@@ -90,10 +94,10 @@ impl MacScsiWorkerLease {
     ) -> Result<Self, NativeError> {
         use crate::scsi_worker_startup as diagnostic;
         let mut worker = Self {
-            input: child.stdin.take(),
-            output: child.stdout.take(),
+            input: child.stdin.take().map(WorkerPipe::Standard),
+            output: child.stdout.take().map(WorkerPipe::Standard),
             diagnostics: diagnostic::StartupDiagnostics::new(child.stderr.take()),
-            child: Some(child),
+            child: Some(WorkerProcess::Standard(child)),
         };
         if worker.input.is_none() || worker.output.is_none() || !worker.diagnostics.has_pipe() {
             diagnostic::parent_failure("process-pipes", NativeError::TransportUnavailable);
@@ -103,26 +107,33 @@ impl MacScsiWorkerLease {
             diagnostic::os_failure("process-nonblocking", &error);
             return Err(NativeError::TransportUnavailable);
         }
-        let deadline = Instant::now() + INIT_TIMEOUT;
+        worker.finish_initialization(identity, Instant::now() + INIT_TIMEOUT)
+    }
+
+    /// Keeps existing INIT/READY behavior and the caller's single absolute initialization budget.
+    fn finish_initialization(
+        mut self,
+        identity: &MacRematchIdentity,
+        deadline: Instant,
+    ) -> Result<Self, NativeError> {
         let identity_payload = encode_identity(identity);
-        worker.write_frame(FRAME_INIT, &identity_payload, deadline)?;
-        let (kind, payload) = worker.read_frame(FRAME_READY, deadline)?;
+        self.write_frame(FRAME_INIT, &identity_payload, deadline)?;
+        let (kind, payload) = self.read_frame(FRAME_READY, deadline)?;
         match kind {
             FRAME_READY if payload.is_empty() => {
-                worker.diagnostics.success();
-                Ok(worker)
+                self.diagnostics.success();
+                Ok(self)
             }
             FRAME_ERROR => {
                 let error = decode_error(&payload).unwrap_or(NativeError::Other);
-                worker.diagnostics.failure("init-read", error);
-                worker.terminate_child();
+                self.diagnostics.failure("init-read", error);
+                self.terminate_child();
                 Err(error)
             }
             _ => {
-                worker
-                    .diagnostics
+                self.diagnostics
                     .failure("init-frame", NativeError::InvalidRequest);
-                worker.terminate_child();
+                self.terminate_child();
                 Err(NativeError::InvalidRequest)
             }
         }
@@ -223,6 +234,17 @@ impl MacScsiWorkerLease {
         payload: &[u8],
         deadline: Instant,
     ) -> Result<(), NativeError> {
+        self.write_frame_phase(kind, payload, deadline, "init-write")
+    }
+
+    /// Shares exact write/result/cleanup semantics with the pre-admission context frame boundary.
+    fn write_frame_phase(
+        &mut self,
+        kind: u8,
+        payload: &[u8],
+        deadline: Instant,
+        phase: &'static str,
+    ) -> Result<(), NativeError> {
         if payload.len() > MAX_FRAME_BYTES {
             return Err(NativeError::ResourceLimit);
         }
@@ -245,7 +267,7 @@ impl MacScsiWorkerLease {
         )
         .map_err(|(error, _)| error);
         if let Err(error) = &result {
-            self.diagnostics.failure("init-write", *error);
+            self.diagnostics.failure(phase, *error);
             self.terminate_child();
         }
         result
@@ -256,6 +278,17 @@ impl MacScsiWorkerLease {
         &mut self,
         expected: u8,
         deadline: Instant,
+    ) -> Result<(u8, Vec<u8>), NativeError> {
+        self.read_frame_phase(expected, deadline, "init-read", "init-frame")
+    }
+
+    /// Shares bounded frame/result/cleanup semantics while retaining the actual refused context phase.
+    fn read_frame_phase(
+        &mut self,
+        expected: u8,
+        deadline: Instant,
+        read_phase: &'static str,
+        frame_phase: &'static str,
     ) -> Result<(u8, Vec<u8>), NativeError> {
         let result = (|| {
             let output = self
@@ -290,9 +323,9 @@ impl MacScsiWorkerLease {
         if let Err(error) = &result {
             self.diagnostics.failure(
                 if *error == NativeError::InvalidRequest {
-                    "init-frame"
+                    frame_phase
                 } else {
-                    "init-read"
+                    read_phase
                 },
                 *error,
             );
@@ -332,8 +365,8 @@ impl MacScsiWorkerLease {
         self.input = None;
         self.output = None;
         if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
             let deadline = Instant::now() + REAP_TIMEOUT;
+            let _ = child.kill(deadline);
             loop {
                 if matches!(child.try_wait(), Ok(Some(_))) {
                     return;
@@ -343,6 +376,7 @@ impl MacScsiWorkerLease {
                     // Never wait indefinitely or start another capture owner in
                     // this process while this child's destruction is unproven.
                     UNREAPED_WORKER.store(true, Ordering::Release);
+                    child.abandon();
                     return;
                 }
                 thread::sleep(RELEASE_POLL_INTERVAL);
@@ -385,6 +419,7 @@ fn response_length_allowed(expected: u8, kind: u8, length: usize) -> bool {
     }
     match kind {
         FRAME_READY | FRAME_ACK => length == 0,
+        context::FRAME_CONTEXT_PROOF => length == crate::worker_context::CONTEXT_BYTES,
         FRAME_USB_IDENTITY_RESPONSE => (9..=8 + ffi::MAX_TEXT_BYTES).contains(&length),
         FRAME_RESPONSE => {
             length == 2
@@ -410,6 +445,13 @@ pub fn run_scsi_worker<R: Read, W: Write>(input: R, output: W) -> Result<(), Nat
     run_worker(input, output, false)
 }
 
+/// Runs only the fixed internal stdio role with bounded private context preflight before IOKit.
+/// # Errors
+/// Refuses malformed context, lost credentials, expired handshake or existing native/protocol failure.
+pub fn run_scsi_worker_stdio() -> Result<(), NativeError> {
+    context::run_stdio()
+}
+
 /// Runs only the serial utility's inquiry, log, sector, capability, serial, and reset operations.
 ///
 /// # Errors
@@ -420,17 +462,30 @@ pub fn run_serial_scsi_worker<R: Read, W: Write>(input: R, output: W) -> Result<
 
 /// Retains exact native authority while enforcing the selected closed worker policy.
 fn run_worker<R: Read, W: Write>(
+    input: R,
+    output: W,
+    serial_only: bool,
+) -> Result<(), NativeError> {
+    run_worker_with_initial(input, output, serial_only, None)
+}
+
+/// Shares all original capture/command semantics after an optional already-read INIT frame.
+fn run_worker_with_initial<R: Read, W: Write>(
     mut input: R,
     mut output: W,
     serial_only: bool,
+    initial: Option<(u8, Vec<u8>)>,
 ) -> Result<(), NativeError> {
     use crate::scsi_worker_startup::step;
-    if !serial_only {
+    if !serial_only && initial.is_none() {
         crate::enable_acquisition_diagnostics();
     }
     // Diagnostics precede each existing boundary, never introduce another probe.
     let initialized = (|| {
-        let (kind, payload) = step("init-read", !serial_only, || read_frame(&mut input))?;
+        let (kind, payload) = match initial {
+            Some(frame) => frame,
+            None => step("init-read", !serial_only, || read_frame(&mut input))?,
+        };
         step("init-frame", !serial_only, || {
             if kind == FRAME_INIT {
                 Ok(())

@@ -582,7 +582,7 @@ fn main() -> ExitCode {
                 eprintln!("openrdx-hardware: internal worker authority unavailable");
                 return ExitCode::from(3);
             }
-            return match rdx_macos_native::run_scsi_worker(io::stdin(), io::stdout()) {
+            return match rdx_macos_native::run_scsi_worker_stdio() {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(_) => {
                     eprintln!("openrdx-hardware: internal worker failure");

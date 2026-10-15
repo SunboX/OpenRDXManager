@@ -34,6 +34,16 @@ test('closed worker phase and error buckets retain the existing privacy contract
     }
 })
 
+test('worker context stages publish only closed aggregate reasons without private session metadata', () => {
+    const reasons = ['candidate-worker-context-peer-access-denied', 'candidate-worker-context-request-timed-out', 'candidate-worker-context-proof-invalid', 'candidate-worker-context-ack-transport-unavailable']
+    const rejections = reasons.map((reason) => ({ reason, count: 1 }))
+    const evidence = { candidateCount: reasons.length, acceptedCount: 0, rejections }
+    assert.deepEqual(discoveryDiagnosticsSchema.parse(evidence), evidence)
+    for (const extra of [{ uid: 502 }, { auid: 502 }, { asid: 100014 }, { pid: 123 }, { ppid: 12 }, { pidVersion: 7 }, { sessionAttributes: 24624 }, { auditToken: [1, 2] }]) {
+        assert.equal(discoveryDiagnosticsSchema.safeParse({ candidateCount: 1, acceptedCount: 0, rejections: [{ reason: reasons[0], count: 1, ...extra }] }).success, false)
+    }
+})
+
 test('31 fixed worker reasons plus merged overflow remain a complete bounded report', () => {
     const rejections = [{ reason: 'candidate-validation-failed', count: 12 }, ...Array.from({ length: 31 }, (_value, index) => ({ reason: `candidate-worker-phase-${index}-other`, count: 2 }))]
     const evidence = { candidateCount: 76, acceptedCount: 2, rejections }

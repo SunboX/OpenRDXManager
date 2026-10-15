@@ -44,6 +44,10 @@ fn main() {
         "rdx_endpoint_identity.c",
         "rdx_endpoint_identity.h",
         "rdx_peer_session.c",
+        "rdx_worker_context.h",
+        "rdx_worker_context.c",
+        "rdx_worker_spawn.h",
+        "rdx_worker_spawn.c",
     ] {
         println!("cargo:rerun-if-changed={}", bridge.join(file).display());
     }
@@ -72,6 +76,8 @@ fn main() {
         .file(bridge.join("rdx_endpoint.c"))
         .file(bridge.join("rdx_endpoint_identity.c"))
         .file(bridge.join("rdx_peer_session.c"))
+        .file(bridge.join("rdx_worker_context.c"))
+        .file(bridge.join("rdx_worker_spawn.c"))
         .std("c17")
         .warnings(true)
         .extra_warnings(true)

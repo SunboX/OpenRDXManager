@@ -53,6 +53,11 @@ uint32_t rdx_macos_peer_session_user_id(const rdx_macos_peer_session *record) {
         ? audit_token_to_euid(rdx_session_token(record)) : 0;
 }
 
+uint32_t rdx_macos_peer_session_audit_session_id(const rdx_macos_peer_session *record) {
+    return rdx_macos_peer_session_record_is_valid(record)
+        ? audit_token_to_asid(rdx_session_token(record)) : 0;
+}
+
 bool rdx_macos_copy_manager_peer_session(int peer, const char *requirement_text,
     rdx_macos_peer_session *out_session) {
     if (out_session == NULL) { return false; }

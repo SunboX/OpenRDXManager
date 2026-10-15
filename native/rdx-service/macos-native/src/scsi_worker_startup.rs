@@ -18,6 +18,10 @@ const WORKER_STAGES: &[&str] = &[
     "process-spawn",
     "process-pipes",
     "process-nonblocking",
+    "context-peer",
+    "context-request",
+    "context-proof",
+    "context-ack",
     "init-write",
     "init-read",
     "init-frame",
@@ -141,6 +145,10 @@ impl WorkerStartupFailure {
             b"process-spawn" => code!("process-spawn"),
             b"process-pipes" => code!("process-pipes"),
             b"process-nonblocking" => code!("process-nonblocking"),
+            b"context-peer" => code!("context-peer"),
+            b"context-request" => code!("context-request"),
+            b"context-proof" => code!("context-proof"),
+            b"context-ack" => code!("context-ack"),
             b"init-write" => code!("init-write"),
             b"init-read" => code!("init-read"),
             b"init-frame" => code!("init-frame"),
@@ -287,7 +295,7 @@ pub(super) struct NativeDiagnostic {
 /// Owns a bounded stderr parser and continuously drains its pipe without background threads.
 #[derive(Default)]
 pub(super) struct StartupDiagnostics {
-    pipe: Option<ChildStderr>,
+    pipe: Option<crate::worker_process::WorkerPipe<ChildStderr>>,
     pipe_nonblocking: bool,
     line: Vec<u8>,
     dropping_line: bool,
@@ -303,6 +311,11 @@ pub(super) struct StartupDiagnostics {
 impl StartupDiagnostics {
     /// Takes only the stderr descriptor from this exact already-spawned child.
     pub(super) fn new(pipe: Option<ChildStderr>) -> Self {
+        Self::from_pipe(pipe.map(crate::worker_process::WorkerPipe::Standard))
+    }
+
+    /// Retains the same stderr parser for either supported exact-child spawn ownership form.
+    pub(super) fn from_pipe(pipe: Option<crate::worker_process::WorkerPipe<ChildStderr>>) -> Self {
         Self {
             pipe,
             observing: true,
@@ -466,8 +479,18 @@ impl StartupDiagnostics {
                 bucket: bucket(status.unwrap_or(error)),
                 detail: None,
             });
-        if parent_phase == "init-write" || parent_phase == "init-frame" {
+        if matches!(
+            parent_phase,
+            "init-write"
+                | "init-frame"
+                | "context-peer"
+                | "context-request"
+                | "context-proof"
+                | "context-ack"
+        ) {
             // Parent framing/write failure is final even when the child emitted earlier progress.
+            // Context failures precede IOKit admission, so an old child init-read/native breadcrumb
+            // cannot replace the actual parent's failed request/proof/ACK boundary.
             publish(fallback);
             self.observing = false;
             self.active = false;
@@ -587,6 +610,53 @@ fn canonical_code(text: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Consumed native context failures retain each exact closed token through every publisher path.
+    #[test]
+    fn context_parent_and_parser_failure_codes_are_consumed_exactly() {
+        let cases = [
+            (
+                "context-peer",
+                NativeError::AccessDenied,
+                3,
+                "candidate-worker-context-peer-access-denied",
+            ),
+            (
+                "context-request",
+                NativeError::TimedOut,
+                5,
+                "candidate-worker-context-request-timed-out",
+            ),
+            (
+                "context-proof",
+                NativeError::InvalidRequest,
+                1,
+                "candidate-worker-context-proof-invalid",
+            ),
+            (
+                "context-ack",
+                NativeError::TransportUnavailable,
+                2,
+                "candidate-worker-context-ack-transport-unavailable",
+            ),
+        ];
+        let mut actual = Vec::new();
+        let mut expected = Vec::new();
+        for (stage, error, status, code) in cases {
+            reset();
+            parent_failure(stage, error);
+            actual.push(take_last_worker_startup_failure().unwrap().code());
+            let mut diagnostic = StartupDiagnostics::new(None);
+            diagnostic.failure(stage, error);
+            actual.push(take_last_worker_startup_failure().unwrap().code());
+            let mut diagnostic = StartupDiagnostics::new(None);
+            diagnostic.consume(format!("{{\"diagnostic\":\"worker-startup\",\"stage\":\"{stage}\",\"status\":{status}}}\n").as_bytes());
+            diagnostic.failure("init-read", NativeError::TransportUnavailable);
+            actual.push(take_last_worker_startup_failure().unwrap().code());
+            expected.extend([code; 3]);
+        }
+        assert_eq!(actual, expected);
+    }
 
     const CAPTURE: &str = "{\"diagnostic\":\"snapshot-native-acquisition\",\"substage\":\"usb-capture-device\",\"nativeStatus\":3,\"nativeCodeKind\":\"nserror\",\"nativeCode\":42}\n";
     const LEGACY: &str = "{\"diagnostic\":\"snapshot-native-acquisition\",\"substage\":\"legacy-create-plugin\",\"nativeStatus\":2,\"nativeCodeKind\":\"ioreturn\",\"nativeCode\":-1}\n";
