@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 André Fiedler -->
-<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
 
 # macOS Authenticated GUI Worker Implementation Plan
 
