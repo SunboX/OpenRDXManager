@@ -18,6 +18,10 @@ mod desktop_context;
 mod effective_context;
 #[path = "../../../../../tests/fixtures/token-child-status.rs"]
 mod exit_status;
+#[path = "manager_source_context.rs"]
+mod manager_source_context;
+#[path = "manager_source_protocol.rs"]
+mod manager_source_protocol;
 #[path = "mandatory_label.rs"]
 mod mandatory_label;
 #[path = "object_acl.rs"]
