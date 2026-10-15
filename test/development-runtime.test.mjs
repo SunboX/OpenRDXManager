@@ -21,11 +21,14 @@ test('preload builds prepare host dependencies before importing esbuild', async 
     assert.equal(packageJson.scripts['prebuild:preload'], 'node scripts/prepare-development-runtime.mjs')
 })
 
-test('full tests prepare preload and native dependencies before concurrent workers start', async () => {
+test('full tests prepare preload and native dependencies before directly owned visual processes start', async () => {
     const packageJson = JSON.parse(await readFile(packageUrl, 'utf8'))
     assert.equal(packageJson.scripts.pretest, 'npm run build:preload && npm run build:native-service')
     const visualTest = await readFile(new URL('./visual-qa-electron.test.mjs', import.meta.url), 'utf8')
-    assert.match(visualTest, /const npmArguments = \['--ignore-scripts', 'run', 'test:visual'\]/u)
+    const visualRunner = await readFile(new URL('./helpers/visual-process.mjs', import.meta.url), 'utf8')
+    assert.match(visualTest, /runVisualProcess\(electronPath, \[visualQaPath, \.\.\.visualArguments\]/u)
+    assert.doesNotMatch(visualTest, /npmArguments|npm-cli\.js|['"]npm(?:\.cmd)?['"]/u)
+    assert.match(visualRunner, /execute\(executable, args, \{ cwd, env, timeout: timeoutMs, killSignal: 'SIGKILL'/u)
 })
 
 test('dependency installation downloads the Electron executable before a runtime probe', async () => {
