@@ -139,6 +139,8 @@ let _revoke_before_runtime_drop = SessionRevokeGuard::new(session.factory());
 
 ### Task 3: Gate the fixed launch with actual child context proof
 
+Use the reviewed [public close-default spawn adaptation](macos-worker-close-default-spawn-2026-10-15.md) for process ownership and descriptor inheritance. The original worker protocol, cleanup and Busy contracts remain required.
+
 **Files:** Modify `macos-native/src/scsi_worker.rs`, existing worker protocol/dispatch modules and their test modules; create `macos-native/src/worker_context.rs` and public-API C self-audit helper beside `rdx_peer_session.c`. Add focused owned-child process fixtures. Keep diagnostics modules' existing bounds/privacy contracts.
 
 **Interfaces:** `MacWorkerFactory::spawn(&self, identity: &MacRematchIdentity) -> Result<MacScsiWorkerLease, NativeError>` is the authenticated GUI entry. Native self-audit returns a private fixed-width `WorkerContext` record. Internal `verify_child_context(expected, observed, owned_child_pid)` is pure and cannot grant a factory. New context frame kinds precede INIT and share its existing absolute deadline.
