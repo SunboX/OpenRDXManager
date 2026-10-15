@@ -13,6 +13,8 @@
 
 **Spec:** `docs/specs/locally-trusted-installation-2026-10-12.md`, together with the design contract below. This is a proposed extension of the approved locally trusted installation architecture, pending root and independent review before source changes.
 
+**Compatibility amendment:** [Generation-bound fixed helper locations](macos-worker-helper-location-2026-10-15.md) preserves the distinct signed bundled and locally enrolled standalone helper paths throughout capture and launch. It supersedes any single-location assumption in this plan or its spawn adaptation.
+
 ## Global constraints
 
 - Preserve signed and locally enrolled Manager authentication, protected runtime/seal checks, fixed endpoint namespaces, hardware ownership leases and manufacturing evidence gates.

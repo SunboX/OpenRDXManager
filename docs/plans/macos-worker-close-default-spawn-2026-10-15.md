@@ -3,6 +3,8 @@
 
 # Task 3: supported close-default worker launch adaptation
 
+The [helper location compatibility amendment](macos-worker-helper-location-2026-10-15.md) supersedes the single standalone helper target below. It retains this ownership and spawn contract while selecting one of two fixed wrappers from the authenticated runtime generation; no caller path or fallback is added.
+
 Proposed narrow amendment for root and independent review before production changes. Task 3 remains the only implementation scope; worker routing (Task 4) and direct CLI authority (Task 5) remain unchanged. This document does not authorize root, service, installation or device actions.
 
 ## Observed requirement gap
