@@ -15,6 +15,7 @@ import { createChildProcessTransportFactory } from '../src/main/device-service-c
 import { nativeHostReadiness } from './helpers/native-host-readiness.mjs'
 import { ownWindowsFixture } from './helpers/windows-fixture-owner.mjs'
 import { completeDeviceSnapshot } from './helpers/device-snapshot.mjs'
+import { createTerminalRuntimeLog } from './helpers/terminal-runtime-log.mjs'
 
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -716,8 +717,10 @@ test('drains coalesced pre-start-ack cancellation responses without releasing th
         { name: 'negative start then positive cancel acknowledgement', options: { startResponse: { ok: false, reason: 'operation-rejected' } }, outcome: 'fault' }
     ]
     for (const scenario of scenarios) {
-        await context.test(scenario.name, async () => {
+        await context.test(scenario.name, { timeout: 10_000 }, async () => {
             const logDirectory = await mkdtemp(join(tmpdir(), 'openrdx-service-runtime-start-cancel-'))
+            const terminalLog = createTerminalRuntimeLog()
+            const terminalPublished = Promise.withResolvers()
             const { handlers, ipcMain } = createIpcMain()
             const services = { isTrustedSender: () => true }
             const published = []
@@ -725,6 +728,7 @@ test('drains coalesced pre-start-ack cancellation responses without releasing th
             let firstTransport = null
             const runtime = createApplicationServiceRuntime({
                 appPath: '/work/OpenRDXManager',
+                eventLoggerOptions: { fileSecurity: terminalLog.fileSecurity },
                 ipcController: {
                     /** @param {object} event - Safe device event. @returns {boolean} Records exact publication order. */
                     publishDeviceEvent(event) {
@@ -734,6 +738,7 @@ test('drains coalesced pre-start-ack cancellation responses without releasing th
                     /** @param {object} event - Safe operation event. @returns {boolean} Records exact publication order. */
                     publishOperationEvent(event) {
                         published.push({ channel: 'operation', event })
+                        if (['failed', 'cancelled', 'succeeded'].includes(event.state)) terminalPublished.resolve(event)
                         return true
                     }
                 },
@@ -781,11 +786,27 @@ test('drains coalesced pre-start-ack cancellation responses without releasing th
                     firstTransport.deliverDeferredCancellation()
                 }
 
+                // Ownership and the decoder suffix must stay held until the
+                // terminal actually persists, independent of host I/O latency.
+                const terminalRecord = await terminalLog.terminalWriteStarted
+                const expectedTerminalState = scenario.outcome === 'success' ? 'cancelled' : 'failed'
+                assert.equal(terminalRecord.details.state, expectedTerminalState)
+                assert.equal(runtime.coordinator.getActiveOperation().operationId, operationId)
+                assert.equal(
+                    published.some((entry) => entry.channel === 'operation' && ['failed', 'cancelled', 'succeeded'].includes(entry.event.state)),
+                    false
+                )
+                assert.equal(
+                    published.some((entry) => entry.channel === 'device' && entry.event.type === 'list' && entry.event.listRevision === 1),
+                    false
+                )
+                terminalLog.release()
+                assert.equal((await terminalPublished.promise).state, expectedTerminalState)
+                assert.equal(runtime.coordinator.getActiveOperation(), null)
+
                 if (scenario.outcome !== 'success') {
                     const expectedCancellation = scenario.outcome === 'fault-order' ? { ok: false, reason: 'operation-outcome-unknown' } : { ok: true }
                     assert.deepEqual(await cancellation, expectedCancellation)
-                    await waitFor(() => runtime.coordinator.getActiveOperation() === null)
-                    await waitFor(() => published.some((entry) => entry.channel === 'operation' && entry.event.state === 'failed'))
                     assert.equal(
                         published.some((entry) => entry.channel === 'operation' && entry.event.state === 'cancelled'),
                         false
@@ -797,16 +818,15 @@ test('drains coalesced pre-start-ack cancellation responses without releasing th
                     return
                 }
 
-                await waitFor(() => cancellationResult !== null)
-                assert.deepEqual(cancellationResult, { ok: true })
-                await waitFor(() => runtime.coordinator.getActiveOperation() === null)
-                await waitFor(() => published.some((entry) => entry.channel === 'device' && entry.event.type === 'list' && entry.event.listRevision === 1))
                 assert.deepEqual(await cancellation, { ok: true })
+                assert.deepEqual(cancellationResult, { ok: true })
+                await waitFor(() => published.some((entry) => entry.channel === 'device' && entry.event.type === 'list' && entry.event.listRevision === 1))
                 const terminalIndex = published.findIndex((entry) => entry.channel === 'operation' && entry.event.state === 'cancelled')
                 const suffixIndex = published.findIndex((entry) => entry.channel === 'device' && entry.event.type === 'list' && entry.event.listRevision === 1)
                 assert.equal(terminalIndex >= 0 && suffixIndex > terminalIndex, true)
                 assert.equal(runtime.getReadiness().status, 'ready')
             } finally {
+                terminalLog.release()
                 ipcController.dispose()
                 await runtime.stop()
                 await rm(logDirectory, { force: true, recursive: true })
