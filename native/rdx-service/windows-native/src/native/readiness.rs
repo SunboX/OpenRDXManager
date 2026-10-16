@@ -40,11 +40,19 @@ const MAX_TOKEN_USER_BYTES: usize = 4_096;
 /// Checks endpoint startup authority while retaining the exact enrolled runtime.
 pub(crate) fn verify_service_startup()
 -> Result<crate::local_trust::windows::RuntimeLease, crate::NativeError> {
-    let trust = crate::local_trust::verify_runtime_lease()?;
-    if !collect_service_identity(AuthorityPhase::Startup).startup_authorized()
-        || !current_process_is_fixed_service()
-    {
-        return Err(crate::NativeError::AccessDenied);
+    use crate::service::diagnostics::{Stage, record};
+    let trust = record(
+        Stage::RuntimeTrust,
+        crate::local_trust::verify_runtime_lease(),
+    )?;
+    if !collect_service_identity(AuthorityPhase::Startup).startup_authorized() {
+        return record(
+            Stage::StartupAuthority,
+            Err(crate::NativeError::AccessDenied),
+        );
+    }
+    if !current_process_is_fixed_service() {
+        return record(Stage::ServiceProcess, Err(crate::NativeError::AccessDenied));
     }
     Ok(trust)
 }

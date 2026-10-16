@@ -524,3 +524,16 @@ and `.tmp/windows-empty-media-fix/{source-metadata.json,native-checks.json,windo
 The corrected installer and installed service/device acceptance remain pending;
 these results do not establish successful installation, ready-media Repair or
 removal on the physical dock, or release availability.
+
+
+## Windows installed verification, 2026-10-16
+
+The user completed the `ef9a66c` x64 installer successfully. The installed Program Files runtime matches its built inventory (1,864 files), and Electron fuse verification passes. A separate read of the protected enrollment finds no file hash mismatches. All 42 existing manufacturing backup entries, including 28 files, retain their bytes, attributes, owner, group and DACL.
+
+Enrollment and the device-access journal are present, and the ordinary Manager retains the intended SCM start/query grant. Installed authentication still fails with `service-handshake-timeout`, followed by `smoke-readiness-timeout`. SCM records a stopped service with Windows error 1066 and the old generic service-specific code 1. This does not establish usable installed hardware access.
+
+The client handshake timer starts after native server-identity verification. A separate harmless identification-pipe probe succeeds both before and after reading a message; it does not establish the cause of the installed service failure. Authentication ordering remains unchanged. The next diagnostic package adds closed [Windows service failure codes](../development/windows-service-diagnostics.md) to distinguish the existing failing boundaries.
+
+GitHub Actions run `38857863184` for `ef9a66c` passes both macOS and both Linux jobs. Both Windows jobs fail the original owned-medium-child gate with `status-dll-init-failed`; their native test steps pass. Installer collection and release publication are skipped. No 1.0.1 release is published by that run.
+
+Private evidence: `.tmp/post-install-ef9a66c/installed-result.json`, `system-private-state.json`, `enrolled-readonly.json`, `pipe-identification-v3-result.json` and `ci-failures.log`. The diagnostic probe does not change the installed service or access the dock. Its first harness attempt was terminated only after exact process-command and retained-handle creation-time checks; the bounded follow-up exits normally.

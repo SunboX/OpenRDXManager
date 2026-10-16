@@ -14,6 +14,8 @@ use std::time::Instant;
 use std::mem::{size_of, zeroed};
 
 use crate::NativeError;
+#[cfg(windows)]
+use crate::service::diagnostics::{Stage, begin_attempt, record};
 
 #[cfg(any(windows, test))]
 mod admission;
@@ -329,9 +331,12 @@ impl NamedPipeManagerEndpointListener {
         startup: crate::service::RegisteredServiceStartup,
     ) -> Result<Self, NativeError> {
         let startup_trust = startup.into_runtime();
-        let authority = endpoint_authority()?;
+        let authority = record(Stage::PipeAuthority, endpoint_authority())?;
         let ownership = NamespaceOwnership::new();
-        let pending = create_pending_pipe(&authority, ownership.pending_policy())?;
+        let pending = record(
+            Stage::FirstPipe,
+            create_pending_pipe(&authority, ownership.pending_policy()),
+        )?;
         Ok(Self {
             startup_trust,
             authority,
@@ -367,17 +372,24 @@ impl NamedPipeManagerEndpointListener {
     {
         #[cfg(windows)]
         {
+            begin_attempt();
             let pending = self.pending.as_ref().ok_or(NativeError::Cancelled)?;
-            let trust = std::sync::Arc::new(crate::local_trust::verify_runtime_lease()?);
+            let trust = std::sync::Arc::new(record(
+                Stage::ConnectionTrust,
+                crate::local_trust::verify_runtime_lease(),
+            )?);
             accept_native(pending, &self.authority, &stop_requested)?;
             if stop_requested() {
                 self.ownership.stop();
                 return Err(NativeError::Cancelled);
             }
             let connected = self.pending.take().ok_or(NativeError::Cancelled)?;
-            let next = create_pending_pipe(&self.authority, PipeInstancePolicy::Additional)?;
+            let next = record(
+                Stage::NextPipe,
+                create_pending_pipe(&self.authority, PipeInstancePolicy::Additional),
+            )?;
             self.pending = Some(next);
-            self.ownership.roll_after_accept()?;
+            record(Stage::NamespaceRoll, self.ownership.roll_after_accept())?;
             debug_assert!(self.ownership.authority_retained());
             Ok(ManagerEndpointConnection {
                 handle: connected.into_raw(),
@@ -450,18 +462,21 @@ impl ManagerEndpointConnection {
             let mut duplicate = HANDLE::default();
             // SAFETY: source handle is live, target process is current, and the
             // returned duplicate transfers to the new connection wrapper.
-            unsafe {
-                DuplicateHandle(
-                    process,
-                    self.handle,
-                    process,
-                    &mut duplicate,
-                    0,
-                    false,
-                    DUPLICATE_SAME_ACCESS,
-                )
-            }
-            .map_err(|_| NativeError::Other)?;
+            record(
+                Stage::PipeClone,
+                unsafe {
+                    DuplicateHandle(
+                        process,
+                        self.handle,
+                        process,
+                        &mut duplicate,
+                        0,
+                        false,
+                        DUPLICATE_SAME_ACCESS,
+                    )
+                }
+                .map_err(|_| NativeError::Other),
+            )?;
             Ok(Self {
                 handle: duplicate,
                 trust: self.trust.clone(),
@@ -630,7 +645,10 @@ fn accept_native<F>(
 where
     F: Fn() -> bool,
 {
-    wait_for_manager(pending.0, stop_requested)?;
+    record(
+        Stage::ConnectionWait,
+        wait_for_manager(pending.0, stop_requested),
+    )?;
     authenticate_client(
         pending.0,
         authority.session_id,
@@ -639,8 +657,11 @@ where
     let mode = PIPE_READMODE_BYTE | PIPE_NOWAIT;
     // SAFETY: the authenticated connected pipe handle is live and mode points
     // to one initialized scalar retained for the duration of this call.
-    unsafe { SetNamedPipeHandleState(pending.0, Some(&mode), None, None) }
-        .map_err(|_| NativeError::Other)?;
+    record(
+        Stage::PipeMode,
+        unsafe { SetNamedPipeHandleState(pending.0, Some(&mode), None, None) }
+            .map_err(|_| NativeError::Other),
+    )?;
     Ok(())
 }
 
@@ -681,32 +702,50 @@ fn authenticate_client(
     let mut session_id = u32::MAX;
     let mut process_id = 0_u32;
     // SAFETY: output scalars are valid and the pipe handle is connected.
-    unsafe { GetNamedPipeClientSessionId(handle, &mut session_id) }
-        .map_err(|_| NativeError::AccessDenied)?;
+    record(
+        Stage::ClientSession,
+        unsafe { GetNamedPipeClientSessionId(handle, &mut session_id) }
+            .map_err(|_| NativeError::AccessDenied),
+    )?;
     // SAFETY: same as the preceding query.
-    unsafe { GetNamedPipeClientProcessId(handle, &mut process_id) }
-        .map_err(|_| NativeError::AccessDenied)?;
-    if session_id != expected_session || process_id == 0 || !manager_process_matches(process_id)? {
-        return Err(NativeError::AccessDenied);
+    record(
+        Stage::ClientProcess,
+        unsafe { GetNamedPipeClientProcessId(handle, &mut process_id) }
+            .map_err(|_| NativeError::AccessDenied),
+    )?;
+    if session_id != expected_session {
+        return record(Stage::ClientSession, Err(NativeError::AccessDenied));
+    }
+    if process_id == 0 || !record(Stage::ClientProcess, manager_process_matches(process_id))? {
+        return record(Stage::ClientProcess, Err(NativeError::AccessDenied));
     }
     // SAFETY: connected local pipe is valid for bounded impersonation.
-    unsafe { ImpersonateNamedPipeClient(handle) }.map_err(|_| NativeError::AccessDenied)?;
+    record(
+        Stage::ClientImpersonation,
+        unsafe { ImpersonateNamedPipeClient(handle) }.map_err(|_| NativeError::AccessDenied),
+    )?;
     let guard = ImpersonationGuard { active: true };
     let mut token = HANDLE::default();
     // SAFETY: the current thread is impersonating and output owns one token.
-    unsafe { OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, true, &mut token) }
-        .map_err(|_| NativeError::AccessDenied)?;
+    record(
+        Stage::ClientToken,
+        unsafe { OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, true, &mut token) }
+            .map_err(|_| NativeError::AccessDenied),
+    )?;
     let token = TemporaryHandle(token);
-    let result = token_user_sid(token.raw()).and_then(|actual| {
-        // SAFETY: both SIDs point into live owned byte buffers for this call.
-        unsafe {
-            windows::Win32::Security::EqualSid(
-                PSID(actual.as_ptr().cast_mut().cast()),
-                PSID(expected_sid.as_ptr().cast_mut().cast()),
-            )
-        }
-        .map_err(|_| NativeError::AccessDenied)
-    });
+    let result = record(
+        Stage::ClientUser,
+        token_user_sid(token.raw()).and_then(|actual| {
+            // SAFETY: both SIDs point into live owned byte buffers for this call.
+            unsafe {
+                windows::Win32::Security::EqualSid(
+                    PSID(actual.as_ptr().cast_mut().cast()),
+                    PSID(expected_sid.as_ptr().cast_mut().cast()),
+                )
+            }
+            .map_err(|_| NativeError::AccessDenied)
+        }),
+    );
     admission::finish_authentication(
         result,
         || guard.revert(),
@@ -716,7 +755,7 @@ fn authenticate_client(
             if crate::probe_readiness().current_process_authorized() {
                 Ok(())
             } else {
-                Err(NativeError::AccessDenied)
+                record(Stage::RunningAuthority, Err(NativeError::AccessDenied))
             }
         },
     )

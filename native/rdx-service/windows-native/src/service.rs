@@ -9,6 +9,8 @@ use crate::NativeError;
 use crate::endpoint::NamedPipeManagerEndpointListener;
 
 #[cfg(any(windows, test))]
+pub(crate) mod diagnostics;
+#[cfg(any(windows, test))]
 mod startup;
 
 #[cfg(windows)]
@@ -47,7 +49,10 @@ impl RegisteredServiceStartup {
         let trust = Arc::new(crate::native::verify_service_startup()?);
         // Ordinary Managers must inspect this verified service's identity. Grant
         // only query rights on our live objects, never the token's default DACL.
-        crate::service_identity_access::prepare_current_service_identity_queries()?;
+        diagnostics::record(
+            diagnostics::Stage::ServiceQueryAccess,
+            crate::service_identity_access::prepare_current_service_identity_queries(),
+        )?;
         if lifecycle.stop_requested() {
             return Err(NativeError::Cancelled);
         }
@@ -357,6 +362,7 @@ struct ServiceControlContext {
 struct ServiceStatusReporter {
     handle: isize,
     checkpoint: u32,
+    failure_code: u32,
 }
 
 #[cfg(windows)]
@@ -381,13 +387,14 @@ impl ServiceStatusReporter {
         } else {
             0
         };
-        let win32_exit = snapshot.win32_exit_code();
+        let (win32_exit, specific_exit) =
+            diagnostics::status_exit_codes(snapshot.win32_exit_code(), self.failure_code);
         let status = SERVICE_STATUS {
             dwServiceType: SERVICE_WIN32_OWN_PROCESS,
             dwCurrentState: state,
             dwControlsAccepted: controls,
             dwWin32ExitCode: win32_exit,
-            dwServiceSpecificExitCode: u32::from(win32_exit != 0),
+            dwServiceSpecificExitCode: specific_exit,
             dwCheckPoint: self.checkpoint,
             dwWaitHint: wait_hint,
         };
@@ -442,6 +449,7 @@ unsafe extern "system" fn service_main(_argc: u32, _argv: *mut PWSTR) {
 
 #[cfg(windows)]
 fn run_registered_service() -> Result<(), NativeError> {
+    diagnostics::begin_attempt();
     let runner = SERVICE_RUNNER
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
@@ -454,6 +462,7 @@ fn run_registered_service() -> Result<(), NativeError> {
         reporter: Mutex::new(ServiceStatusReporter {
             handle: 0,
             checkpoint: 0,
+            failure_code: 1,
         }),
     });
     // SAFETY: the service name is NUL-terminated, the handler has the required
@@ -486,6 +495,13 @@ fn run_registered_service() -> Result<(), NativeError> {
             None => Ok(()),
         }
     })();
+    if let Err(error) = run_result {
+        control
+            .reporter
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .failure_code = diagnostics::failure_code(error);
+    }
     lifecycle.request_stop();
     let pending_result = control.publish();
     let exit_code = if run_result.is_ok() {
