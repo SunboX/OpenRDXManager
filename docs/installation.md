@@ -27,7 +27,7 @@ Available actions depend on the operating system, service privileges, dock firmw
 Use the installer again to update an installed app. Replacing or editing its files manually can disable hardware access; the app will show installation or repair guidance. Close OpenRDXManager after all device operations have finished before running an update or repair. Keep backups and user settings outside the installation folder.
 
 - **macOS:** If the app asks for installation, run the PKG and open the installed copy from Applications. If it asks for repair, close the app and run the PKG again. Use **Check again** after setup, or reopen the installed app.
-- **Windows:** Run the EXE installer again with the RDX dock connected. A newly attached or recreated device instance may require another setup run. If setup cannot identify a supported dock or establish its access, follow the reported retry guidance; do not run the app as administrator to bypass it.
+- **Windows:** Run the EXE installer again with the RDX dock connected. A newly attached or recreated device instance may require another setup run. A cartridge is not required to set up the dock. If cartridge access remains unavailable after inserting ready media, run setup again with that cartridge inserted. If setup cannot identify a supported dock or establish its access, follow the reported retry guidance; do not run the app as administrator to bypass it.
 
 Installer completion, service readiness and physical device readiness are separate results. A dock appears only after the running service verifies it. An unsupported or inaccessible dock remains unavailable even when installation succeeds.
 

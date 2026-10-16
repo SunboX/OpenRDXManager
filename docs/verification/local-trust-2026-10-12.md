@@ -480,3 +480,47 @@ A native Windows regression identifies a candidate-only lookup bug before packag
 The original Windows owned-medium-child CI gate remains failed and fatal in [run 38781090613](https://github.com/SunboX/OpenRDXManager/actions/runs/38781090613); the four macOS/Linux jobs pass and collection/publication are skipped. A separate frozen ordinary-Manager-source diagnostic passes donor/copy preservation in release mode but returns an uncertain creation result before ownership is reported. Its private namespace remains retained; no successful creation, reaping or replacement CI acceptance is claimed. The full application suite passes 1,342 tests with 21 expected skips before the Windows-only reverse-query extension. This checkpoint does not authorize a 1.0.1 publication while installed Windows acceptance and the original CI gate remain unresolved.
 
 Final candidate verification passes 108 host native unit tests, 20 integration contracts and one compile-fail documentation test; 32 focused Node contracts pass with two expected platform skips. Windows x64 test-target Clippy with warnings denied and Rust formatting pass. The actual ordinary-desktop Windows native run passes 11 tests, with one ignored child entry invoked successfully by its bounded parent fixture. That fixture proves a distinct child primary token before changing only the owned child objects, verifies all expected descriptor/default-DACL preservation and repeated/concurrent Manager preparation, and confirms the parent's process/token/default DACL remain unchanged. Independent review is clear. Evidence: `.tmp/post-install-f3f605a/query-fix-{native-full,node-contracts,windows-clippy,format}.log` and `.tmp/windows-service-query-native/native-v5-result.json`. The earlier V4 run also exercises the actual installed fixed-account lookup successfully. The final isolated ACL fixture uses a test-only synthetic service-shaped SID so clean CI needs no production service account; a guarded read-only absent-service lookup returns error 1332. Production lookup remains fixed and unchanged. Packaged and installed Windows acceptance remains separate.
+
+### Windows installer with unavailable cartridge media (2026-10-16)
+
+The retained NSIS diagnostic from the installed `9364b88` candidate reports
+`stage=install code=3 native-phase=device-access native-reason=EnumerationFailed`.
+A fresh ordinary-session check confirms that the installed provisioner matches
+that candidate and the selected dock is present as USB disk 1. Read-only probes
+against an isolated copy of the same native code enumerate both disks correctly.
+The selected dock's storage readiness query returns Windows `ERROR_NOT_READY`
+(21), mapped to `NoMedia`. Its exposed volume has one matching disk extent with
+nonnegative offset and nonpositive length; strict volume classification rejects
+that extent. No permission or media writes were made by these probes.
+
+A second read-only probe reproduces `GetSecurityInfo` returning `AccessDenied`
+for a zero-access target-volume handle and succeeding with `READ_CONTROL`.
+Microsoft's [GetSecurityInfo contract](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-getsecurityinfo)
+requires that right for owner/group/DACL reads. The candidate requests it only
+after strict zero-access inspection identifies a target volume, then checks the
+new handle's topology and instance again.
+
+The installer-only fix brackets a readiness query with exact retained-disk
+revalidation and defers volume permissions when media is unavailable. It does
+not accept empty extents for cartridge operations. Install and Repair share a
+bounded write-ahead planner: newly available volumes enter the protected journal
+before writes; same-instance geometry refresh preserves original descriptors;
+disconnected entries remain; duplicate identities and foreign policies fail
+closed. Fresh prewrite property checks reject observed intervening administrator changes.
+Removal can defer volumes on an empty dock and later resume when the exact parent
+disk has already been restored to its recorded original policy.
+
+Nine portable planner tests first produce eight expected failures and one pass,
+then all pass after implementation. The ordinary Windows VM also passes all nine
+against hash-matched candidate source. Host native verification passes 117 unit
+and 20 integration tests plus the compile-failure documentation test. Focused
+Node installer checks, Rust formatting, and Windows-target all-target Clippy with
+warnings denied pass. The VM toolchain lacks its Clippy component; that attempt
+is recorded as unavailable, and the existing host Windows-target check supplies
+the static-check evidence. Independent review clears the corrected patch.
+
+Evidence: `.tmp/windows-device-enumeration-probe/{inventory-readonly.json,result.json,result-v2.json,result-v3.json,policy-red.log,policy-green.log,native-full.log}`
+and `.tmp/windows-empty-media-fix/{source-metadata.json,native-checks.json,windows-clippy.log}`.
+The corrected installer and installed service/device acceptance remain pending;
+these results do not establish successful installation, ready-media Repair or
+removal on the physical dock, or release availability.

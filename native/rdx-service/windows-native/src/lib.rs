@@ -35,6 +35,8 @@ mod endpoint;
 mod filesystem_facts;
 mod host;
 mod installer;
+#[cfg(any(windows, test))]
+mod installer_volume_policy;
 mod local_trust;
 pub use installer::{
     LocalInstallAction, LocalInstallCommand, apply_local_install, parse_local_install_arguments,

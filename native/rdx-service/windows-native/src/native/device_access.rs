@@ -3,6 +3,10 @@
 
 //! Fixed installer-only per-instance permissions. Never changes disk-class policy.
 use super::*;
+use crate::installer_volume_policy::{
+    VolumeObservation, VolumePolicy, plan_volume_policies, validate_volume_policies,
+    volume_media_ready,
+};
 use crate::local_trust::windows::{evidence, open};
 use crate::local_trust::{LOCAL_ENROLLMENT_ROOT, validate_runtime_acl};
 use serde::{Deserialize, Serialize};
@@ -19,6 +23,7 @@ use windows::Win32::Security::Authorization::{
     TRUSTEE_IS_USER, TRUSTEE_W,
 };
 use windows::Win32::Security::*;
+use windows::Win32::Storage::FileSystem::READ_CONTROL;
 use windows::core::PWSTR;
 
 const RECORD: &str = "device-access.json";
@@ -37,14 +42,6 @@ struct DevicePolicy {
     previous: Option<String>,
     installed: String,
     volumes: Vec<VolumePolicy>,
-}
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct VolumePolicy {
-    instance: String,
-    topology: String,
-    previous: Option<String>,
-    installed: String,
 }
 struct MappedVolume {
     instance: String,
@@ -333,17 +330,11 @@ fn read_records() -> Result<PreviousPolicy, NativeError> {
     }
     let mut seen = BTreeSet::new();
     for entry in &records.devices {
+        validate_volume_policies(&entry.volumes)?;
         if entry.instance.len() > 201
             || entry.serial.len() > 10
             || entry.installed.len() > 65536
             || entry.previous.as_ref().is_some_and(|v| v.len() > 65536)
-            || entry.volumes.len() > 256
-            || entry.volumes.iter().any(|v| {
-                v.instance.len() > 201
-                    || v.topology.len() > 256
-                    || v.installed.len() > 65536
-                    || v.previous.as_ref().is_some_and(|s| s.len() > 65536)
-            })
             || !seen.insert(entry.instance.clone())
         {
             return Err(NativeError::EvidenceIncomplete);
@@ -372,11 +363,12 @@ pub(crate) fn provision(administrator_sid: &str) -> Result<(), NativeError> {
         };
         let info = instance_info(&set, &candidate.instance_id)?;
         let previous = instance_policy(&set, &info)?;
-        if let Some(existing) = records
+        let index = if let Some(index) = records
             .devices
             .iter()
-            .find(|v| v.instance == candidate.instance_id)
+            .position(|v| v.instance == candidate.instance_id)
         {
+            let existing = &records.devices[index];
             if !crate::safe_device_acl_repair(
                 &existing.instance,
                 &existing.serial,
@@ -388,93 +380,82 @@ pub(crate) fn provision(administrator_sid: &str) -> Result<(), NativeError> {
             ) {
                 return Err(NativeError::AccessDenied);
             }
-            let volume_set = volume_info_set()?;
-            let mapped = mapped_volumes(&volume_set, candidate.disk_number)?;
-            // Validate every current journal match before changing any policy.
-            for volume in &mapped {
-                if let Some(recorded) = existing.volumes.iter().find(|v| {
-                    v.instance == volume.instance && v.topology == topology_key(&volume.topology)
-                }) {
-                    let current = instance_policy(&volume_set, &volume.info)?;
-                    if current.as_deref() != Some(recorded.installed.as_str())
-                        && current != recorded.previous
-                    {
-                        return Err(NativeError::AccessDenied);
-                    }
-                }
-            }
-            device.revalidate_exact()?;
-            set_instance_policy(&set, &info, Some(&existing.installed))?;
-            if instance_policy(&set, &info)?.as_deref() != Some(existing.installed.as_str()) {
-                return Err(NativeError::AccessDenied);
-            }
-            for volume in &mapped {
-                if let Some(recorded) = existing.volumes.iter().find(|v| {
-                    v.instance == volume.instance && v.topology == topology_key(&volume.topology)
-                }) {
-                    device.revalidate_exact()?;
-                    if super::volumes::volume_topology(kernel_handle(&volume.handle))?
-                        != volume.topology
-                    {
-                        return Err(NativeError::DeviceRemoved);
-                    }
-                    set_instance_policy(&volume_set, &volume.info, Some(&recorded.installed))?;
-                    if instance_policy(&volume_set, &volume.info)?.as_deref()
-                        != Some(recorded.installed.as_str())
-                    {
-                        return Err(NativeError::AccessDenied);
-                    }
-                }
-            }
-            continue;
-        }
-        // Driver-level instance security is scoped to this positively identified
-        // device. Preserve every existing system ACE; only our service SID is added.
-        let effective = match &previous {
-            Some(v) => v.clone(),
-            None => current_device_policy(kernel_handle(&device.handle))?,
-        };
-        let installed = grant_service(&effective)?;
-        records.devices.push(DevicePolicy {
-            instance: candidate.instance_id.clone(),
-            serial,
-            previous: previous.clone(),
-            installed: installed.clone(),
-            volumes: Vec::new(),
-        });
-        let volume_set = volume_info_set()?;
-        let mapped = mapped_volumes(&volume_set, candidate.disk_number)?;
-        for volume in &mapped {
-            let previous = instance_policy(&volume_set, &volume.info)?;
+            index
+        } else {
+            // Preserve the original property before adding only the fixed service
+            // SID to this positively identified physical RDX instance.
             let effective = match &previous {
                 Some(v) => v.clone(),
-                None => current_device_policy(kernel_handle(&volume.handle))?,
+                None => current_device_policy(kernel_handle(&device.handle))?,
             };
-            records
-                .devices
-                .last_mut()
-                .ok_or(NativeError::Other)?
-                .volumes
-                .push(VolumePolicy {
+            records.devices.push(DevicePolicy {
+                instance: candidate.instance_id.clone(),
+                serial: serial.clone(),
+                previous,
+                installed: grant_service(&effective)?,
+                volumes: Vec::new(),
+            });
+            records.devices.len() - 1
+        };
+        let volume_set = volume_info_set()?;
+        let mapped = mapped_volumes_for_device(&volume_set, &device, candidate.disk_number)?;
+        let observed = mapped
+            .iter()
+            .map(|volume| {
+                Ok(VolumeObservation {
                     instance: volume.instance.clone(),
                     topology: topology_key(&volume.topology),
-                    previous,
-                    installed: grant_service(&effective)?,
-                });
-        }
+                    current: instance_policy(&volume_set, &volume.info)?,
+                })
+            })
+            .collect::<Result<Vec<_>, NativeError>>()?;
+        let planned = plan_volume_policies(&records.devices[index].volumes, &observed, |i| {
+            let effective = match &observed[i].current {
+                Some(v) => v.clone(),
+                None => current_device_policy(kernel_handle(&mapped[i].handle))?,
+            };
+            grant_service(&effective)
+        })?;
+        records.devices[index].volumes = planned;
+        // Initial installation and Repair share the same write-ahead boundary.
+        // Absent volumes stay recorded; newly ready cartridges are added here.
         write_records(&records, administrator_sid)?;
+        let recorded_device = &records.devices[index];
         device.revalidate_exact()?;
-        set_instance_policy(&set, &info, Some(&installed))?;
-        if instance_policy(&set, &info)?.as_deref() != Some(installed.as_str()) {
+        let current = instance_policy(&set, &info)?;
+        if !crate::safe_device_acl_repair(
+            &recorded_device.instance,
+            &recorded_device.serial,
+            &recorded_device.installed,
+            recorded_device.previous.as_deref(),
+            &candidate.instance_id,
+            &serial,
+            current.as_deref(),
+        ) {
             return Err(NativeError::AccessDenied);
         }
-        for (volume, recorded) in mapped
-            .iter()
-            .zip(&records.devices.last().ok_or(NativeError::Other)?.volumes)
-        {
+        set_instance_policy(&set, &info, Some(&recorded_device.installed))?;
+        if instance_policy(&set, &info)?.as_deref() != Some(recorded_device.installed.as_str()) {
+            return Err(NativeError::AccessDenied);
+        }
+        for volume in &mapped {
+            let recorded = recorded_device
+                .volumes
+                .iter()
+                .find(|v| {
+                    v.instance == volume.instance && v.topology == topology_key(&volume.topology)
+                })
+                .ok_or(NativeError::EvidenceIncomplete)?;
             device.revalidate_exact()?;
             if super::volumes::volume_topology(kernel_handle(&volume.handle))? != volume.topology {
                 return Err(NativeError::DeviceRemoved);
+            }
+            // Preserve an administrator change made after planning/journaling.
+            let current = instance_policy(&volume_set, &volume.info)?;
+            if current.as_deref() != Some(recorded.installed.as_str())
+                && current != recorded.previous
+            {
+                return Err(NativeError::AccessDenied);
             }
             set_instance_policy(&volume_set, &volume.info, Some(&recorded.installed))?;
             if instance_policy(&volume_set, &volume.info)?.as_deref()
@@ -505,7 +486,21 @@ pub(crate) fn restore() -> Result<(), NativeError> {
         let mut device = device_for(&candidate)?;
         let serial = rdx_identity(&mut device)?;
         let info = instance_info(&set, &candidate.instance_id)?;
+        device.revalidate_exact()?;
         let current = instance_policy(&set, &info)?;
+        // Volume cleanup may resume after a previous empty-dock removal already
+        // restored the disk. A foreign parent policy is never admitted.
+        if !crate::safe_device_acl_repair(
+            &record.instance,
+            &record.serial,
+            &record.installed,
+            record.previous.as_deref(),
+            &candidate.instance_id,
+            &serial,
+            current.as_deref(),
+        ) {
+            continue;
+        }
         if crate::safe_device_acl_restore(
             &record.instance,
             &record.serial,
@@ -514,31 +509,35 @@ pub(crate) fn restore() -> Result<(), NativeError> {
             &serial,
             current.as_deref().unwrap_or(""),
         ) {
-            device.revalidate_exact()?;
             set_instance_policy(&set, &info, record.previous.as_deref())?;
             if instance_policy(&set, &info)? != record.previous {
                 return Err(NativeError::AccessDenied);
             }
-            let volume_set = volume_info_set()?;
-            for volume in mapped_volumes(&volume_set, candidate.disk_number)? {
-                let Some(recorded) = record.volumes.iter().find(|v| {
-                    v.instance == volume.instance && v.topology == topology_key(&volume.topology)
-                }) else {
-                    continue;
-                };
-                if instance_policy(&volume_set, &volume.info)?.as_deref()
-                    == Some(recorded.installed.as_str())
+        }
+        let volume_set = volume_info_set()?;
+        for volume in mapped_volumes_for_device(&volume_set, &device, candidate.disk_number)? {
+            let Some(recorded) = record.volumes.iter().find(|v| {
+                v.instance == volume.instance && v.topology == topology_key(&volume.topology)
+            }) else {
+                continue;
+            };
+            if instance_policy(&volume_set, &volume.info)?.as_deref()
+                == Some(recorded.installed.as_str())
+            {
+                device.revalidate_exact()?;
+                if super::volumes::volume_topology(kernel_handle(&volume.handle))?
+                    != volume.topology
                 {
-                    device.revalidate_exact()?;
-                    if super::volumes::volume_topology(kernel_handle(&volume.handle))?
-                        != volume.topology
-                    {
-                        return Err(NativeError::DeviceRemoved);
-                    }
-                    set_instance_policy(&volume_set, &volume.info, recorded.previous.as_deref())?;
-                    if instance_policy(&volume_set, &volume.info)? != recorded.previous {
-                        return Err(NativeError::AccessDenied);
-                    }
+                    return Err(NativeError::DeviceRemoved);
+                }
+                if instance_policy(&volume_set, &volume.info)?.as_deref()
+                    != Some(recorded.installed.as_str())
+                {
+                    continue;
+                }
+                set_instance_policy(&volume_set, &volume.info, recorded.previous.as_deref())?;
+                if instance_policy(&volume_set, &volume.info)? != recorded.previous {
+                    return Err(NativeError::AccessDenied);
                 }
             }
         }
@@ -561,6 +560,44 @@ fn volume_info_set() -> Result<DeviceInfoSet, NativeError> {
     }
     .map_err(map_windows_error)?;
     Ok(DeviceInfoSet::new(raw.0))
+}
+/// Defers only installer volume ACL work while an exactly retained RDX dock is
+/// not ready. Captures the result before post-query revalidation even on failure.
+fn mapped_volumes_for_device(
+    set: &DeviceInfoSet,
+    device: &NativeDevice,
+    disk_number: u32,
+) -> Result<Vec<MappedVolume>, NativeError> {
+    device.revalidate_exact()?;
+    let mut generation = 0_u32;
+    let mut returned = 0_u32;
+    // SAFETY: exact retained device and writable scalar output for a query-only IOCTL.
+    let result = unsafe {
+        DeviceIoControl(
+            kernel_handle(&device.handle),
+            IOCTL_STORAGE_CHECK_VERIFY2,
+            None,
+            0,
+            Some((&raw mut generation).cast()),
+            size_of::<u32>() as u32,
+            Some(&mut returned),
+            None,
+        )
+    }
+    .map_err(map_windows_error);
+    device.revalidate_exact()?;
+    if result.is_ok() && returned != 0 && returned as usize != size_of::<u32>() {
+        return Err(NativeError::EvidenceIncomplete);
+    }
+    if !volume_media_ready(result)? {
+        // No volume authority is fabricated from an empty removable-drive extent.
+        // Retained journal entries remain available for later Repair/removal.
+        eprintln!(
+            "OpenRDX volume permission work deferred: cartridge media is not ready; recorded policies preserved"
+        );
+        return Ok(Vec::new());
+    }
+    mapped_volumes(set, disk_number)
 }
 /// Binds volume permissions to one unambiguous physical extent and complete storage number.
 fn mapped_volumes(set: &DeviceInfoSet, disk_number: u32) -> Result<Vec<MappedVolume>, NativeError> {
@@ -596,10 +633,19 @@ fn mapped_volumes(set: &DeviceInfoSet, disk_number: u32) -> Result<Vec<MappedVol
             if !seen.insert(instance.clone()) {
                 return Err(NativeError::EvidenceIncomplete);
             }
+            // Only a verified target needs ACL-query rights. Re-prove its exact
+            // topology and instance across the new handle; unrelated volumes keep
+            // the zero-access metadata query used by strict classification.
+            let policy_handle = open_path(&path, READ_CONTROL.0)?;
+            if super::volumes::volume_topology(kernel_handle(&policy_handle))? != topology
+                || device_instance_id(set, &info)? != instance
+            {
+                return Err(NativeError::DeviceRemoved);
+            }
             mapped.push(MappedVolume {
                 instance,
                 info,
-                handle,
+                handle: policy_handle,
                 topology,
             });
         }

@@ -114,6 +114,23 @@ re-created device instance may require an administrator-approved Repair run with
 the device connected. Installer completion and physical device readiness are
 reported separately.
 
+For a positively identified and exactly retained RDX dock, an unavailable-media
+result from a query-only storage readiness check defers only volume permission
+work. Revalidate the same disk before and after that query, including on errors.
+Do not admit an empty extent as a valid cartridge topology or relax operation
+checks. Repair must add newly ready target volumes to the protected journal
+before any permission write, retaining original policies and disconnected records.
+Refresh geometry only for the same unique volume instance under the verified
+dock and an exact prior/installed current policy. Reject duplicate identities and
+foreign policy changes. Request read-control access only after a zero-access
+metadata handle proves target membership and revalidate the new handle.
+
+Removal may defer unavailable cartridge volumes while restoring the disk. A later
+removal can resume volume restoration when the exact dock's current disk policy
+is already its recorded original; only the recorded installed disk policy is
+rewritten. Foreign policies remain untouched and deferred records stay protected.
+
+
 ## macOS installation and authentication
 
 Add an unsigned `.pkg` installer for the local mode. Install the complete,
