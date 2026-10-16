@@ -11,7 +11,7 @@ test('Windows worker captures prerequisites and selected Manager token facts wit
     assert.ok(worker.indexOf('try {') < worker.indexOf("throw 'worker-console-mismatch'"))
     assert.ok(worker.indexOf('try {') < worker.indexOf("throw 'worker-must-be-unelevated'"))
     assert.match(worker, /Get-TokenDiagnostic -ProcessId \$candidates\[0\]\.ProcessId/u)
-    assert.match(worker, /if \(\$candidates\.Count -eq 0\) \{ Start-Process -FilePath \$manager \| Out-Null \}/u)
+    assert.doesNotMatch(worker, /Start-Process -FilePath \$manager/u)
     assert.match(source, /\$setupFailure = \$_[\s\S]*try \{ Write-ManagerWorkerDiagnostic -Path \$ResultPath \| Write-Host \} catch \{\}\s*throw \$setupFailure/u)
     assert.match(source, /Write-ManagerWorkerDiagnostic -Result \$managerResult/u)
     const output = source.slice(source.indexOf('function Write-ManagerWorkerDiagnostic'), source.indexOf('function Invoke-ManagerSetup'))

@@ -3,6 +3,7 @@
 <# .SYNOPSIS Exercises the installer acceptance script's real Windows PowerShell native process boundary without installing anything. #>
 param([string]$ScriptPath = (Join-Path $PSScriptRoot '../../../../scripts/verify-windows-installation.ps1'))
 $ErrorActionPreference = 'Stop'
+& (Join-Path $PSScriptRoot 'installer_worker_observer.ps1') -ScriptPath $ScriptPath
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path -LiteralPath $ScriptPath).Path, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'acceptance-script-syntax-error' }

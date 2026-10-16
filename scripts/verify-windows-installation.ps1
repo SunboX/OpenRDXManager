@@ -261,8 +261,8 @@ if ($WorkerMode) {
                 if ([DateTime]::UtcNow -ge $deadline) { throw 'installed-manager-placement-timeout' }
                 Start-Sleep -Milliseconds 250
             }
-            $candidates = @(Get-CimInstance Win32_Process -Filter "Name='OpenRDXManager.exe'" | Where-Object { $_.ExecutablePath -eq $manager -and $_.CommandLine -notmatch '--type=' })
-            if ($candidates.Count -eq 0) { Start-Process -FilePath $manager | Out-Null }
+            # The installer owns the desktop launch. Starting another Manager
+            # here races ExecShellAsUser and makes its exact-one-PID check fail.
             do {
                 Start-Sleep -Milliseconds 500
                 $candidates = @(Get-CimInstance Win32_Process -Filter "Name='OpenRDXManager.exe'" | Where-Object { $_.ExecutablePath -eq $manager -and $_.CommandLine -notmatch '--type=' })
@@ -387,8 +387,8 @@ $taskName = "OpenRDX-LocalInstall-Verification-$([Guid]::NewGuid())"
 $managerPid = $null
 $backup = $null
 try {
-    # The limited console task waits for NSIS file placement, allowing the
-    # elevated installer to pin a real Manager without selecting a raw SID.
+    # The limited console task observes NSIS placement and its desktop launch;
+    # the elevated installer pins that Manager without selecting a raw SID.
     $resultPath = Start-Worker 'Manager'
     $managerPid = (Invoke-ManagerSetup -ResultPath $resultPath).pid
     Invoke-LocalAction -Arguments @('--action', 'verify', '--manager-process-id', "$managerPid")
