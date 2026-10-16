@@ -6,7 +6,7 @@ Windows and macOS installers now include an administrator-approved local install
 Choose the package matching your operating system and processor:
 
 - **macOS:** PKG, also supplied inside the DMG, for Apple silicon (ARM64) or Intel (x64). Run the installer and open the installed app from Applications. The ZIP is a portable app without hardware-service setup.
-- **Windows:** EXE installer for ARM64 or x64. Connect the RDX dock during setup. The ZIP is a portable app without hardware-service setup.
+- **Windows:** EXE installer for ARM64 or x64. Connect the RDX dock during setup. After setup finishes, click **Retry service** if the app still shows a service error. Unplug and reconnect the dock after first-time setup, then scan again if needed. Keep a virtual machine’s dock assigned to that same virtual machine. The ZIP is a portable app without hardware-service setup.
 - **Linux:** DEB, AppImage or TAR.GZ for ARM64 or x64. The DEB supplies the system service; an administrator must add the intended desktop user to the `openrdx` group and the user must sign out/in.
 
 Unsigned-download warnings may remain. Approve only an installer from a source you trust. Local installation does not add a certificate authority to the computer. `SHA256SUMS.txt` lists all installer checksums.
