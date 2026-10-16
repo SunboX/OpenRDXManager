@@ -3,6 +3,7 @@
 
 #include <node_api.h>
 #include "windows_log_files.h"
+#include "windows_pipe_io.h"
 
 #include <windows.h>
 #include <shlobj.h>
@@ -29,6 +30,8 @@ extern "C" std::uint8_t openrdx_local_trust_service_sid(std::uint32_t pid);
 
 namespace {
 
+using namespace openrdx::windows_io;
+
 static_assert(sizeof(char16_t) == sizeof(wchar_t));
 
 constexpr wchar_t kPipeName[] = LR"(\\.\pipe\OpenRDXHardwareService)";
@@ -38,23 +41,12 @@ constexpr wchar_t kServiceArguments[] =
 constexpr DWORD kClientAccess = FILE_READ_DATA | FILE_WRITE_DATA |
                                 FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES |
                                 SYNCHRONIZE;
-constexpr DWORD kMaxFrameStorage = 1'048'576;
-constexpr DWORD kIoTimeoutMs = 2'000;
-constexpr DWORD kCancelDrainTimeoutMs = 2'000;
 constexpr DWORD kServiceControlAccess =
     SERVICE_QUERY_CONFIG | SERVICE_QUERY_STATUS | SERVICE_START;
 constexpr DWORD kServicePollMs = 50;
 constexpr DWORD kServiceStartTimeoutMs = 5'000;
 constexpr DWORD kNativeActivationTimeoutMs = 7'000;
-constexpr size_t kMaxPendingIoCount = 8;
-constexpr size_t kMaxPendingIoBytes = 9 * 1024 * 1024;
 
-struct ScopedHandle {
-  HANDLE value = INVALID_HANDLE_VALUE;
-  ~ScopedHandle() {
-    if (value != nullptr && value != INVALID_HANDLE_VALUE) CloseHandle(value);
-  }
-};
 
 struct ScopedService {
   SC_HANDLE value = nullptr;
@@ -108,151 +100,15 @@ struct FileIdentity {
   bool operator==(const FileIdentity&) const = default;
 };
 
-struct IoBudgetState {
-  std::mutex mutex;
-  size_t count = 0;
-  size_t bytes = 0;
-};
-
-IoBudgetState& PendingIoBudget() {
-  // The budget deliberately has process lifetime. Unresolved kernel I/O also
-  // retains its reservation until process teardown, so addon unload never
-  // leaves an operation referring to destructed accounting storage.
-  static IoBudgetState* budget = new IoBudgetState();
-  return *budget;
-}
-
-bool TryReservePendingIoBudget(size_t reservation_bytes) {
-  IoBudgetState& budget = PendingIoBudget();
-  std::lock_guard<std::mutex> lock(budget.mutex);
-  if (reservation_bytes == 0 || reservation_bytes > kMaxPendingIoBytes ||
-      budget.count >= kMaxPendingIoCount ||
-      budget.bytes > kMaxPendingIoBytes - reservation_bytes)
-    return false;
-  ++budget.count;
-  budget.bytes += reservation_bytes;
-  return true;
-}
-
-void ReleasePendingIoBudget(size_t reservation_bytes) {
-  IoBudgetState& budget = PendingIoBudget();
-  std::lock_guard<std::mutex> lock(budget.mutex);
-  --budget.count;
-  budget.bytes -= reservation_bytes;
-}
-
-class IoReservation {
- public:
-  explicit IoReservation(size_t bytes) : bytes_(bytes) {}
-  IoReservation(const IoReservation&) = delete;
-  IoReservation& operator=(const IoReservation&) = delete;
-  IoReservation(IoReservation&& other) noexcept
-      : bytes_(std::exchange(other.bytes_, 0)) {}
-  IoReservation& operator=(IoReservation&&) = delete;
-  ~IoReservation() {
-    if (bytes_ != 0) ReleasePendingIoBudget(bytes_);
-  }
-
- private:
-  size_t bytes_;
-};
-
-struct PendingIo {
-  IoReservation reservation;
-  ScopedHandle pipe;
-  ScopedHandle event;
-  OVERLAPPED overlapped{};
-  std::vector<std::uint8_t> storage;
-
-  PendingIo(size_t storage_size, IoReservation owned_reservation)
-      : reservation(std::move(owned_reservation)), storage(storage_size) {
-    event.value = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    overlapped.hEvent = event.value;
-  }
-};
 
 bool NapiOk(napi_status status) { return status == napi_ok; }
 
-ULONGLONG DeadlineAfter(DWORD timeout_ms) {
-  return GetTickCount64() + static_cast<ULONGLONG>(timeout_ms);
-}
-
-DWORD RemainingMilliseconds(ULONGLONG deadline, DWORD maximum) {
-  const ULONGLONG now = GetTickCount64();
-  if (now >= deadline) return 0;
-  const ULONGLONG remaining = deadline - now;
-  return static_cast<DWORD>(
-      std::min<ULONGLONG>(remaining, static_cast<ULONGLONG>(maximum)));
-}
 
 bool IsTransientPipeAvailabilityError(DWORD error) {
   return error == ERROR_FILE_NOT_FOUND || error == ERROR_PIPE_BUSY ||
          error == ERROR_SEM_TIMEOUT;
 }
 
-bool CreatePendingIo(size_t storage_size,
-                     std::unique_ptr<PendingIo>* operation) {
-  if (storage_size > kMaxFrameStorage) return false;
-  const size_t reservation_bytes = sizeof(PendingIo) + storage_size;
-  if (!TryReservePendingIoBudget(reservation_bytes)) return false;
-  IoReservation reservation(reservation_bytes);
-  try {
-    *operation =
-        std::make_unique<PendingIo>(storage_size, std::move(reservation));
-  } catch (...) {
-    return false;
-  }
-  return true;
-}
-
-bool DuplicateIoHandle(HANDLE source, PendingIo* operation) {
-  HANDLE duplicate = INVALID_HANDLE_VALUE;
-  if (source == INVALID_HANDLE_VALUE || operation->event.value == nullptr ||
-      !DuplicateHandle(GetCurrentProcess(), source, GetCurrentProcess(),
-                       &duplicate, 0, FALSE, DUPLICATE_SAME_ACCESS))
-    return false;
-  operation->pipe.value = duplicate;
-  return true;
-}
-
-void PreservePendingIoForProcessLifetime(
-    std::unique_ptr<PendingIo> operation) {
-  // The aggregate count/byte reservation stays held with this unresolved
-  // kernel operation. Deliberately abandon the bounded owning pointer so no
-  // handle, OVERLAPPED, event, or storage is released before process teardown.
-  (void)operation.release();
-}
-
-bool ObservePendingIoTerminal(PendingIo* operation, DWORD* transferred,
-                              bool* succeeded) {
-  if (GetOverlappedResult(operation->pipe.value, &operation->overlapped,
-                          transferred, FALSE)) {
-    *succeeded = true;
-    return true;
-  }
-  *succeeded = false;
-  return GetLastError() != ERROR_IO_INCOMPLETE;
-}
-
-void CancelAndDrainPendingIo(std::unique_ptr<PendingIo>* owned_operation) {
-  PendingIo* operation = owned_operation->get();
-  if (!CancelIoEx(operation->pipe.value, &operation->overlapped)) {
-    const DWORD cancel_error = GetLastError();
-    // ERROR_NOT_FOUND means completion won the cancellation race. The event
-    // and GetOverlappedResult below remain the authoritative terminal proof.
-    if (cancel_error != ERROR_NOT_FOUND) {
-      SetLastError(cancel_error);
-    }
-  }
-  const DWORD wait =
-      WaitForSingleObject(operation->event.value, kCancelDrainTimeoutMs);
-  if (wait == WAIT_OBJECT_0) {
-    DWORD transferred = 0;
-    bool succeeded = false;
-    if (ObservePendingIoTerminal(operation, &transferred, &succeeded)) return;
-  }
-  PreservePendingIoForProcessLifetime(std::move(*owned_operation));
-}
 
 void Emit(Connection* connection, std::unique_ptr<Event> event) {
   if (napi_call_threadsafe_function(connection->events, event.release(),
@@ -602,7 +458,7 @@ bool RunningServiceSnapshotMatches(const SERVICE_STATUS_PROCESS& status,
          ProcessIsLocalServiceAndExactFile(status.dwProcessId, expected);
 }
 
-HANDLE OpenVerifiedPipe(const std::wstring& expected, const char** reason) {
+HANDLE OpenVerifiedPipe(const std::wstring& expected, HANDLE stop_event, const char** reason) {
   const ULONGLONG activation_deadline =
       DeadlineAfter(kNativeActivationTimeoutMs);
   if (const char* activation_failure =
@@ -652,7 +508,7 @@ HANDLE OpenVerifiedPipe(const std::wstring& expected, const char** reason) {
       *reason = "service-identity-unverified";
       return INVALID_HANDLE_VALUE;
     }
-    if (RemainingMilliseconds(activation_deadline, 1) == 0) {
+    if (!ReadServiceReady(pipe, stop_event, activation_deadline)) {
       CloseHandle(pipe);
       *reason = "service-exited";
       return INVALID_HANDLE_VALUE;
@@ -667,7 +523,7 @@ void Worker(Connection* connection) {
                                              openrdx_local_trust_close);
   HANDLE pipe = INVALID_HANDLE_VALUE;
   if (connection->trust) {
-    pipe = OpenVerifiedPipe(connection->expected_executable, &failure);
+    pipe = OpenVerifiedPipe(connection->expected_executable, connection->stop_event.value, &failure);
   } else {
     failure = "service-identity-unverified";
   }

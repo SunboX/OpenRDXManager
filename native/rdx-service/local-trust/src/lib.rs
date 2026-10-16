@@ -9,6 +9,7 @@
 mod fuses;
 mod inventory;
 mod runtime;
+mod runtime_digest;
 #[cfg(target_os = "macos")]
 mod signed_macos;
 #[cfg(target_os = "macos")]

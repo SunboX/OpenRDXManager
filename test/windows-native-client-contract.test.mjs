@@ -11,8 +11,14 @@ import { createWindowsNativeEndpointConnector } from '../src/main/windows-native
 
 const projectRoot = process.cwd()
 
+/** @returns {Promise<string>} Native connector and its shared bounded I/O implementation. */
+async function readNativeClientSource() {
+    const [client, io] = await Promise.all([readFile(join(projectRoot, 'native/windows-client-addon/openrdx_windows_client.cc'), 'utf8'), readFile(join(projectRoot, 'native/windows-client-addon/windows_pipe_io.h'), 'utf8')])
+    return `${client}\n${io}`
+}
+
 test('Windows native client source excludes pipe-instance creation and verifies exact service authority', async () => {
-    const source = await readFile(join(projectRoot, 'native/windows-client-addon/openrdx_windows_client.cc'), 'utf8')
+    const source = await readNativeClientSource()
 
     assert.match(source, /kClientAccess = FILE_READ_DATA \| FILE_WRITE_DATA \|/u)
     assert.doesNotMatch(source, /kClientAccess[^;]*(?:GENERIC_WRITE|FILE_CREATE_PIPE_INSTANCE)/su)
@@ -27,7 +33,7 @@ test('Windows native client source excludes pipe-instance creation and verifies 
 })
 
 test('Windows overlapped operations retain storage through exact cancellation completion', async () => {
-    const source = await readFile(join(projectRoot, 'native/windows-client-addon/openrdx_windows_client.cc'), 'utf8')
+    const source = await readNativeClientSource()
 
     assert.match(source, /struct PendingIo[\s\S]*OVERLAPPED overlapped[\s\S]*std::vector<std::uint8_t> storage/u)
     assert.match(source, /CancelAndDrainPendingIo\([\s\S]*CancelIoEx\(operation->pipe\.value, &operation->overlapped\)[\s\S]*WaitForSingleObject\(operation->event\.value, kCancelDrainTimeoutMs\)[\s\S]*ObservePendingIoTerminal/u)
@@ -39,7 +45,7 @@ test('Windows overlapped operations retain storage through exact cancellation co
 })
 
 test('Windows pending I/O reserves one fixed aggregate budget before kernel admission', async () => {
-    const source = await readFile(join(projectRoot, 'native/windows-client-addon/openrdx_windows_client.cc'), 'utf8')
+    const source = await readNativeClientSource()
 
     assert.match(source, /kMaxPendingIoCount = 8/u)
     assert.match(source, /kMaxPendingIoBytes = 9 \* 1024 \* 1024/u)
@@ -53,7 +59,7 @@ test('Windows pending I/O reserves one fixed aggregate budget before kernel admi
 })
 
 test('Windows connector uses bounded synchronous name wait before verified overlapped open', async () => {
-    const source = await readFile(join(projectRoot, 'native/windows-client-addon/openrdx_windows_client.cc'), 'utf8')
+    const source = await readNativeClientSource()
     const openVerifiedPipe = source.slice(source.indexOf('HANDLE OpenVerifiedPipe'), source.indexOf('void Worker'))
 
     assert.match(openVerifiedPipe, /RemainingMilliseconds\(activation_deadline, kServicePollMs\)[\s\S]*WaitNamedPipeW\(kPipeName, wait\)[\s\S]*CreateFileW\([\s\S]*FILE_FLAG_OVERLAPPED/u)
@@ -100,7 +106,7 @@ test('Windows native adapter forwards error then exactly one observed close afte
 })
 
 test('Windows native worker closes after every pre-connect failure without joining in destroy', async () => {
-    const source = await readFile(join(projectRoot, 'native/windows-client-addon/openrdx_windows_client.cc'), 'utf8')
+    const source = await readNativeClientSource()
     const worker = source.slice(source.indexOf('void Worker'), source.indexOf('Connection* Unwrap'))
     const destroy = source.slice(source.indexOf('napi_value Destroy'), source.indexOf('napi_value Write'))
 
@@ -110,7 +116,7 @@ test('Windows native worker closes after every pre-connect failure without joini
 })
 
 test('Windows connector validates fixed SCM service before bounded demand activation', async () => {
-    const source = await readFile(join(projectRoot, 'native/windows-client-addon/openrdx_windows_client.cc'), 'utf8')
+    const source = await readNativeClientSource()
     const activation = source.slice(source.indexOf('const char* EnsureServiceRunning'), source.indexOf('HANDLE OpenVerifiedPipe'))
     const openPipe = source.slice(source.indexOf('HANDLE OpenVerifiedPipe'), source.indexOf('void Worker'))
 
@@ -129,9 +135,9 @@ test('Windows connector validates fixed SCM service before bounded demand activa
 })
 
 test('Windows cold activation uses one deadline and retries only delayed pipe appearance', async () => {
-    const source = await readFile(join(projectRoot, 'native/windows-client-addon/openrdx_windows_client.cc'), 'utf8')
+    const source = await readNativeClientSource()
     const activation = source.slice(source.indexOf('const char* EnsureServiceRunning'), source.indexOf('void Worker'))
-    const transientErrors = source.slice(source.indexOf('bool IsTransientPipeAvailabilityError'), source.indexOf('bool CreatePendingIo'))
+    const transientErrors = source.slice(source.indexOf('bool IsTransientPipeAvailabilityError'), source.indexOf('void Emit'))
 
     assert.match(source, /kNativeActivationTimeoutMs\s*=\s*7'000/u)
     assert.match(transientErrors, /ERROR_FILE_NOT_FOUND[\s\S]*ERROR_PIPE_BUSY[\s\S]*ERROR_SEM_TIMEOUT/u)

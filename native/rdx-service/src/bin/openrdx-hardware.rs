@@ -7,6 +7,9 @@
 mod recovery_cli;
 #[path = "openrdx-hardware/recovery_status.rs"]
 mod recovery_status;
+#[cfg(any(windows, test))]
+#[path = "openrdx-hardware/windows_session.rs"]
+mod windows_session;
 
 use std::ffi::OsStr;
 use std::io;
@@ -22,6 +25,7 @@ use std::time::Duration;
 #[cfg(any(windows, test))]
 use std::time::Instant;
 
+#[cfg(unix)]
 use rdx_service::endpoint::HandshakeDeadlineReader;
 #[cfg(target_os = "macos")]
 use rdx_service::endpoint::embedded_macos_manager_designated_requirement;
@@ -376,25 +380,22 @@ fn run_windows_service_generation(
             },
         );
         let stop_evidence = reader.stop_evidence();
-        let reader =
-            HandshakeDeadlineReader::new(reader, FIRST_FRAME_TIMEOUT, |reader, timeout| {
-                reader.set_read_timeout(timeout)
-            })
-            .map_err(|_| rdx_windows_native::NativeError::Other)?;
         let framed_result = run_owned_service_session(
             rdx_windows_native::try_acquire_hardware_ownership,
             windows_ownership_is_busy,
             || {
-                run_framed_service_with_context(
-                    readiness_backend(
-                        ServicePlatform::Win32,
-                        ServiceExecutionContext::authenticated_platform_endpoint(true),
-                    ),
+                let context = ServiceExecutionContext::authenticated_platform_endpoint(true);
+                let (backend, reader, connection) = windows_session::prepare_session(
+                    || readiness_backend(ServicePlatform::Win32, context),
                     reader,
                     connection,
-                    ServiceExecutionContext::authenticated_platform_endpoint(true),
+                    |reader, timeout| reader.set_read_timeout(timeout),
+                    || lifecycle.stop_requested(),
+                    Instant::now,
                 )
-                .map_err(|_| rdx_windows_native::NativeError::Other)
+                .map_err(|_| rdx_windows_native::NativeError::Other)?;
+                run_framed_service_with_context(backend, reader, connection, context)
+                    .map_err(|_| rdx_windows_native::NativeError::Other)
             },
         );
         match framed_result {
@@ -402,14 +403,14 @@ fn run_windows_service_generation(
                 drop(admission);
                 continue;
             }
-            Err(_) if !stop_evidence.load(Ordering::Acquire) => {
+            Err(_) if !stop_evidence.load(Ordering::Acquire) && !lifecycle.stop_requested() => {
                 return Err(rdx_windows_native::NativeError::Other);
             }
             // Both clean ServiceExit outcomes release this connection's admission.
             Ok(Some(_)) | Err(_) => {}
         }
         drop(admission);
-        if stop_evidence.load(Ordering::Acquire) {
+        if stop_evidence.load(Ordering::Acquire) || lifecycle.stop_requested() {
             return Ok(());
         }
     }

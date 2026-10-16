@@ -70,10 +70,11 @@ pub fn embedded_macos_manager_designated_requirement() -> Result<String, Endpoin
 /// read. Once the complete four-byte length prefix and first bounded payload
 /// have arrived, the native timeout is cleared exactly once. Subsequent frames
 /// retain the service protocol's existing behavior.
-pub struct HandshakeDeadlineReader<R, F> {
+pub struct HandshakeDeadlineReader<R, F, N = fn() -> Instant> {
     inner: R,
     set_timeout: F,
     deadline: Instant,
+    now: N,
     prefix: [u8; 4],
     prefix_bytes: usize,
     observed_bytes: usize,
@@ -81,7 +82,7 @@ pub struct HandshakeDeadlineReader<R, F> {
     established: bool,
 }
 
-impl<R, F> HandshakeDeadlineReader<R, F>
+impl<R, F> HandshakeDeadlineReader<R, F, fn() -> Instant>
 where
     R: Read,
     F: FnMut(&mut R, Option<Duration>) -> io::Result<()>,
@@ -89,14 +90,32 @@ where
     /// Creates one reader and immediately arms its absolute handshake timeout.
     ///
     /// # Errors
+    /// Returns `InvalidInput` for a zero timeout, or propagates native setup failure.
+    pub fn new(inner: R, timeout: Duration, set_timeout: F) -> io::Result<Self> {
+        Self::with_clock(inner, timeout, set_timeout, Instant::now)
+    }
+}
+
+impl<R, F, N> HandshakeDeadlineReader<R, F, N>
+where
+    R: Read,
+    F: FnMut(&mut R, Option<Duration>) -> io::Result<()>,
+    N: Fn() -> Instant,
+{
+    /// Arms the same absolute timeout using the supplied monotonic clock.
     ///
-    /// Returns `InvalidInput` for a zero timeout, or propagates a native timeout
-    /// configuration failure before any endpoint bytes are consumed.
-    pub fn new(mut inner: R, timeout: Duration, mut set_timeout: F) -> io::Result<Self> {
+    /// # Errors
+    /// Rejects zero/overflowing timeouts and propagates native timeout setup errors.
+    pub fn with_clock(
+        mut inner: R,
+        timeout: Duration,
+        mut set_timeout: F,
+        now: N,
+    ) -> io::Result<Self> {
         if timeout.is_zero() {
             return Err(io::ErrorKind::InvalidInput.into());
         }
-        let deadline = Instant::now()
+        let deadline = now()
             .checked_add(timeout)
             .ok_or(io::ErrorKind::InvalidInput)?;
         set_timeout(&mut inner, Some(timeout))?;
@@ -104,6 +123,7 @@ where
             inner,
             set_timeout,
             deadline,
+            now,
             prefix: [0; 4],
             prefix_bytes: 0,
             observed_bytes: 0,
@@ -149,17 +169,18 @@ where
     }
 }
 
-impl<R, F> Read for HandshakeDeadlineReader<R, F>
+impl<R, F, N> Read for HandshakeDeadlineReader<R, F, N>
 where
     R: Read,
     F: FnMut(&mut R, Option<Duration>) -> io::Result<()>,
+    N: Fn() -> Instant,
 {
     /// Reads bytes while maintaining the remaining absolute handshake timeout.
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         if !self.established {
             let remaining = self
                 .deadline
-                .checked_duration_since(Instant::now())
+                .checked_duration_since((self.now)())
                 .ok_or(io::ErrorKind::TimedOut)?;
             if remaining.is_zero() {
                 return Err(io::ErrorKind::TimedOut.into());

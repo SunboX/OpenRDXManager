@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: 2026 André Fiedler
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use crate::runtime_digest::RuntimeDigest;
 use crate::{
     RuntimeInventory, TrustError, deny,
     inventory::{resolve_target, validate_inventory},
 };
-use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, File, Metadata, OpenOptions},
@@ -280,7 +280,7 @@ pub(crate) fn verify_file_content(
     if file.metadata()?.len() != size {
         return Err(deny("runtime file size mismatch"));
     }
-    let mut digest = Sha256::new();
+    let mut digest = RuntimeDigest::new()?;
     let mut bytes = 0_u64;
     let mut buffer = [0_u8; 65536];
     loop {
@@ -294,9 +294,9 @@ pub(crate) fn verify_file_content(
         if bytes > size {
             return Err(deny("runtime file grew during verification"));
         }
-        digest.update(&buffer[..count]);
+        digest.update(&buffer[..count])?;
     }
-    if bytes != size || format!("{:x}", digest.finalize()) != expected {
+    if bytes != size || digest.finish()? != expected {
         return Err(deny("runtime file digest mismatch"));
     }
     Ok(())
@@ -406,6 +406,7 @@ fn check_protection(handle: &File, metadata: &Metadata, protected: bool) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
 
     #[test]
     /// Repair's ownership traversal may ignore hashes while authentication cannot.
