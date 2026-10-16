@@ -64,6 +64,25 @@ test('native installer denials emit a stage and terminate silent setup with fail
     assert.match(remover, /!insertmacro OpenRDXFail "removal-files"/u)
 })
 
+test('assisted setup retains closed diagnostics after a dismissed failure dialog', async () => {
+    const installer = await source('windows-installer.nsi')
+    const common = await readFile(new URL('../node_modules/app-builder-lib/templates/nsis/common.nsh', import.meta.url), 'utf8')
+    // The upstream template disables the details view. Our later declaration
+    // must override that default so an aborted page retains an inspectable log.
+    const declarations = `${common}\n${installer.slice(installer.indexOf('!include "common.nsh"') + '!include "common.nsh"'.length)}`.match(/^ShowInstDetails\s+\w+/gmu)
+    assert.equal(declarations?.at(-1), 'ShowInstDetails show')
+    const hook = await source('windows-service.nsh')
+    const diagnosticStart = hook.indexOf('!macro OpenRDXWriteDiagnostic MESSAGE')
+    const diagnostic = hook.slice(diagnosticStart, hook.indexOf('!macroend', diagnosticStart))
+    // The install section turns printing off; only the closed diagnostic gets
+    // a temporary list mode, then the caller's original mode is restored.
+    assert.match(diagnostic, /SetDetailsPrint listonly\s*\n\s*DetailPrint "\$R7"\s*\n\s*SetDetailsPrint lastused/u)
+    const failureStart = hook.indexOf('!macro OpenRDXFail STAGE CODE MESSAGE')
+    const failure = hook.slice(failureStart, hook.indexOf('!macroend', failureStart))
+    assert.match(failure, /\$\{IfNot\} \$\{Silent\}\s*\n\s*SetDetailsView show\s*\n\s*MessageBox/u)
+    assert.match(failure, /SetErrorLevel 3\s*\n\s*Abort/u)
+})
+
 test('NSIS Manager queries keep exact process predicates inside one Windows command argument', async () => {
     for (const name of ['windows-service.nsh', 'windows-remover.nsi']) {
         const text = await source(name)

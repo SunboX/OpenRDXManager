@@ -60,6 +60,9 @@ Var appExe
 Var launchLink
 
 !include "common.nsh"
+; Keep diagnostics inspectable after a failure dialog is dismissed. The common
+; template otherwise permanently hides this view, including the aborted page.
+ShowInstDetails show
 !include "MUI2.nsh"
 !include "multiUser.nsh"
 !include "${BUILD_RESOURCES_DIR}\windows-process-control.nsh"

@@ -238,7 +238,11 @@ ${StrStr}
 ; Writes only caller-reconstructed public diagnostics; failure never changes control flow.
 !macro OpenRDXWriteDiagnostic MESSAGE
   StrCpy $R7 "${MESSAGE}$\r$\n"
+  ; The install section suppresses framework output. Retain only this closed
+  ; diagnostic in its list, then restore the caller's printing mode.
+  SetDetailsPrint listonly
   DetailPrint "$R7"
+  SetDetailsPrint lastused
   System::Call 'kernel32::WideCharToMultiByte(i 65001, i 0, w R7, i -1, p 0, i 0, p 0, p 0)i .R8'
   ${If} $R8 > 0
     System::Alloc $R8
@@ -278,6 +282,7 @@ ${StrStr}
 !macro OpenRDXFail STAGE CODE MESSAGE
   !insertmacro OpenRDXWriteDiagnostic "OpenRDX setup failure: stage=${STAGE} code=${CODE} ${MESSAGE}"
   ${IfNot} ${Silent}
+    SetDetailsView show
     MessageBox MB_ICONSTOP "$R7"
   ${EndIf}
   SetErrorLevel 3
