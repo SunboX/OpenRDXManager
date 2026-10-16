@@ -109,7 +109,7 @@ test('native control changes private process attributes only, never an existing 
     assert.match(source, /bInheritHandle: false/u)
     assert.match(source, /GetKernelObjectSecurity/u)
     assert.doesNotMatch(source, /SetSecurityInfo|SetKernelObjectSecurity|AdjustTokenPrivileges|ImpersonateLoggedOnUser|CreateProcessW|std::env|assert_eq!|dbg!/u)
-    const workflow = await readFile(new URL('../.github/workflows/build-installers.yml', import.meta.url), 'utf8')
+    const workflow = await readFile(new URL('../.github/workflows/windows-token-diagnostics.yml', import.meta.url), 'utf8')
     assert.match(workflow, /name: Observe isolated Windows process DACL control\s+if: always\(\) && matrix.platform == 'win' && steps.windows-token-fixtures.outcome == 'success'\s+continue-on-error: true/u)
     assert.match(workflow, /--process-dacl-control \| Tee-Object -FilePath out\/verification\/windows-token-process-dacl-control.log/u)
 })

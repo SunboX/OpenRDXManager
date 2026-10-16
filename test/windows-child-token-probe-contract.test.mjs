@@ -60,7 +60,7 @@ test('argument-free fixture is compiled from fixed checked-in source and evidenc
     assert.doesNotMatch(fixture, /println!|eprintln!|std::env::args|Command::|CreateProcess|SetTokenInformation/u)
     assert.match(fixture, /WTSGetActiveConsoleSessionId/u)
     assert.match(fixture, /GetTokenInformation/u)
-    const workflow = await readFile(new URL('../.github/workflows/build-installers.yml', import.meta.url), 'utf8')
+    const workflow = await readFile(new URL('../.github/workflows/windows-token-diagnostics.yml', import.meta.url), 'utf8')
     assert.ok(workflow.includes('rustc --edition=2024 native/rdx-service/windows-native/tests/fixtures/token-child.rs -o out/verification/openrdx-token-child.exe'))
     assert.ok(workflow.includes('node scripts/verify-windows-restricted-token-probe.mjs --child | Tee-Object'))
     assert.ok(workflow.includes('out/verification/windows-token-child.log'))

@@ -35,4 +35,12 @@ Future version tags must match `v` plus the package version. Source changes are 
 
 ## Signing and hardware scope
 
-The first-release configuration deliberately matches the reference's unsigned/ad-hoc packages. It does not remove privileged-service signature verification. Trusted Developer ID signing/notarization and Windows Authenticode signing need separate credentials and packaging configuration before those installed service paths can grant device access. These are software build and no-device launch checks, not physical dock acceptance.
+The installers use unsigned/ad-hoc packages with administrator-approved local trust for the Windows and macOS hardware services. A purchased public signing certificate is not required for that mode. The installed app and service still authenticate each other; signature-based distributions require their separate signing credentials. See [installation](../installation.md) and [locally trusted installer notes](../releases/locally-trusted-installers.md).
+
+Software build, installed authentication and physical dock acceptance remain separate results. The Windows EXE acceptance step and its `--installed --require-service` check are mandatory; the release workflow does not normalize their failures. A packaged launch without device access cannot substitute for those checks or prove hardware compatibility.
+
+## Experimental Windows diagnostics
+
+The [Windows token diagnostics workflow](../../.github/workflows/windows-token-diagnostics.yml) owns the restricted-token observations, private child fixtures, source/ACL/debugger controls and read-only startup error observer. It runs separately on Windows x64 and ARM64 for relevant diagnostic-source changes or manual dispatch. These launch experiments are compiled only into tests and are not the installed Manager’s launch path.
+
+The original native commands, failure exits, ownership/cleanup rules, deadlines and closed three-day diagnostic artifacts remain unchanged. A failed owned medium child still fails that diagnostics job. Diagnostic results do not establish production authorization or successful startup, and this workflow cannot publish releases. Installer collection and publication depend on the six production build/acceptance jobs, not on this research workflow. The separation was explicitly selected by the user on 2026-10-16; it is not a claim that the experimental DLL-initialization failure was fixed.

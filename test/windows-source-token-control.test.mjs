@@ -108,7 +108,7 @@ test('orphan terminal transitions are rejected, including otherwise complete pos
 })
 
 test('optional CI source control requires compiled fixed fixtures and cannot mask ordinary gate', async () => {
-    const source = await readFile(new URL('../.github/workflows/build-installers.yml', import.meta.url), 'utf8')
+    const source = await readFile(new URL('../.github/workflows/windows-token-diagnostics.yml', import.meta.url), 'utf8')
     assert.match(source, /name: Compile private Windows token child fixtures\s+id: windows-token-fixtures/u)
     assert.match(source, /name: Observe source-context Windows child control[\s\S]*?if: always\(\) && matrix.platform == 'win' && steps.windows-token-fixtures.outcome == 'success'\s+continue-on-error: true/u)
     assert.match(source, /--source-control \| Tee-Object -FilePath out\/verification\/windows-token-source-control.log\s+\$probeExitCode = \$LASTEXITCODE\s+exit \$probeExitCode/u)

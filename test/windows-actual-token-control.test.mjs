@@ -152,13 +152,15 @@ test('used canonical TOKEN builder and identity parser adversarial regressions e
 })
 
 test('optional actual-token CI preserves fatal ordinary gate and sanitized artifact separation', async () => {
-    const workflow = await readFile(new URL('../.github/workflows/build-installers.yml', import.meta.url), 'utf8')
+    const workflow = await readFile(new URL('../.github/workflows/windows-token-diagnostics.yml', import.meta.url), 'utf8')
     assert.match(workflow, /name: Observe actual owned Windows token DACL control\s+if: always\(\) && matrix.platform == 'win' && steps.windows-token-fixtures.outcome == 'success'\s+continue-on-error: true/u)
     assert.match(workflow, /--actual-token-dacl-control \| Tee-Object -FilePath out\/verification\/windows-token-actual-token-dacl-control.log\s+\$probeExitCode = \$LASTEXITCODE\s+exit \$probeExitCode/u)
-    const upload = workflow.slice(workflow.indexOf('- name: Upload closed Windows token evidence'), workflow.indexOf('- name: Verify Windows PowerShell'))
+    const upload = workflow.slice(workflow.indexOf('- name: Upload closed Windows token evidence'))
     assert.ok(upload.includes('windows-token-actual-token-dacl-control.log'))
     assert.ok(upload.includes('retention-days: 3'))
-    assert.match(workflow, /pattern: installers-\*/u)
+    const release = await readFile(new URL('../.github/workflows/build-installers.yml', import.meta.url), 'utf8')
+    assert.match(release, /pattern: installers-\*/u)
+    assert.doesNotMatch(release, /windows-token-diagnostics-/u)
     const ordinary = workflow.split('- name: Verify owned medium Windows child on disposable runner')[1].split('\n            - name:')[0]
     assert.equal(ordinary.includes('continue-on-error'), false)
 })

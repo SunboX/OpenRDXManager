@@ -130,7 +130,7 @@ test('invalid input and non-Windows hosts never execute the reader', async () =>
 })
 
 test('CI retains the original fatal child gate and records diagnostic-only evidence separately', async () => {
-    const workflow = await readFile(new URL('../.github/workflows/build-installers.yml', import.meta.url), 'utf8')
+    const workflow = await readFile(new URL('../.github/workflows/windows-token-diagnostics.yml', import.meta.url), 'utf8')
     const gate = workflow.slice(workflow.indexOf('- name: Verify owned medium Windows child'), workflow.indexOf('- name: Observe Windows child startup error records'))
     assert.match(gate, /node scripts\/verify-windows-restricted-token-probe\.mjs --child \| Tee-Object[^\n]+\n\s*\$probeExitCode = \$LASTEXITCODE\n\s*exit \$probeExitCode/u)
     assert.doesNotMatch(gate, /continue-on-error/u)

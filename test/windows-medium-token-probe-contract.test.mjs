@@ -95,24 +95,26 @@ test('medium probe adjusts only owned derived integrity and snapshots source wit
     assert.match(source, /TokenUIAccess/u)
     assert.match(source, /TokenSandBoxInert/u)
     assert.doesNotMatch(source, /CreateProcess|Impersonate|AdjustTokenPrivileges|assert_eq!|dbg!/u)
-    const workflow = await readFile(new URL('../.github/workflows/build-installers.yml', import.meta.url), 'utf8')
+    const workflow = await readFile(new URL('../.github/workflows/windows-token-diagnostics.yml', import.meta.url), 'utf8')
     assert.ok(workflow.includes('node scripts/verify-windows-restricted-token-probe.mjs --medium'))
 })
 
-test('Windows token evidence captures only sanitized wrapper stdout, preserves native status and uploads before packaging', async () => {
-    const workflow = await readFile(new URL('../.github/workflows/build-installers.yml', import.meta.url), 'utf8')
+test('Windows token evidence captures only sanitized wrapper stdout, preserves native status and excludes packaging', async () => {
+    const workflow = await readFile(new URL('../.github/workflows/windows-token-diagnostics.yml', import.meta.url), 'utf8')
     for (const [mode, file] of [
         ['', 'baseline'],
         [' --medium', 'medium']
     ]) {
         assert.ok(workflow.includes(`node scripts/verify-windows-restricted-token-probe.mjs${mode} | Tee-Object -FilePath out/verification/windows-token-${file}.log`))
     }
-    const capture = workflow.slice(workflow.indexOf('- name: Observe restricted Windows token'), workflow.indexOf('- name: Verify Windows PowerShell installer boundary'))
+    const capture = workflow.slice(workflow.indexOf('- name: Observe restricted Windows token'))
     assert.equal((capture.match(/\$probeExitCode = \$LASTEXITCODE\s*exit \$probeExitCode/gu) ?? []).length, 8)
     assert.match(capture, /if: always\(\) && matrix\.platform == 'win'/u)
     assert.match(capture, /name: windows-token-diagnostics-\$\{\{ matrix\.arch \}\}/u)
     assert.match(capture, /retention-days: 3/u)
     assert.doesNotMatch(capture, /cargo test|2>&1|\*\.exe|\*\.zip/u)
-    assert.ok(workflow.indexOf('name: windows-token-diagnostics-') < workflow.indexOf('- name: Build installers'))
-    assert.match(workflow, /pattern: installers-\*/u)
+    assert.equal(workflow.includes('- name: Build installers'), false)
+    const release = await readFile(new URL('../.github/workflows/build-installers.yml', import.meta.url), 'utf8')
+    assert.match(release, /pattern: installers-\*/u)
+    assert.doesNotMatch(release, /windows-token-diagnostics-/u)
 })

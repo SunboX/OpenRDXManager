@@ -1,0 +1,161 @@
+# SPDX-FileCopyrightText: 2026 André Fiedler
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Windows token diagnostics
+
+on:
+    workflow_dispatch:
+    push:
+        branches: [main]
+        paths:
+            - '.github/workflows/windows-token-diagnostics.yml'
+            - 'native/rdx-service/windows-native/src/service_acl/windows_impl/restricted_token_probe/**'
+            - 'native/rdx-service/windows-native/src/service_acl/windows_impl/restricted_token_probe.rs'
+            - 'native/rdx-service/windows-native/tests/fixtures/token-child*.rs'
+            - 'scripts/windows-*-evidence.mjs'
+            - 'scripts/verify-windows-restricted-token-probe.mjs'
+            - 'scripts/observe-windows-startup-events.mjs'
+            - 'scripts/read-windows-startup-events.ps1'
+    pull_request:
+        paths:
+            - '.github/workflows/windows-token-diagnostics.yml'
+            - 'native/rdx-service/windows-native/src/service_acl/windows_impl/restricted_token_probe/**'
+            - 'native/rdx-service/windows-native/src/service_acl/windows_impl/restricted_token_probe.rs'
+            - 'native/rdx-service/windows-native/tests/fixtures/token-child*.rs'
+            - 'scripts/windows-*-evidence.mjs'
+            - 'scripts/verify-windows-restricted-token-probe.mjs'
+            - 'scripts/observe-windows-startup-events.mjs'
+            - 'scripts/read-windows-startup-events.ps1'
+
+permissions:
+    contents: read
+
+concurrency:
+    group: token-diagnostics-${{ github.ref }}-${{ github.event_name }}
+    cancel-in-progress: false
+
+jobs:
+    diagnostics:
+        name: Observe Windows token ${{ matrix.arch }}
+        runs-on: ${{ matrix.runner }}
+        timeout-minutes: 30
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - { platform: win, arch: x64, runner: windows-2025-vs2026 }
+                    - { platform: win, arch: arm64, runner: windows-11-arm }
+        steps:
+            - uses: actions/checkout@v6.0.2
+            - uses: actions/setup-node@v6.4.0
+              with:
+                  node-version-file: .nvmrc
+                  architecture: ${{ matrix.arch }}
+            - name: Set up Rust
+              uses: dtolnay/rust-toolchain@stable
+            - name: Compile the private native diagnostic harness
+              run: cargo test --manifest-path native/rdx-service/windows-native/Cargo.toml --locked --lib --no-run
+            - name: Observe restricted Windows token on disposable runner
+              if: matrix.platform == 'win'
+              shell: pwsh
+              run: |
+                  New-Item -ItemType Directory -Force -Path out/verification | Out-Null
+                  node scripts/verify-windows-restricted-token-probe.mjs | Tee-Object -FilePath out/verification/windows-token-baseline.log
+                  $probeExitCode = $LASTEXITCODE
+                  exit $probeExitCode
+            - name: Verify medium restricted Windows token on disposable runner
+              if: matrix.platform == 'win'
+              shell: pwsh
+              run: |
+                  New-Item -ItemType Directory -Force -Path out/verification | Out-Null
+                  node scripts/verify-windows-restricted-token-probe.mjs --medium | Tee-Object -FilePath out/verification/windows-token-medium.log
+                  $probeExitCode = $LASTEXITCODE
+                  exit $probeExitCode
+            - name: Compile private Windows token child fixtures
+              id: windows-token-fixtures
+              if: matrix.platform == 'win'
+              shell: pwsh
+              run: |
+                  rustc --edition=2024 native/rdx-service/windows-native/tests/fixtures/token-child.rs -o out/verification/openrdx-token-child.exe
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  rustc --edition=2024 --cfg token_fixture_hang native/rdx-service/windows-native/tests/fixtures/token-child.rs -o out/verification/openrdx-token-wait-child.exe
+                  exit $LASTEXITCODE
+            - name: Record Windows child observation start
+              id: windows-child-observation
+              if: matrix.platform == 'win'
+              continue-on-error: true
+              shell: pwsh
+              run: |
+                  "started=$([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffZ'))" >> $env:GITHUB_OUTPUT
+            - name: Verify owned medium Windows child on disposable runner
+              if: matrix.platform == 'win'
+              shell: pwsh
+              run: |
+                  node scripts/verify-windows-restricted-token-probe.mjs --child | Tee-Object -FilePath out/verification/windows-token-child.log
+                  $probeExitCode = $LASTEXITCODE
+                  exit $probeExitCode
+            - name: Observe Windows child startup error records
+              if: always() && matrix.platform == 'win' && steps.windows-child-observation.outcome == 'success'
+              continue-on-error: true
+              shell: pwsh
+              env:
+                  OPENRDX_CHILD_OBSERVATION_START: ${{ steps.windows-child-observation.outputs.started }}
+              run: |
+                  node scripts/observe-windows-startup-events.mjs --since $env:OPENRDX_CHILD_OBSERVATION_START | Tee-Object -FilePath out/verification/windows-token-startup-events.log
+                  exit $LASTEXITCODE
+            - name: Observe source-context Windows child control
+              if: always() && matrix.platform == 'win' && steps.windows-token-fixtures.outcome == 'success'
+              continue-on-error: true
+              shell: pwsh
+              run: |
+                  node scripts/verify-windows-restricted-token-probe.mjs --source-control | Tee-Object -FilePath out/verification/windows-token-source-control.log
+                  $probeExitCode = $LASTEXITCODE
+                  exit $probeExitCode
+            - name: Observe isolated Windows process DACL control
+              if: always() && matrix.platform == 'win' && steps.windows-token-fixtures.outcome == 'success'
+              continue-on-error: true
+              shell: pwsh
+              run: |
+                  node scripts/verify-windows-restricted-token-probe.mjs --process-dacl-control | Tee-Object -FilePath out/verification/windows-token-process-dacl-control.log
+                  $probeExitCode = $LASTEXITCODE
+                  exit $probeExitCode
+            - name: Observe fixed Windows object DACL matrix
+              if: always() && matrix.platform == 'win' && steps.windows-token-fixtures.outcome == 'success'
+              continue-on-error: true
+              shell: pwsh
+              run: |
+                  node scripts/verify-windows-restricted-token-probe.mjs --object-dacl-controls | Tee-Object -FilePath out/verification/windows-token-object-dacl-matrix.log
+                  $probeExitCode = $LASTEXITCODE
+                  exit $probeExitCode
+            - name: Observe actual owned Windows token DACL control
+              if: always() && matrix.platform == 'win' && steps.windows-token-fixtures.outcome == 'success'
+              continue-on-error: true
+              shell: pwsh
+              run: |
+                  node scripts/verify-windows-restricted-token-probe.mjs --actual-token-dacl-control | Tee-Object -FilePath out/verification/windows-token-actual-token-dacl-control.log
+                  $probeExitCode = $LASTEXITCODE
+                  exit $probeExitCode
+            - name: Observe owned Windows debugger control
+              if: always() && matrix.platform == 'win' && steps.windows-token-fixtures.outcome == 'success'
+              continue-on-error: true
+              shell: pwsh
+              run: |
+                  node scripts/verify-windows-restricted-token-probe.mjs --debugger-control | Tee-Object -FilePath out/verification/windows-token-debugger-control.log
+                  $probeExitCode = $LASTEXITCODE
+                  exit $probeExitCode
+            - name: Upload closed Windows token evidence
+              if: always() && matrix.platform == 'win'
+              uses: actions/upload-artifact@v7.0.1
+              with:
+                  name: windows-token-diagnostics-${{ matrix.arch }}
+                  path: |
+                      out/verification/windows-token-baseline.log
+                      out/verification/windows-token-medium.log
+                      out/verification/windows-token-child.log
+                      out/verification/windows-token-startup-events.log
+                      out/verification/windows-token-source-control.log
+                      out/verification/windows-token-process-dacl-control.log
+                      out/verification/windows-token-object-dacl-matrix.log
+                      out/verification/windows-token-actual-token-dacl-control.log
+                      out/verification/windows-token-debugger-control.log
+                  if-no-files-found: ignore
+                  retention-days: 3

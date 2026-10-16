@@ -125,7 +125,7 @@ test('factory setter and optional CI remain confined to new owned token object',
     assert.match(matrix, /Objects::read\(child\)/u)
     assert.match(matrix, /NativeError::EvidenceIncomplete/u)
     assert.match(matrix, /checkpoint\(name, "read"/u)
-    const workflow = await readFile(new URL('../.github/workflows/build-installers.yml', import.meta.url), 'utf8')
+    const workflow = await readFile(new URL('../.github/workflows/windows-token-diagnostics.yml', import.meta.url), 'utf8')
     assert.match(workflow, /name: Observe fixed Windows object DACL matrix\s+if: always\(\) && matrix.platform == 'win' && steps.windows-token-fixtures.outcome == 'success'\s+continue-on-error: true/u)
     assert.match(workflow, /--object-dacl-controls \| Tee-Object -FilePath out\/verification\/windows-token-object-dacl-matrix.log\s+\$probeExitCode = \$LASTEXITCODE\s+exit \$probeExitCode/u)
 })

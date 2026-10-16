@@ -26,9 +26,9 @@ test('restricted token probe emits boolean kernel facts without claiming launche
     assert.match(source, /Successful queries do not prove/u)
 })
 
-test('CI explicitly invokes only the ignored token probe before building installers', async () => {
-    const workflow = await readFile(new URL('../.github/workflows/build-installers.yml', import.meta.url), 'utf8')
+test('standalone diagnostics explicitly invoke the ignored token probe without building installers', async () => {
+    const workflow = await readFile(new URL('../.github/workflows/windows-token-diagnostics.yml', import.meta.url), 'utf8')
     const command = 'node scripts/verify-windows-restricted-token-probe.mjs'
     assert.ok(workflow.includes(command))
-    assert.ok(workflow.indexOf(command) < workflow.indexOf('- name: Build installers'))
+    assert.equal(workflow.includes('- name: Build installers'), false)
 })
