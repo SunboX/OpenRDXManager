@@ -210,7 +210,7 @@ test('actual used debugger policy and ownership model execute adversarial host t
     }
 })
 
-test('optional debugger CI preserves fatal ordinary gate and eight closed diagnostic artifacts', async () => {
+test('optional debugger CI preserves fatal ordinary gate and nine closed diagnostic artifacts', async () => {
     const workflow = await readFile(new URL('../.github/workflows/build-installers.yml', import.meta.url), 'utf8')
     assert.match(workflow, /name: Observe owned Windows debugger control\s+if: always\(\) && matrix.platform == 'win' && steps.windows-token-fixtures.outcome == 'success'\s+continue-on-error: true/u)
     assert.match(workflow, /--debugger-control \| Tee-Object -FilePath out\/verification\/windows-token-debugger-control.log\s+\$probeExitCode = \$LASTEXITCODE\s+exit \$probeExitCode/u)
@@ -218,8 +218,9 @@ test('optional debugger CI preserves fatal ordinary gate and eight closed diagno
     assert.ok(upload.includes('windows-token-debugger-control.log'))
     assert.ok(upload.includes('retention-days: 3'))
     assert.ok(upload.includes('actions/upload-artifact@v7.0.1'))
-    assert.equal((upload.match(/out\/verification\/windows-token-[a-z-]+\.log/gu) ?? []).length, 8)
-    const ordinary = workflow.slice(workflow.indexOf('- name: Verify owned medium Windows child'), workflow.indexOf('- name: Observe source-context'))
+    assert.equal((upload.match(/out\/verification\/windows-token-[a-z-]+\.log/gu) ?? []).length, 9)
+    assert.ok(upload.includes('windows-token-startup-events.log'))
+    const ordinary = workflow.split('- name: Verify owned medium Windows child on disposable runner')[1].split('\n            - name:')[0]
     assert.equal(ordinary.includes('continue-on-error'), false)
     assert.match(workflow, /pattern: installers-\*/u)
 })

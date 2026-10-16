@@ -93,6 +93,13 @@ jobs:
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
                   rustc --edition=2024 --cfg token_fixture_hang native/rdx-service/windows-native/tests/fixtures/token-child.rs -o out/verification/openrdx-token-wait-child.exe
                   exit $LASTEXITCODE
+            - name: Record Windows child observation start
+              id: windows-child-observation
+              if: matrix.platform == 'win'
+              continue-on-error: true
+              shell: pwsh
+              run: |
+                  "started=$([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffZ'))" >> $env:GITHUB_OUTPUT
             - name: Verify owned medium Windows child on disposable runner
               if: matrix.platform == 'win'
               shell: pwsh
@@ -100,6 +107,15 @@ jobs:
                   node scripts/verify-windows-restricted-token-probe.mjs --child | Tee-Object -FilePath out/verification/windows-token-child.log
                   $probeExitCode = $LASTEXITCODE
                   exit $probeExitCode
+            - name: Observe Windows child startup error records
+              if: always() && matrix.platform == 'win' && steps.windows-child-observation.outcome == 'success'
+              continue-on-error: true
+              shell: pwsh
+              env:
+                  OPENRDX_CHILD_OBSERVATION_START: ${{ steps.windows-child-observation.outputs.started }}
+              run: |
+                  node scripts/observe-windows-startup-events.mjs --since $env:OPENRDX_CHILD_OBSERVATION_START | Tee-Object -FilePath out/verification/windows-token-startup-events.log
+                  exit $LASTEXITCODE
             - name: Observe source-context Windows child control
               if: always() && matrix.platform == 'win' && steps.windows-token-fixtures.outcome == 'success'
               continue-on-error: true
@@ -149,6 +165,7 @@ jobs:
                       out/verification/windows-token-baseline.log
                       out/verification/windows-token-medium.log
                       out/verification/windows-token-child.log
+                      out/verification/windows-token-startup-events.log
                       out/verification/windows-token-source-control.log
                       out/verification/windows-token-process-dacl-control.log
                       out/verification/windows-token-object-dacl-matrix.log

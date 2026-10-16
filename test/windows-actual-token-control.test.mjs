@@ -159,7 +159,7 @@ test('optional actual-token CI preserves fatal ordinary gate and sanitized artif
     assert.ok(upload.includes('windows-token-actual-token-dacl-control.log'))
     assert.ok(upload.includes('retention-days: 3'))
     assert.match(workflow, /pattern: installers-\*/u)
-    const ordinary = workflow.slice(workflow.indexOf('- name: Verify owned medium Windows child'), workflow.indexOf('- name: Observe source-context'))
+    const ordinary = workflow.split('- name: Verify owned medium Windows child on disposable runner')[1].split('\n            - name:')[0]
     assert.equal(ordinary.includes('continue-on-error'), false)
 })
 

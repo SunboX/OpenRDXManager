@@ -113,7 +113,7 @@ test('optional CI source control requires compiled fixed fixtures and cannot mas
     assert.match(source, /name: Observe source-context Windows child control[\s\S]*?if: always\(\) && matrix.platform == 'win' && steps.windows-token-fixtures.outcome == 'success'\s+continue-on-error: true/u)
     assert.match(source, /--source-control \| Tee-Object -FilePath out\/verification\/windows-token-source-control.log\s+\$probeExitCode = \$LASTEXITCODE\s+exit \$probeExitCode/u)
     assert.match(source, /path: \|[\s\S]*?out\/verification\/windows-token-source-control.log/u)
-    const ordinary = source.split('name: Verify owned medium Windows child on disposable runner')[1].split('name: Observe source-context')[0]
+    const ordinary = source.split('name: Verify owned medium Windows child on disposable runner')[1].split('\n            - name:')[0]
     assert.doesNotMatch(ordinary, /continue-on-error/u)
 })
 
