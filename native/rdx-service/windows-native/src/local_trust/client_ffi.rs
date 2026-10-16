@@ -12,10 +12,14 @@ use std::ffi::c_void;
 pub extern "C" fn openrdx_local_trust_open() -> *mut c_void {
     #[cfg(windows)]
     {
-        match super::windows::verify_runtime_lease() {
-            Ok(lease) => Box::into_raw(Box::new(lease)).cast(),
-            Err(_) => std::ptr::null_mut(),
+        let Ok(lease) = super::windows::verify_runtime_lease() else {
+            return std::ptr::null_mut();
+        };
+        if crate::service_identity_access::prepare_current_manager_identity_queries(&lease).is_err()
+        {
+            return std::ptr::null_mut();
         }
+        Box::into_raw(Box::new(lease)).cast()
     }
     #[cfg(not(windows))]
     {

@@ -58,6 +58,8 @@ mod safe_eject;
 mod service;
 mod service_acl;
 #[cfg(any(windows, test))]
+mod service_identity_access;
+#[cfg(any(windows, test))]
 mod spti_diagnostics;
 
 #[cfg(windows)]

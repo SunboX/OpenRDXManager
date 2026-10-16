@@ -45,6 +45,9 @@ impl RegisteredServiceStartup {
             return Err(NativeError::AccessDenied);
         }
         let trust = Arc::new(crate::native::verify_service_startup()?);
+        // Ordinary Managers must inspect this verified service's identity. Grant
+        // only query rights on our live objects, never the token's default DACL.
+        crate::service_identity_access::prepare_current_service_identity_queries()?;
         if lifecycle.stop_requested() {
             return Err(NativeError::Cancelled);
         }
