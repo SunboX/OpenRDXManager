@@ -32,7 +32,7 @@ export function sha(value) {
 export function evidence(architecture) {
     return {
         report: { version: 1, sourceCommit: commit, mode: architecture, status: 'passed', phase: 'complete', completed: [`acceptance-${architecture}`], failure: '', childCleanup: 'observed-exit', vm: '11111111-1111-4111-8111-111111111111' },
-        stdout: [...Array.from({ length: 3 }, () => [worker, `OpenRDX token context: subject=worker ${token}`, consoleContext, manager, `OpenRDX token context: subject=worker-selected-manager ${token}`, 'OpenRDX interactive task: runlevel-query=True runlevel-is-lua=True', authMarker, mcpMarker]).flat(), 'Windows copied Manager privileged authentication denied', 'OpenRDX native failure: phase=verify-enrollment reason=AccessDenied', fullMarker].join('\r\n'),
+        stdout: [...Array.from({ length: 3 }, () => [worker, `OpenRDX token context: subject=worker ${token}`, consoleContext, manager, `OpenRDX token context: subject=worker-selected-manager ${token}`, 'OpenRDX interactive task: runlevel-query=True runlevel-is-lua=True', authMarker, mcpMarker]).flat(), ...Array(5).fill('OpenRDX interactive task: runlevel-query=True runlevel-is-lua=True'), 'Windows copied Manager privileged authentication denied', 'OpenRDX native failure: phase=verify-enrollment reason=AccessDenied', fullMarker].join('\r\n'),
         stderr: ''
     }
 }

@@ -587,3 +587,59 @@ test('accepts a standard non-admin default token with no linked token', async (t
     rehash(input.receipt)
     await verify(input)
 })
+
+for (const [description, prefix] of [
+    ['worker token context', 'OpenRDX token context: subject=worker '],
+    ['selected Manager token context', 'OpenRDX token context: subject=worker-selected-manager '],
+    ['console context', 'OpenRDX console context: '],
+    ['interactive task', 'OpenRDX interactive task: ']
+]) {
+    for (const mutation of ['missing one', 'missing all', 'repeated'])
+        test(`rejects ${mutation} ${description} records even after evidence rehash`, async (t) => {
+            const input = await fixture(t)
+            const item = input.receipt.windows[0]
+            const lines = item.evidence.stdout.split('\r\n')
+            const first = lines.findIndex((line) => line.startsWith(prefix))
+            assert.ok(first >= 0)
+            if (mutation === 'missing one') lines.splice(first, 1)
+            else if (mutation === 'missing all') {
+                for (let index = lines.length - 1; index >= 0; index--) if (lines[index].startsWith(prefix)) lines.splice(index, 1)
+            } else lines.splice(first, 0, lines[first])
+            item.evidence.stdout = lines.join('\r\n')
+            rehash(input.receipt)
+            await assert.rejects(verify(input), /incomplete-acceptance-transcript/u)
+        })
+}
+
+test('CLI roundtrips a valid compact receipt of exactly 65536 bytes without adding bytes', async (t) => {
+    const input = await fixture(t)
+    const started = new Date(Date.now() - 120000).toISOString()
+    input.run.run_started_at = started
+    input.receipt.reviewedAt = new Date().toISOString()
+    for (const item of input.receipt.windows) {
+        item.completedAt = started
+        delete item.evidence.report.vm
+    }
+    let missing = 65536 - Buffer.byteLength(JSON.stringify(input.receipt))
+    if (missing % 2 !== 0) {
+        input.receipt.reviewedAt = input.receipt.reviewedAt.replace(/(\.\d{2})\dZ$/u, '$1Z')
+        missing++
+    }
+    assert.ok(missing > 0 && missing % 2 === 0)
+    input.receipt.windows[0].evidence.stdout = `${'\n'.repeat(missing / 2)}${input.receipt.windows[0].evidence.stdout}`
+    rehash(input.receipt)
+    const receiptText = JSON.stringify(input.receipt)
+    assert.equal(Buffer.byteLength(receiptText), 65536)
+    const metadata = join(input.root, 'run.json')
+    const output = join(input.root, 'receipt.json')
+    const second = join(input.root, 'receipt-second.json')
+    await writeFile(metadata, JSON.stringify(input.run))
+    const args = [cli, 'verify', metadata, input.sourceDirectory, input.installerDirectory, output]
+    const env = { ...process.env, BUILD_RUN_ID: '123', GITHUB_REPOSITORY: repository, GITHUB_ACTOR: 'maintainer', WINDOWS_ACCEPTANCE: receiptText }
+    await execute(process.execPath, args, { env })
+    assert.equal((await readFile(output)).length, 65536)
+    delete env.WINDOWS_ACCEPTANCE
+    env.RECEIPT_PATH = output
+    await execute(process.execPath, [...args.slice(0, -1), second], { env })
+    assert.equal((await readFile(second)).length, 65536)
+})

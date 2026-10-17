@@ -173,7 +173,8 @@ function validateStdout(text) {
         [workerMarker, 3],
         [managerMarker, 3],
         [copiedMarker, 1],
-        [tamperMarker, 1]
+        [tamperMarker, 1],
+        ['OpenRDX interactive task: runlevel-query=True runlevel-is-lua=True', 8]
     ]) {
         requireFact(lines.filter((line) => line === marker).length === count, 'incomplete-acceptance-transcript')
     }
@@ -181,6 +182,10 @@ function validateStdout(text) {
     // Default tokens without a linked elevated token are valid for a standard console user.
     const token = /^OpenRDX token context: subject=(?:worker|worker-selected-manager) type-query=True type-size-match=True (?:type-default=False type-full=False type-limited=True linked-query=True linked-size-match=True linked-available=True|type-default=True type-full=False type-limited=False linked-query=False linked-size-match=False linked-available=False)$/u
     const consoleContext = /^OpenRDX console context: uac-query=True enablelua-is-one=True local-builtin-admin-query=True local-builtin-admin=(?:True|False)$/u
+    // The complete suite emits eight task admissions and three observations of each
+    // console/worker context; rehashing a shortened transcript cannot replace them.
+    for (const subject of ['worker', 'worker-selected-manager']) requireFact(lines.filter((line) => token.test(line) && line.startsWith(`OpenRDX token context: subject=${subject} `)).length === 3, 'incomplete-acceptance-transcript')
+    requireFact(lines.filter((line) => consoleContext.test(line)).length === 3, 'incomplete-acceptance-transcript')
     // These are closed software readiness flags; hardware=true is never physical-device proof.
     const readiness = /^OpenRDXManager service readiness: ready native hardware=(?:true|false) capability=available reason=none$/u
     const smoke = /^OpenRDXManager smoke test passed: renderer=mounted service=ready mode=native hardware=(?:true|false) capability=none reason=none$/u

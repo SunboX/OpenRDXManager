@@ -43,7 +43,7 @@ export async function runWindowsReleaseAcceptanceCli(args, env = process.env) {
     if (typeof text !== 'string' || Buffer.byteLength(text) > 65536) throw new Error('missing-or-oversized-receipt')
     const receipt = JSON.parse(text)
     const result = await verifyWindowsReleaseAcceptance({ run, receipt, repository: env.GITHUB_REPOSITORY, actor: env.GITHUB_ACTOR, runId: env.BUILD_RUN_ID, sourceDirectory, installerDirectory })
-    await writeOutput(receiptOutput, `${JSON.stringify(result.receipt)}\n`)
+    await writeOutput(receiptOutput, JSON.stringify(result.receipt))
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
