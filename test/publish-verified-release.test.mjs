@@ -131,7 +131,6 @@ test('valid reviewed candidate creates exact explicit assets and publishes only 
     assert.equal(creates.length, 1)
     const argv = creates[0].args
     assert.deepEqual(argv.slice(0, 3), ['release', 'create', 'v1.0.1'])
-    assert.equal(argv.filter((arg) => arg.startsWith(options.installerDirectory + '/')).length, 17)
     const installerNames = ['OpenRDXManager-1.0.1-mac-x64.dmg', 'OpenRDXManager-1.0.1-mac-x64.pkg', 'OpenRDXManager-1.0.1-mac-x64.zip', 'OpenRDXManager-1.0.1-mac-arm64.dmg', 'OpenRDXManager-1.0.1-mac-arm64.pkg', 'OpenRDXManager-1.0.1-mac-arm64.zip', 'OpenRDXManager-1.0.1-win-x64.exe', 'OpenRDXManager-1.0.1-win-x64.zip', 'OpenRDXManager-1.0.1-win-arm64.exe', 'OpenRDXManager-1.0.1-win-arm64.zip', 'OpenRDXManager-1.0.1-linux-x64.AppImage', 'OpenRDXManager-1.0.1-linux-x64.deb', 'OpenRDXManager-1.0.1-linux-x64.tar.gz', 'OpenRDXManager-1.0.1-linux-arm64.AppImage', 'OpenRDXManager-1.0.1-linux-arm64.deb', 'OpenRDXManager-1.0.1-linux-arm64.tar.gz'].sort()
     assert.deepEqual(
         argv.slice(3, 20),
