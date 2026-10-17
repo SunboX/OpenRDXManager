@@ -60,10 +60,23 @@ function github(options, changes = {}) {
                 tagCreated = true
                 return { stdout: '{}', stderr: '' }
             }
-            if (endpoint.includes('/releases/tags/') || endpoint.endsWith('/releases/42')) {
-                releaseReads++
-                if (changes.existing || created) return response(200, { id: Object.hasOwn(changes, 'releaseId') ? changes.releaseId : changes.releaseIdRace && created && releaseReads >= 4 ? 43 : 42, tag_name: 'v1.0.1', target_commitish: changes.target ?? commit, draft: !publicRelease, prerelease: false })
+            // Match the documented GitHub API: draft releases are visible to
+            // push-authorized listing/ID reads, never the published-tag endpoint.
+            if (endpoint.includes('/releases/tags/')) {
+                if ((changes.existing && !changes.existingDraft) || publicRelease) return response(200, { id: 42, tag_name: 'v1.0.1', draft: false })
                 return response(404, { message: 'Not Found' })
+            }
+            if (/\/releases\?per_page=100&page=\d+$/u.test(endpoint)) {
+                const page = Number(endpoint.split('page=').at(-1))
+                const entries = [...(changes.releasePages?.[page - 1] ?? [])]
+                if (changes.fullReleasePages) for (let index = 0; index < 100; index++) entries.push({ id: page * 100 + index, tag_name: `v-old-${page}-${index}`, draft: false })
+                if ((changes.existing || created) && page === (changes.targetPage ?? 1)) entries.push({ id: Object.hasOwn(changes, 'releaseId') ? changes.releaseId : 42, tag_name: 'v1.0.1', draft: changes.existingDraft || !publicRelease })
+                if (changes.duplicateTarget && created) entries.push({ id: 43, tag_name: 'v1.0.1', draft: true })
+                return response(200, entries)
+            }
+            if (endpoint.endsWith('/releases/42')) {
+                releaseReads++
+                return response(200, { id: changes.releaseIdRace && releaseReads >= 2 ? 43 : 42, tag_name: 'v1.0.1', target_commitish: changes.target ?? commit, draft: !publicRelease, prerelease: false })
             }
             if (endpoint.includes('/git/ref/tags/')) {
                 tagReads++
@@ -260,6 +273,50 @@ for (const releaseId of [null, -1, '42'])
 test('changed release ID before public write blocks publication', async (t) => {
     const options = await inputs(t)
     const remote = github(options, { releaseIdRace: true })
+    await assert.rejects((await publisher())(options, remote))
+    assert.equal(remote.calls.filter((call) => call.args.includes('PATCH')).length, 0)
+})
+
+test('existing draft absent from published-tag endpoint is refused before any write', async (t) => {
+    const options = await inputs(t)
+    const remote = github(options, { existing: true, existingDraft: true })
+    await assert.rejects((await publisher())(options, remote))
+    assert.equal(remote.calls.filter((call) => call.args[0] === 'release' || call.args.includes('POST') || call.args.includes('PATCH')).length, 0)
+})
+
+test('new draft is resolved through authenticated listing and inspected by numeric ID', async (t) => {
+    const options = await inputs(t)
+    const remote = github(options)
+    assert.deepEqual(await (await publisher())(options, remote), { status: 'published', tag: 'v1.0.1' })
+    assert.equal(remote.calls.filter((call) => call.args.at(-1).includes('/releases/tags/')).length, 0)
+    const creation = remote.calls.findIndex((call) => call.args[1] === 'create')
+    const draftLookup = remote.calls.findIndex((call, index) => index > creation && call.args.at(-1).includes('/releases?per_page=100&page=1'))
+    const idRead = remote.calls.findIndex((call, index) => index > draftLookup && call.args.at(-1).endsWith('/releases/42'))
+    const publicWrite = remote.calls.findIndex((call) => call.args.includes('PATCH'))
+    assert.ok(draftLookup > creation && idRead > draftLookup && publicWrite > idRead)
+})
+
+for (const draft of [true, false])
+    test(`release on later list page (draft=${draft}) is refused before any write`, async (t) => {
+        const options = await inputs(t)
+        const page = Array.from({ length: 100 }, (_, index) => ({ id: 100 + index, tag_name: `old-${index}`, draft: false }))
+        const remote = github(options, { existing: true, existingDraft: draft, releasePages: [page], targetPage: 2 })
+        await assert.rejects((await publisher())(options, remote))
+        assert.equal(remote.calls.filter((call) => call.args[0] === 'release' || call.args.includes('POST') || call.args.includes('PATCH')).length, 0)
+        assert.ok(remote.calls.some((call) => call.args.at(-1).endsWith('/releases?per_page=100&page=2')))
+    })
+
+test('full bounded release pages without a terminal short page fail closed', async (t) => {
+    const options = await inputs(t)
+    const remote = github(options, { fullReleasePages: true })
+    await assert.rejects((await publisher())(options, remote))
+    assert.equal(remote.calls.filter((call) => call.args.at(-1).includes('/releases?per_page=100&page=')).length, 10)
+    assert.equal(remote.calls.filter((call) => call.args[0] === 'release' || call.args.includes('POST') || call.args.includes('PATCH')).length, 0)
+})
+
+test('ambiguous matching drafts after creation block the public write', async (t) => {
+    const options = await inputs(t)
+    const remote = github(options, { duplicateTarget: true })
     await assert.rejects((await publisher())(options, remote))
     assert.equal(remote.calls.filter((call) => call.args.includes('PATCH')).length, 0)
 })

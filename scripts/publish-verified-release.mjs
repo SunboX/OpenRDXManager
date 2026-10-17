@@ -51,6 +51,36 @@ async function api(execute, endpoint, allowMissing = false) {
     }
 }
 
+/**
+ * Looks up drafts and published releases with the authenticated publication token.
+ * GitHub's tag endpoint only returns published releases; push-authorized list reads
+ * include drafts. Read through a terminal short page so absence and uniqueness are
+ * known, rejecting pagination races/duplicates and repositories beyond the bound.
+ * @param {Function} execute Bounded command boundary.
+ * @param {string} repository Validated repository.
+ * @param {string} tag Exact manifest tag.
+ * @returns {Promise<number|null>} Unique release ID or confirmed complete-list absence.
+ * @throws {Error} For malformed, ambiguous, inaccessible or over-limit listings.
+ */
+async function releaseIdForTag(execute, repository, tag) {
+    let match = null
+    const seen = new Set()
+    for (let page = 1; page <= 10; page++) {
+        const releases = await api(execute, `repos/${repository}/releases?per_page=100&page=${page}`)
+        requireFact(Array.isArray(releases) && releases.length <= 100)
+        for (const release of releases) {
+            requireFact(Number.isSafeInteger(release?.id) && release.id > 0 && !seen.has(release.id) && typeof release.tag_name === 'string' && typeof release.draft === 'boolean')
+            seen.add(release.id)
+            if (release.tag_name === tag) {
+                requireFact(match === null)
+                match = release.id
+            }
+        }
+        if (releases.length < 100) return match
+    }
+    throw new Error('release-list-limit-exceeded')
+}
+
 /** Resolves a tag with bounded annotated-tag peeling and cycle rejection. @param {Function} execute Command boundary. @param {string} repository Validated repository. @param {string} tag Manifest tag. @returns {Promise<string|null>} Commit or missing tag. @throws {Error} For loops, other objects, malformed refs or remote errors. */
 async function tagCommit(execute, repository, tag) {
     const ref = await api(execute, `repos/${repository}/git/ref/tags/${tag}`, true)
@@ -84,10 +114,11 @@ async function assetMetadata(path) {
     }
 }
 
-/** Verifies release identity, exact target, tag and every uploaded byte digest. @param {Function} execute Command boundary. @param {object} context Validated publication context. @param {boolean} draft Required draft state. @param {number} [id] Existing release ID. @returns {Promise<number>} Stable release ID. @throws {Error} For mismatches, incomplete assets or moved tags. */
+/** Verifies release identity, exact target, tag and every uploaded byte digest. @param {Function} execute Command boundary. @param {object} context Validated publication context. @param {boolean} draft Required draft state. @param {number} id Required verified release ID. @returns {Promise<number>} Stable release ID. @throws {Error} For mismatches, incomplete assets or moved tags. */
 async function inspectRelease(execute, { repository, tag, sourceCommit, assets }, draft, id) {
-    const release = await api(execute, id === undefined ? `repos/${repository}/releases/tags/${tag}` : `repos/${repository}/releases/${id}`)
-    requireFact(Number.isSafeInteger(release?.id) && release.id > 0 && (id === undefined || release.id === id))
+    requireFact(Number.isSafeInteger(id) && id > 0)
+    const release = await api(execute, `repos/${repository}/releases/${id}`)
+    requireFact(release?.id === id)
     requireFact(release.tag_name === tag && release.target_commitish === sourceCommit && release.draft === draft && release.prerelease === false)
     requireFact((await tagCommit(execute, repository, tag)) === sourceCommit)
     const uploaded = await api(execute, `repos/${repository}/releases/${release.id}/assets?per_page=100`)
@@ -128,7 +159,7 @@ export async function publishVerifiedRelease(options, { execute = executeGh } = 
     // GitHub does not offer an atomic tag compare-and-publish operation; post-creation
     // and post-publication checks fail closed if another authorized writer moves it.
     for (let check = 0; check < 2; check++) {
-        requireFact((await api(execute, `repos/${options.repository}/releases/tags/${tag}`, true)) === null)
+        requireFact((await releaseIdForTag(execute, options.repository, tag)) === null)
         const existing = await tagCommit(execute, options.repository, tag)
         requireFact(existing === null || existing === verified.sourceCommit)
     }
@@ -139,7 +170,9 @@ export async function publishVerifiedRelease(options, { execute = executeGh } = 
     }
     requireFact((await tagCommit(execute, options.repository, tag)) === verified.sourceCommit)
     await command(execute, ['release', 'create', tag, ...paths, '--repo', options.repository, '--target', verified.sourceCommit, '--title', `OpenRDXManager ${verified.version}`, '--notes-file', notesPath, '--draft', '--verify-tag'], 600000)
-    const id = await inspectRelease(execute, context, true)
+    const id = await releaseIdForTag(execute, options.repository, tag)
+    requireFact(id !== null)
+    await inspectRelease(execute, context, true, id)
     // A second identity/tag/asset check immediately precedes the public write.
     await inspectRelease(execute, context, true, id)
     // Publish by the verified numeric release ID rather than looking it up again
