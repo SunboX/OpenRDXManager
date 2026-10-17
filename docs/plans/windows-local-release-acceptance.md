@@ -31,11 +31,11 @@
 
 ## Task 2: CI build/publication split
 
-- [ ] Update workflow-boundary tests first: real EXE acceptance is absent from hosted CI, all other checks are fatal, build cannot publish, manual publication requires receipt validation before writes and repeats validation.
-- [ ] Move publication out of build-installers, retain sixteen-artifact collection and all other tests.
-- [ ] Add the separate manually dispatched main-branch workflow, separate candidate checkout, read-only verification job and write-scoped publication job.
-- [ ] Add a tested publisher that refuses release replacement/conflicting tag, pins the target commit and exposes only exact installer assets.
-- [ ] Run workflow and publisher tests, formatting, independent review; update maintained installer documentation.
+- [x] Update workflow-boundary tests first: real EXE acceptance is absent from hosted CI, all other checks are fatal, build cannot publish, manual publication requires receipt validation before writes and repeats validation.
+- [x] Move publication out of build-installers, retain sixteen-artifact collection and all other tests.
+- [x] Add the separate manually dispatched main-branch workflow, separate candidate checkout, read-only verification job and write-scoped publication job.
+- [x] Add a tested publisher that refuses release replacement/conflicting tag, pins the target commit and exposes only exact installer assets.
+- [x] Run workflow and publisher tests, formatting, independent review; update maintained installer documentation.
 
 ## Task 3: Integration, exact-candidate VM acceptance and publication
 
