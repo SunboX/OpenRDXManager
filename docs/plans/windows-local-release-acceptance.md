@@ -24,10 +24,10 @@
 
 ## Task 1: Strict local acceptance validator and report command
 
-- [ ] Write deterministic Node tests for valid input and rejected run, receipt, time, architecture, evidence, symlink and installer-hash cases; observe RED.
-- [ ] Implement bounded report parsing, candidate-run validation and exact-asset/source/verifier binding in cohesive scripts below 1,000 lines.
-- [ ] Add CLI modes for candidate metadata output and final verified-input checking; use environment input, never evaluated shell text.
-- [ ] Verify focused tests, formatting and source diff; independent task review.
+- [x] Write deterministic Node tests for valid input and rejected run, receipt, time, architecture, evidence, symlink and installer-hash cases; observe RED.
+- [x] Implement bounded report parsing, candidate-run validation and exact-asset/source/verifier binding in cohesive scripts below 1,000 lines.
+- [x] Add CLI modes for candidate metadata output and final verified-input checking; use environment input, never evaluated shell text.
+- [x] Verify focused tests, formatting and source diff; independent task review.
 
 ## Task 2: CI build/publication split
 
