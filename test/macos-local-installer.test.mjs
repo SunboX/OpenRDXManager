@@ -40,17 +40,17 @@ function scriptPath(name) {
 }
 
 for (const name of ['preinstall', 'postinstall']) {
-    test(`macOS ${name} rejects another volume before any elevated native action`, async () => {
+    test(`macOS ${name} rejects another volume before any elevated native action`, { skip: process.platform === 'win32' ? 'Requires the POSIX /bin/sh package interpreter' : false }, async () => {
         await assert.rejects(execute('/bin/sh', [scriptPath(name), 'package.pkg', '/Applications', '/Volumes/Untrusted']), (error) => error.code === 1 && /running startup volume/.test(error.stderr))
     })
 }
 
-test('macOS uninstall refuses caller-selected service/path arguments', async () => {
+test('macOS uninstall refuses caller-selected service/path arguments', { skip: process.platform === 'win32' ? 'Requires the POSIX /bin/sh package interpreter' : false }, async () => {
     await assert.rejects(execute('/bin/sh', [scriptPath('uninstall.sh'), '/tmp/foreign.app']), (error) => error.code === 1 && /accepts no path or service arguments/.test(error.stderr))
 })
 
 for (const name of ['preinstall', 'postinstall', 'uninstall.sh']) {
-    test(`macOS ${name} parses with its fixed shell interpreter`, async () => {
+    test(`macOS ${name} parses with its fixed shell interpreter`, { skip: process.platform === 'win32' ? 'Requires the POSIX /bin/sh package interpreter' : false }, async () => {
         await execute('/bin/sh', ['-n', scriptPath(name)])
     })
 }
