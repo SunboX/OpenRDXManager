@@ -19,6 +19,8 @@ use std::ptr::{self, NonNull};
 mod boundary;
 mod counters;
 mod endpoint;
+#[cfg(any(target_os = "macos", test))]
+mod endpoint_diagnostics;
 mod ffi;
 #[cfg(target_os = "macos")]
 mod helper_location;

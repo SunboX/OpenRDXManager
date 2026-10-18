@@ -82,10 +82,11 @@ impl LaunchdManagerEndpointListener {
     pub fn accept(&self) -> Result<ManagerEndpointConnection, NativeError> {
         #[cfg(target_os = "macos")]
         {
-            log_endpoint_phase("session-runtime-verification-start", None);
-            let generation =
-                crate::runtime_generation::RuntimeGeneration::capture(&self.requirement)?;
-            log_endpoint_phase("session-runtime-verification-ok", None);
+            let generation = crate::endpoint_diagnostics::observe_phase(
+                crate::endpoint_diagnostics::AdmissionPhase::RuntimeCapture,
+                || crate::runtime_generation::RuntimeGeneration::capture(&self.requirement),
+                &mut log_endpoint_phase,
+            )?;
             let mut socket = -1;
             let mut session = crate::peer_session::PeerSession::output_record();
             // SAFETY: the listener and requirement are owned and live, and C
@@ -134,7 +135,8 @@ impl ManagerEndpointConnection {
     pub fn revalidate_peer_session(&self) -> Result<(), NativeError> {
         #[cfg(target_os = "macos")]
         {
-            self.session_state.revalidate_peer()
+            self.session_state
+                .revalidate_peer_observed(&mut log_endpoint_phase)
         }
         #[cfg(not(target_os = "macos"))]
         {

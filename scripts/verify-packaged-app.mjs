@@ -2,14 +2,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { execFile } from 'node:child_process'
-import { lstat, mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { lstat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { FuseV1Options, FuseVersion, getCurrentFuseWire } from '@electron/fuses'
 import { resolveMcpBridgePath } from '../src/main/mcp/bridge-path.mjs'
 import { resolveWindowsMcpAddonPath } from '../src/main/mcp/windows-addon-path.mjs'
+import { withPackagedSmokeProfile } from './packaged-smoke-diagnostics.mjs'
+
+export { withPackagedSmokeProfile } from './packaged-smoke-diagnostics.mjs'
 
 const execute = promisify(execFile)
 
@@ -111,20 +113,20 @@ async function verifyPackagedApplication() {
     if (requireService && !installed) throw new Error('service-acceptance-requires-installed-runtime')
     const executable = resolvePackagedExecutable({ installed })
     if (process.platform !== 'linux') await verifyPackagedElectronFuses(executable)
-    const profile = await mkdtemp(join(tmpdir(), 'openrdx-packaged-smoke-'))
     const environment = { ...process.env }
     delete environment.ELECTRON_RUN_AS_NODE
-    try {
-        const result = await execute(executable, [requireService ? '--service-auth-test' : '--smoke-test', `--user-data-dir=${profile}`], { env: environment, timeout: resolvePackagedSmokeProcessTimeout({ platform: process.platform, installed, requireService }), maxBuffer: 8 * 1024 * 1024, windowsHide: true })
-        const output = `${result.stdout}${result.stderr}`
-        if (!output.includes('OpenRDXManager smoke test passed: renderer=mounted')) throw new Error(`packaged-smoke-marker-missing: ${output}`)
-        if (requireService && !output.includes(`OpenRDXManager installed service authentication passed: platform=${process.platform}`)) throw new Error(`installed-service-authentication-marker-missing: ${output}`)
-        console.log(output.trim())
-        const resources = process.platform === 'darwin' ? join(dirname(dirname(executable)), 'Resources') : join(dirname(executable), 'resources')
-        console.log(await verifyPackagedMcpBridge(resources))
-    } finally {
-        await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
-    }
+    await withPackagedSmokeProfile(
+        async (profile) => {
+            const result = await execute(executable, [requireService ? '--service-auth-test' : '--smoke-test', `--user-data-dir=${profile}`], { env: environment, timeout: resolvePackagedSmokeProcessTimeout({ platform: process.platform, installed, requireService }), maxBuffer: 8 * 1024 * 1024, windowsHide: true })
+            const output = `${result.stdout}${result.stderr}`
+            if (!output.includes('OpenRDXManager smoke test passed: renderer=mounted')) throw new Error(`packaged-smoke-marker-missing: ${output}`)
+            if (requireService && !output.includes(`OpenRDXManager installed service authentication passed: platform=${process.platform}`)) throw new Error(`installed-service-authentication-marker-missing: ${output}`)
+            console.log(output.trim())
+            const resources = process.platform === 'darwin' ? join(dirname(dirname(executable)), 'Resources') : join(dirname(executable), 'resources')
+            console.log(await verifyPackagedMcpBridge(resources))
+        },
+        { installed, requireService }
+    )
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) await verifyPackagedApplication()

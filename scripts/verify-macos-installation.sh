@@ -27,7 +27,7 @@ cleanup() {
         # repair fails, before any test-owned restoration. This disposable CI
         # host has no physical device or application secrets.
         sudo /bin/launchctl print system/com.openrdx.hardware.local || true
-        sudo /usr/bin/log show --last 5m --style compact --predicate 'process == "openrdx-hardware"' 2>/dev/null | /usr/bin/tail -n 100 || true
+        sudo /usr/bin/log show --last 5m --style compact --predicate 'process == "openrdx-hardware"' 2>/dev/null | /usr/bin/tail -n 200 || true
     fi
     if [[ "$restoration_required" == true ]]; then
         sudo /bin/cp "$original" "$pinned_file"

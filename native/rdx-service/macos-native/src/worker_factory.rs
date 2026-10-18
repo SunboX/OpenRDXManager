@@ -58,11 +58,22 @@ impl PeerSessionState {
 
     /// Brackets the full protected runtime snapshot with fresh token-bound live code/session proof.
     pub(crate) fn revalidate_peer(&self) -> Result<(), NativeError> {
-        self.peer
-            .revalidate(self.stream.as_raw_fd(), &self.requirement)?;
-        self.generation.revalidate(&self.requirement)?;
-        self.peer
-            .revalidate(self.stream.as_raw_fd(), &self.requirement)
+        self.revalidate_peer_observed(&mut |_, _| {})
+    }
+
+    /// Observes initial endpoint admission without altering the shared fail-fast proof sequence.
+    pub(crate) fn revalidate_peer_observed(
+        &self,
+        observe: &mut impl FnMut(&'static str, Option<NativeError>),
+    ) -> Result<(), NativeError> {
+        crate::endpoint_diagnostics::revalidate_peer_runtime(
+            || {
+                self.peer
+                    .revalidate(self.stream.as_raw_fd(), &self.requirement)
+            },
+            || self.generation.revalidate(&self.requirement),
+            observe,
+        )
     }
 }
 

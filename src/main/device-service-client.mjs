@@ -18,6 +18,20 @@ import { DEFAULT_MAX_FRAME_BYTES, DEFAULT_RESTART_BACKOFF_MS, DEVICE_SERVICE_ARG
 import { handshakeSchema, wireCancellationResponseSchema, wireDeviceListResponseSchema, wireEventSchema, wireResponseSchema } from './device-service-wire.mjs'
 export { DEVICE_SERVICE_ARGUMENTS, createChildProcessTransportFactory, createDeviceServiceTransportFactory, createNoDeviceTransportFactory, resolveDeviceServiceExecutable }
 const defaultTimers = Object.freeze({ setTimeout, clearTimeout })
+
+/**
+ * Records the fixed handshake boundary without letting a diagnostic sink throw into transport admission.
+ * @param {{write: Function}|null} logger - Existing main-owned event logger.
+ * @returns {Promise<void>} Settles after the diagnostic write, independently of protocol progress.
+ */
+async function recordHandshakeStart(logger) {
+    try {
+        await logger?.write({ event: 'service-handshake-start', messageKey: 'activity.service', severity: 'info' })
+    } catch {
+        // The logger retains its existing failure latch; diagnostics cannot change protocol sequencing.
+    }
+}
+
 /**
  * Supervises the local native-service transport, bounded handshake, request
  * correlation, strict event mapping, restart backoff, and clean shutdown.
@@ -27,6 +41,7 @@ export class DeviceServiceClient {
     #discovery = new DiscoveryState()
     #eventListeners = new Set()
     #executable
+    #emitHandshakeDiagnostics
     #expiredDiscoveryRequests = new ExpiredDiscoveryRequests()
     #fatalReason = null
     #generation = 0
@@ -61,7 +76,7 @@ export class DeviceServiceClient {
     #transportFactory
     /**
      * Creates a supervised service client with fixed arguments and injected transport.
-     * @param {{executable: string, transportFactory: Function, platform?: 'darwin'|'win32'|'linux', maxFrameBytes?: number, maxPendingCount?: number, maxPendingBytes?: number, handshakeTimeoutMs?: number, requestTimeoutMs?: number, maxRestarts?: number, restartBackoffMs?: number[], timers?: {setTimeout: Function, clearTimeout: Function}, logger?: {write: Function}}} options - Main-owned service configuration.
+     * @param {{executable: string, transportFactory: Function, platform?: 'darwin'|'win32'|'linux', maxFrameBytes?: number, maxPendingCount?: number, maxPendingBytes?: number, handshakeTimeoutMs?: number, requestTimeoutMs?: number, maxRestarts?: number, restartBackoffMs?: number[], timers?: {setTimeout: Function, clearTimeout: Function}, logger?: {write: Function}, emitHandshakeDiagnostics?: boolean}} options - Main-owned service configuration.
      * @throws {TypeError} When configuration would weaken bounds or launch ownership.
      */
     constructor(options) {
@@ -77,6 +92,7 @@ export class DeviceServiceClient {
             throw new TypeError('DeviceServiceClient frame bound is invalid')
         }
         this.#executable = options.executable
+        this.#emitHandshakeDiagnostics = options.emitHandshakeDiagnostics === true
         this.#transportFactory = options.transportFactory
         this.#platform = options.platform ?? process.platform
         this.#maxFrameBytes = maxFrameBytes
@@ -464,6 +480,8 @@ export class DeviceServiceClient {
             /** @returns {void} Fails only this ready generation when its first complete frame misses the absolute bound. */
             const handleHandshakeTimeout = () => this.#handleFault('service-handshake-timeout', generation, restartCount)
             this.#handshakeTimer = this.#timers.setTimeout(handleHandshakeTimeout, this.#handshakeTimeoutMs)
+            // This timestamp brackets the real handshake timer, after transport identity is ready.
+            if (this.#emitHandshakeDiagnostics) void recordHandshakeStart(this.#logger)
             try {
                 const writeResult = transport.write(encodeServiceFrame({ type: 'handshake-request', protocolVersion: SERVICE_PROTOCOL_VERSION }, this.#maxFrameBytes))
                 if (writeResult === false || writeResult?.ok === false) {

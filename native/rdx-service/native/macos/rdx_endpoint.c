@@ -220,10 +220,14 @@ rdx_macos_status rdx_macos_accept_launchd_manager_with_session(
         (void)close(peer);
         return RDX_MACOS_STATUS_NATIVE_FAILURE;
     }
+    // Fixed breadcrumbs isolate native peer admission without logging credentials or code pins.
+    rdx_macos_log_endpoint_phase("manager-peer-admission-start", "ok");
     if (!rdx_macos_copy_manager_peer_session(peer, requirement_text, out_session)) {
+        rdx_macos_log_endpoint_phase("manager-peer-admission-failed", "AccessDenied");
         (void)close(peer);
         return RDX_MACOS_STATUS_ACCESS_DENIED;
     }
+    rdx_macos_log_endpoint_phase("manager-peer-admission-ok", "ok");
     *out_socket = peer;
     return RDX_MACOS_STATUS_OK;
 }

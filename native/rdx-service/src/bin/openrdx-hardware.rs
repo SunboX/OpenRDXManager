@@ -246,13 +246,17 @@ fn run_platform_endpoint(platform: ServicePlatform) -> Result<(), ()> {
             rdx_macos_native::try_acquire_hardware_ownership,
             macos_ownership_is_busy,
             || {
-                run_framed_service_with_context(
-                    readiness_backend(platform, context.duplicate_for_runtime()),
-                    reader,
-                    connection,
-                    context,
+                observe_macos_framed_session(
+                    || {
+                        run_framed_service_with_context(
+                            readiness_backend(platform, context.duplicate_for_runtime()),
+                            reader,
+                            connection,
+                            context,
+                        )
+                    },
+                    &mut log_endpoint_phase,
                 )
-                .map_err(|_| rdx_macos_native::NativeError::Other)
             },
         )
         .map_err(|_| ())?;
@@ -261,6 +265,27 @@ fn run_platform_endpoint(platform: ServicePlatform) -> Result<(), ()> {
         }
     }
     Ok(())
+}
+
+/// Brackets backend construction and the complete framed session with closed outcome evidence.
+/// The existing successful exit value and failure-to-Other mapping are retained.
+#[cfg(any(target_os = "macos", test))]
+fn observe_macos_framed_session(
+    session: impl FnOnce() -> Result<
+        rdx_service::service::ServiceExit,
+        rdx_service::service::ServiceProtocolError,
+    >,
+    observe: &mut impl FnMut(&'static str, Option<rdx_macos_native::NativeError>),
+) -> Result<rdx_service::service::ServiceExit, rdx_macos_native::NativeError> {
+    use rdx_service::service::ServiceExit;
+    observe("framed-session-start", None);
+    let result = session().map_err(|_| rdx_macos_native::NativeError::Other);
+    match result {
+        Ok(ServiceExit::EndOfInput) => observe("framed-session-end-of-input", None),
+        Ok(ServiceExit::ShutdownRequested) => observe("framed-session-shutdown", None),
+        Err(error) => observe("framed-session-failed", Some(error)),
+    }
+    result
 }
 
 /// Retire only an ordinary empty-listener timeout; launchd retains activation.
@@ -634,6 +659,10 @@ fn main() -> ExitCode {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "openrdx-hardware/diagnostic_tests.rs"]
+mod diagnostic_tests;
 
 #[cfg(test)]
 mod tests {

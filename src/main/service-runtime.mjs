@@ -104,7 +104,7 @@ export function createApplicationServiceRuntime(options) {
     // Tests may inject an explicit fake. Packaged production connects only to
     // the privileged endpoint; a missing endpoint never falls back to a child.
     const transportFactory = typeof options.transportFactory === 'function' ? options.transportFactory : createDeviceServiceTransportFactory({ elevateDevelopmentService: options.elevateDevelopmentService, isPackaged: options.isPackaged, platform: options.platform, windowsClientAddonPath, macosClientAddonPath, sptiDiagnostics: sptiEnabled, onSptiDiagnostic: sptiLog?.record.bind(sptiLog) })
-    client = new DeviceServiceClient({ executable, logger, platform: options.platform, transportFactory, handshakeTimeoutMs: options.isPackaged === true && options.platform === 'darwin' ? MACOS_INSTALLED_HANDSHAKE_TIMEOUT_MS : undefined })
+    client = new DeviceServiceClient({ executable, logger, emitHandshakeDiagnostics: options.isPackaged === true && options.platform === 'darwin', platform: options.platform, transportFactory, handshakeTimeoutMs: options.isPackaged === true && options.platform === 'darwin' ? MACOS_INSTALLED_HANDSHAKE_TIMEOUT_MS : undefined })
 
     /**
      * Sends one coordinator-owned operation through the supervised client.
