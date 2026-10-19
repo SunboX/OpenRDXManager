@@ -2,13 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
-import { constants } from 'node:fs'
-import { open } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
-import { assertAcceptancePath, readAcceptanceFile, verifyWindowsReleaseAcceptance } from './windows-release-acceptance.mjs'
+import { isDeepStrictEqual } from 'node:util'
+import { readAcceptanceFile } from './windows-release-acceptance.mjs'
+import { releaseAssetMetadata, verifyReleaseCandidate } from './release-candidate.mjs'
 
 const executeGh = promisify(execFile)
 const limits = { timeout: 120000, maxBuffer: 4194304, encoding: 'utf8', shell: false }
@@ -97,23 +96,6 @@ async function tagCommit(execute, repository, tag) {
     throw new Error('release-tag-depth-exceeded')
 }
 
-/** Computes the exact upload size and digest from a safe open file. @param {string} path Local installer/checksum. @returns {Promise<object>} Expected server metadata. @throws {Error} For unsafe, changed or unreadable files. */
-async function assetMetadata(path) {
-    await assertAcceptancePath(path)
-    const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
-    try {
-        const before = await handle.stat()
-        requireFact(before.isFile() && before.nlink === 1 && before.size > 0)
-        const hash = createHash('sha256')
-        for await (const chunk of handle.createReadStream({ autoClose: false })) hash.update(chunk)
-        const after = await handle.stat()
-        requireFact(before.size === after.size && before.mtimeMs === after.mtimeMs)
-        return { size: before.size, digest: `sha256:${hash.digest('hex')}` }
-    } finally {
-        await handle.close()
-    }
-}
-
 /** Verifies release identity, exact target, tag and every uploaded byte digest. @param {Function} execute Command boundary. @param {object} context Validated publication context. @param {boolean} draft Required draft state. @param {number} id Required verified release ID. @returns {Promise<number>} Stable release ID. @throws {Error} For mismatches, incomplete assets or moved tags. */
 async function inspectRelease(execute, { repository, tag, sourceCommit, assets }, draft, id) {
     requireFact(Number.isSafeInteger(id) && id > 0)
@@ -133,16 +115,15 @@ async function inspectRelease(execute, { repository, tag, sourceCommit, assets }
 }
 
 /**
- * Validates reviewed Windows acceptance before any GitHub call; creates a new exact-target draft,
+ * Validates successful build provenance and complete assets before any GitHub call; creates a new exact-target draft,
  * verifies all seventeen assets, then publishes and rechecks. Interrupted writes leave drafts for inspection.
- * The receipt is an operator attestation, not independent VM execution proof.
- * @param {object} options Arguments accepted by verifyWindowsReleaseAcceptance.
+ * @param {object} options Arguments accepted by verifyReleaseCandidate.
  * @param {{execute?:Function}} [dependencies] Bounded execFile command boundary; no shell.
  * @returns {Promise<{status:string,tag:string}>} Confirmed complete public release.
- * @throws {Error} For invalid acceptance, unsafe notes, existing release, moved tag or incomplete upload.
+ * @throws {Error} For invalid candidate, unsafe notes, existing release, moved tag or incomplete upload.
  */
 export async function publishVerifiedRelease(options, { execute = executeGh } = {}) {
-    const verified = await verifyWindowsReleaseAcceptance(options)
+    const verified = await verifyReleaseCandidate(options)
     const notesPath = join(options.sourceDirectory, 'docs/releases/locally-trusted-installers.md')
     const notes = await readAcceptanceFile(notesPath, 65536)
     requireFact(notes.length > 0 && !notes.includes(0))
@@ -152,7 +133,9 @@ export async function publishVerifiedRelease(options, { execute = executeGh } = 
     for (const name of [...verified.installers, 'SHA256SUMS.txt']) {
         const path = join(options.installerDirectory, name)
         paths.push(path)
-        assets.set(name, await assetMetadata(path))
+        const metadata = await releaseAssetMetadata(path)
+        requireFact(isDeepStrictEqual(metadata, verified.assets[name]))
+        assets.set(name, metadata)
     }
     const context = { repository: options.repository, tag, sourceCommit: verified.sourceCommit, assets }
     // Repeat preflight immediately before creation to narrow concurrent replacement races.
@@ -186,10 +169,10 @@ export async function publishVerifiedRelease(options, { execute = executeGh } = 
 export async function runVerifiedReleasePublisherCli(args, env = process.env) {
     requireFact(env.GITHUB_REF === 'refs/heads/main' && env.GITHUB_EVENT_NAME === 'workflow_dispatch' && env.PUBLISH_RELEASE === 'true' && args.length === 3)
     const [metadataPath, sourceDirectory, installerDirectory] = args
-    requireFact(typeof env.RECEIPT_PATH === 'string' && !env.WINDOWS_ACCEPTANCE)
+    requireFact(typeof env.CANDIDATE_PATH === 'string')
     const run = JSON.parse((await readAcceptanceFile(metadataPath)).toString('utf8'))
-    const receipt = JSON.parse((await readAcceptanceFile(env.RECEIPT_PATH, 65536)).toString('utf8'))
-    await publishVerifiedRelease({ run, receipt, repository: env.GITHUB_REPOSITORY, actor: env.GITHUB_ACTOR, runId: env.BUILD_RUN_ID, sourceDirectory, installerDirectory })
+    const expectedCandidate = JSON.parse((await readAcceptanceFile(env.CANDIDATE_PATH)).toString('utf8'))
+    await publishVerifiedRelease({ run, expectedCandidate, repository: env.GITHUB_REPOSITORY, runId: env.BUILD_RUN_ID, sourceDirectory, installerDirectory })
     console.log('Verified release publication completed')
 }
 

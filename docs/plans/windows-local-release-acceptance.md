@@ -3,6 +3,8 @@
 
 # Windows local release acceptance implementation plan
 
+Superseded on 2026-10-19: the user removed the mandatory Windows x64/ARM64 VM receipt requirement. The historical checklist below is not a current publication prerequisite. See [the maintained release acceptance specification](../specs/windows-local-release-acceptance.md) for the automated exact-candidate gate and optional Windows diagnostics.
+
 > For agentic workers: use the subagent-driven-development workflow, with focused implementation and independent review. Existing commit/push/build/release authorization remains in force; administrator prompts require the user.
 
 **Goal:** Retain mandatory, exact-artifact Windows acceptance in the local VM while GitHub builds and runs the other automated checks.

@@ -9,10 +9,6 @@ on:
                 description: Completed successful main Build installers run ID.
                 required: true
                 type: string
-            windows_acceptance:
-                description: Maintainer-reviewed Windows x64 and ARM64 acceptance JSON attestation.
-                required: true
-                type: string
             publish_release:
                 description: Publish after verification. False saves verification evidence only.
                 required: false
@@ -29,7 +25,7 @@ concurrency:
 
 jobs:
     verify:
-        name: Verify exact candidate and reviewed Windows acceptance
+        name: Verify successful build and exact candidate assets
         if: github.ref == 'refs/heads/main'
         runs-on: ubuntu-24.04
         timeout-minutes: 20
@@ -58,7 +54,7 @@ jobs:
                   gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID" > verification/build-run.json
             - name: Validate build provenance before downloading artifacts
               id: metadata
-              run: node scripts/verify-windows-release-acceptance.mjs metadata verification/build-run.json
+              run: node scripts/verify-release-candidate.mjs metadata verification/build-run.json
             - name: Read only the exact candidate source
               uses: actions/checkout@v6.0.2
               with:
@@ -67,7 +63,6 @@ jobs:
                   persist-credentials: false
                   sparse-checkout: |
                       package.json
-                      scripts/verify-windows-installation.ps1
                       docs/releases/locally-trusted-installers.md
                   sparse-checkout-cone-mode: false
             - uses: actions/download-artifact@v8.0.1
@@ -82,17 +77,18 @@ jobs:
               env:
                   GH_TOKEN: ${{ github.token }}
               run: gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID" > verification/build-run.json
-            - name: Verify complete assets and reviewed attestation
+            - name: Verify complete assets and bind the exact build attempt
               env:
-                  WINDOWS_ACCEPTANCE: ${{ inputs.windows_acceptance }}
-              run: node scripts/verify-windows-release-acceptance.mjs verify verification/build-run.json candidate-source verification/installers verification/windows-acceptance.json
+                  EXPECTED_SOURCE_COMMIT: ${{ steps.metadata.outputs.source_commit }}
+                  EXPECTED_RUN_ATTEMPT: ${{ steps.metadata.outputs.run_attempt }}
+              run: node scripts/verify-release-candidate.mjs verify verification/build-run.json candidate-source verification/installers verification/candidate.json
             - name: Retain exact verified inputs
               uses: actions/upload-artifact@v7.0.1
               with:
                   name: verified-release-${{ github.run_id }}-${{ github.run_attempt }}
                   path: |
                       verification/build-run.json
-                      verification/windows-acceptance.json
+                      verification/candidate.json
                       verification/installers/OpenRDXManager-*.dmg
                       verification/installers/OpenRDXManager-*.pkg
                       verification/installers/OpenRDXManager-*.zip
@@ -115,7 +111,7 @@ jobs:
             actions: read
         env:
             BUILD_RUN_ID: ${{ needs.verify.outputs.run_id }}
-            RECEIPT_PATH: verification/windows-acceptance.json
+            CANDIDATE_PATH: verification/candidate.json
             PUBLISH_RELEASE: ${{ inputs.publish_release }}
         steps:
             - uses: actions/checkout@v6.0.2
@@ -136,7 +132,6 @@ jobs:
                   persist-credentials: false
                   sparse-checkout: |
                       package.json
-                      scripts/verify-windows-installation.ps1
                       docs/releases/locally-trusted-installers.md
                   sparse-checkout-cone-mode: false
             - name: Refresh authenticated build metadata before publication
@@ -146,8 +141,8 @@ jobs:
               run: |
                   node --input-type=module -e 'const id = process.env.BUILD_RUN_ID; if (!/^[1-9][0-9]*$/.test(id) || !Number.isSafeInteger(Number(id))) process.exit(1)'
                   gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID" > verification/build-run.json
-            - name: Repeat trusted acceptance validation before any release write
-              run: node scripts/verify-windows-release-acceptance.mjs verify verification/build-run.json candidate-source verification/installers verification/rechecked-acceptance.json
+            - name: Repeat candidate validation before any release write
+              run: node scripts/verify-release-candidate.mjs verify verification/build-run.json candidate-source verification/installers verification/rechecked-candidate.json verification/candidate.json
             - name: Publish the exact fully verified release
               env:
                   GH_TOKEN: ${{ github.token }}

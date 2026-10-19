@@ -6,6 +6,8 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import test from 'node:test'
 import { fixture, commit, sha } from './helpers/windows-release-acceptance-fixture.mjs'
+import { verifyReleaseAssets } from '../scripts/release-assets.mjs'
+import { verifyReleaseCandidate } from '../scripts/release-candidate.mjs'
 
 /** Loads the real publisher with an assertion explaining the missing feature. @returns {Promise<Function>} Publisher. */
 async function publisher() {
@@ -24,6 +26,9 @@ async function inputs(t) {
     const options = await fixture(t)
     await mkdir(join(options.sourceDirectory, 'docs/releases'), { recursive: true })
     await writeFile(join(options.sourceDirectory, 'docs/releases/locally-trusted-installers.md'), '# Fixed candidate release notes\n')
+    await verifyReleaseAssets({ directory: options.installerDirectory, version: '1.0.1' })
+    delete options.receipt
+    options.expectedCandidate = await verifyReleaseCandidate(options)
     return options
 }
 
@@ -225,12 +230,12 @@ test('post-publication incomplete assets never report publication success', asyn
     assert.equal(remote.calls.filter((call) => call.args.includes('PATCH')).length, 1)
 })
 
-for (const corruption of ['hash', 'extra-field', 'reviewer'])
-    test(`malformed ${corruption} receipt makes zero GitHub calls`, async (t) => {
+for (const corruption of ['hash', 'extra-field', 'attempt'])
+    test(`changed ${corruption} candidate makes zero GitHub calls`, async (t) => {
         const options = await inputs(t)
-        if (corruption === 'hash') options.receipt.windows[0].installerSha256 = '0'.repeat(64)
-        if (corruption === 'extra-field') options.receipt.secret = 'never-log-this'
-        if (corruption === 'reviewer') options.receipt.reviewedBy = 'someone-else'
+        if (corruption === 'hash') options.expectedCandidate.assets[options.expectedCandidate.installers[0]].digest = 'sha256:' + '0'.repeat(64)
+        if (corruption === 'extra-field') options.expectedCandidate.secret = 'never-log-this'
+        if (corruption === 'attempt') options.expectedCandidate.runAttempt++
         const remote = github(options)
         await assert.rejects((await publisher())(options, remote))
         assert.equal(remote.calls.length, 0)
