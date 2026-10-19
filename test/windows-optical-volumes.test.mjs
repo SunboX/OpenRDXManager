@@ -14,7 +14,7 @@ async function testNativeVolumeTypeGate() {
     assert.match(source.slice(start, end), /query_volume_topology\(storage_device_identity\(volume\), \|\|\s*\{\s*volume_disk_extents\(volume\)/u)
     // All inspected volumes, including positively identified optical drives,
     // still carry mount paths into the complete inventory used by safety checks.
-    assert.match(source, /let \(record, lease\) = inspect_volume\(&name, disk_number\)\?;/u)
+    assert.match(source, /let \(record, lease\) = inspect_volume\(&name, disk_number, access\)\?;/u)
     assert.match(source, /records\.push\(record\);/u)
     assert.match(source, /VolumeRecord::new_with_mount_paths\(volume_name\.to_vec\(\), topology, mount_paths, target\)\?/u)
 }

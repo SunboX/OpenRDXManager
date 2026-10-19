@@ -503,8 +503,10 @@ async function start() {
         if (isServiceAuthenticationTest) assertAuthenticatedServiceReadiness(readiness.service)
         if (isServiceScanTest) {
             const expectedId = process.argv.find((argument) => argument.startsWith('--expected-device-id='))?.slice('--expected-device-id='.length)
-            const count = assertInstalledDeviceDiscovery(readiness.service, await services.devices.list(), expectedId)
-            console.log(`OpenRDXManager installed device discovery passed: count=${count} selected=${expectedId === undefined ? 'any' : 'matched'}`)
+            const inventory = await services.devices.list()
+            console.log(`OpenRDXManager installed discovery diagnostics: ${JSON.stringify(inventory.diagnostics ?? null)}`)
+            const count = assertInstalledDeviceDiscovery(readiness.service, inventory, expectedId)
+            console.log(`OpenRDXManager installed device discovery passed: count=${count} selected=${expectedId === undefined ? 'any' : 'matched'} media=${inventory.devices.filter((device) => device.media != null).length}`)
         }
         await autoScanController.stop()
         trayController.destroy()

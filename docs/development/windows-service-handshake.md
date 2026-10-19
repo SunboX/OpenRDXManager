@@ -3,6 +3,8 @@
 
 # Windows service handshake
 
+A zero-access volume handle can return `ERROR_INVALID_FUNCTION` from `GetVolumeInformationByHandleW` even for a valid mounted NTFS cartridge. Only this unsupported-handle result triggers an independent `GetVolumeInformationW` query of the same retained volume GUID root. Its actual filesystem result must still satisfy the existing RAW-versus-mounted classifier, and the retained disk/volume/mount identity is revalidated. Access denial, removal, invalid parameters, malformed names and other errors never become fabricated filesystem evidence.
+
 Read-only Windows discovery, filesystem and label queries retain zero-access volume handles after exact disk membership, topology and mount validation. They do not upgrade a newly inserted cartridge to raw read/write access merely to report it. Mutation leases still require the original read/write open; metadata-only leases reject lock, dismount, format, mount-point changes and file writes before any mutating API. Complete revalidation and ambiguity rejection remain required in both paths.
 
 SCM `RUNNING` means that startup authority and the protected first pipe are established. It does not mean that per-client authentication and backend preparation have finished.

@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: 2026 André Fiedler -->
 <!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
 
+Mounted Windows cartridges now use an independently verified volume-root filesystem query when a metadata-only volume handle does not support that query. This fixes cartridge scans rejected as `candidate-host-facts-failed` while preserving RAW-media and failure checks.
+
 Cartridges inserted after Windows setup no longer need raw volume write access merely to appear in discovery. Read-only metadata queries retain exact disk/volume topology and mount checks; mutating operations keep their existing separately checked read/write volume leases. Windows setup now explicitly explains reconnecting the dock to activate its per-instance permissions.
 
 Version 1.0.3 prevents Windows setup from silently skipping a connected disk advertising an RDX product when its required open or live identity probe fails. Such failures now stop setup with a bounded diagnostic; device permissions still require a complete positive live RDX identity. Installed-device acceptance can require the exact connected dock in the service's validated scan inventory, independently of service authentication and capability flags.

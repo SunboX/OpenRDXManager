@@ -3,6 +3,19 @@
 
 //! Distinguish an unformatted filesystem from failures to inspect a volume.
 
+/// Resolves filesystem information when a metadata-only volume handle rejects it.
+/// Only ERROR_INVALID_FUNCTION permits a query of the same retained GUID root;
+/// neither that error nor any fallback failure is itself filesystem evidence.
+pub(super) fn filesystem_information(
+    information: Result<String, u32>,
+    query_root: impl FnOnce() -> Result<String, u32>,
+) -> Result<String, u32> {
+    match information {
+        Err(0x8007_0001) => query_root(),
+        other => other,
+    }
+}
+
 /// Queries free space only after Windows recognizes the exact volume filesystem.
 ///
 /// A RAW partition remains present media. Access, topology, removal, and every
@@ -33,7 +46,37 @@ fn classify_volume_space(result: Result<(u64, u64), u32>) -> Result<Option<(u64,
 
 #[cfg(test)]
 mod tests {
-    use super::query_volume_space;
+    use super::{filesystem_information, query_volume_space};
+
+    /// Zero-access volume handles can reject information even for valid mounted NTFS.
+    #[test]
+    fn unsupported_handle_queries_require_independent_same_root_evidence() {
+        assert_eq!(
+            filesystem_information(Err(0x8007_0001), || Ok("NTFS".into())),
+            Ok("NTFS".into())
+        );
+        for error in [0x8007_0005, 0x8007_0057, 0x8007_048f] {
+            assert_eq!(
+                filesystem_information(Err(error), || panic!("not an unsupported handle")),
+                Err(error)
+            );
+            assert_eq!(
+                filesystem_information(Err(0x8007_0001), || Err(error)),
+                Err(error)
+            );
+        }
+        assert_eq!(
+            filesystem_information(Ok("RAW".into()), || panic!("already reported")),
+            Ok("RAW".into())
+        );
+        let information = filesystem_information(Err(0x8007_0001), || Err(0x8007_03ed));
+        assert_eq!(
+            query_volume_space(information.as_deref().map_err(|code| *code), || panic!(
+                "proven RAW has no space query"
+            )),
+            Ok(None)
+        );
+    }
 
     /// A newly partitioned RAW volume has no filesystem space facts.
     #[test]

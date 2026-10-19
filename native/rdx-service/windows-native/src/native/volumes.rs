@@ -224,6 +224,29 @@ impl NativeVolumeLease {
         });
         // SAFETY: record key is the exact NUL-terminated volume GUID root and all
         // outputs are valid writable u64 storage for this synchronous query.
+        // Zero-access DASD handles can return ERROR_INVALID_FUNCTION on mounted
+        // NTFS. Query the same pinned GUID root in that case, then require its
+        // positive filesystem evidence before classifying free-space results.
+        let information = crate::filesystem_facts::filesystem_information(information, || {
+            filesystem.fill(0);
+            // SAFETY: the retained GUID root and bounded output buffers remain live.
+            unsafe {
+                GetVolumeInformationW(
+                    PCWSTR(self.record.key().as_ptr()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(&mut filesystem),
+                )
+            }
+            .map_err(|error| error.code().0 as u32)?;
+            let end = filesystem
+                .iter()
+                .position(|unit| *unit == 0)
+                .ok_or(0x8007_000d_u32)?;
+            String::from_utf16(&filesystem[..end]).map_err(|_| 0x8007_000d_u32)
+        });
         let facts = crate::filesystem_facts::query_volume_space(
             information.as_deref().map_err(|code| *code),
             || {
