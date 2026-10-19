@@ -229,7 +229,7 @@ test('Windows initial handshake waits for verified native connection readiness',
     await startup
 })
 
-test('Windows activation receives a bounded margin before one post-readiness handshake deadline', async () => {
+test('Windows runtime verification can exceed eight seconds before the post-readiness handshake deadline', async () => {
     const socket = createSocket()
     const writes = []
     const callbacks = new Map()
@@ -271,9 +271,18 @@ test('Windows activation receives a bounded margin before one post-readiness han
 
     assert.deepEqual(
         scheduled.map(({ delay }) => delay),
-        [8_000],
-        'the packaged Windows watchdog must have deterministic margin above the native seven-second deadline'
+        [53_000],
+        'complete runtime verification needs its own allowance before the native seven-second activation deadline'
     )
+    assert.deepEqual(writes, [])
+
+    // A slow disk can still be verifying enrollment when the former watchdog
+    // expired. Advancing past it must neither cancel the socket nor write bytes.
+    for (const { id, delay } of scheduled) {
+        if (delay <= 8_000) callbacks.get(id)?.()
+    }
+    assert.equal(socket.destroyed, false)
+    assert.equal(client.getState().status, 'handshaking')
     assert.deepEqual(writes, [])
 
     socket.emit('connect')
@@ -281,7 +290,7 @@ test('Windows activation receives a bounded margin before one post-readiness han
 
     assert.deepEqual(
         scheduled.map(({ delay }) => delay),
-        [8_000, 2_000],
+        [53_000, 2_000],
         'the absolute first-frame deadline starts only after verified transport readiness'
     )
     assert.equal(writes.length, 1)

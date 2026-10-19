@@ -8,12 +8,14 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { resolvePackagedExecutable, resolvePackagedSmokeProcessTimeout, verifyPackagedElectronFuses } from '../scripts/verify-packaged-app.mjs'
 
-test('the external installed macOS auth verifier outlives its bounded smoke gate', () => {
+test('the external installed Windows and macOS auth verifier outlives its bounded smoke gate', () => {
     assert.equal(resolvePackagedSmokeProcessTimeout({ platform: 'darwin', installed: true, requireService: true }), 90_000)
+    assert.equal(resolvePackagedSmokeProcessTimeout({ platform: 'win32', installed: true, requireService: true }), 90_000)
     for (const options of [
         { platform: 'darwin', installed: true, requireService: false },
         { platform: 'darwin', installed: false, requireService: true },
-        { platform: 'win32', installed: true, requireService: true },
+        { platform: 'win32', installed: true, requireService: false },
+        { platform: 'win32', installed: false, requireService: true },
         { platform: 'linux', installed: true, requireService: true }
     ])
         assert.equal(resolvePackagedSmokeProcessTimeout(options), 60_000)

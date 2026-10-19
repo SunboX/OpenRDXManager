@@ -5,13 +5,13 @@ const DEFAULT_TIMEOUT_MS = 15_000
 const LIFECYCLE_FAILURE_CODES = Object.freeze(new Set(['smoke-renderer-destroyed', 'smoke-renderer-load-failed', 'smoke-renderer-process-gone']))
 
 /**
- * Allows measured full-runtime verification only for installed macOS auth smoke.
+ * Allows full-runtime verification for installed Windows and macOS auth smoke.
  * The 53s transport bound and 10s handshake retain 12s for renderer/cleanup work.
  * @param {{platform: string, isPackaged: boolean, serviceAuthentication: boolean}} options - Main-owned launch state.
  * @returns {number} Fixed smoke deadline; other launches retain their 15s bound.
  */
 export function resolveSmokeReadinessTimeout(options) {
-    return options.platform === 'darwin' && options.isPackaged === true && options.serviceAuthentication === true ? 75_000 : DEFAULT_TIMEOUT_MS
+    return ['darwin', 'win32'].includes(options.platform) && options.isPackaged === true && options.serviceAuthentication === true ? 75_000 : DEFAULT_TIMEOUT_MS
 }
 
 /**

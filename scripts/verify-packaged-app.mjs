@@ -16,12 +16,12 @@ export { withPackagedSmokeProfile } from './packaged-smoke-diagnostics.mjs'
 const execute = promisify(execFile)
 
 /**
- * Keeps the external process watchdog above installed macOS's 75s smoke gate.
+ * Keeps the external process watchdog above installed Windows/macOS's 75s smoke gate.
  * @param {{platform: string, installed: boolean, requireService: boolean}} options - Verifier-owned launch state.
  * @returns {number} Fixed watchdog; all other verification stays at 60 seconds.
  */
 export function resolvePackagedSmokeProcessTimeout(options) {
-    return options.platform === 'darwin' && options.installed === true && options.requireService === true ? 90_000 : 60_000
+    return ['darwin', 'win32'].includes(options.platform) && options.installed === true && options.requireService === true ? 90_000 : 60_000
 }
 
 /**

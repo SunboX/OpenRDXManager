@@ -7,12 +7,14 @@ import test from 'node:test'
 
 import { assertAuthenticatedServiceReadiness, attachSmokeReadinessListeners, getServiceReadinessFailureReason, resolveSmokeReadinessTimeout, SmokeReadinessGate } from '../src/main/smoke-readiness.mjs'
 
-test('only packaged macOS service authentication receives the measured startup budget', () => {
+test('only packaged Windows and macOS service authentication receives the runtime verification budget', () => {
     assert.equal(resolveSmokeReadinessTimeout({ platform: 'darwin', isPackaged: true, serviceAuthentication: true }), 75_000)
+    assert.equal(resolveSmokeReadinessTimeout({ platform: 'win32', isPackaged: true, serviceAuthentication: true }), 75_000)
     for (const options of [
         { platform: 'darwin', isPackaged: false, serviceAuthentication: true },
         { platform: 'darwin', isPackaged: true, serviceAuthentication: false },
-        { platform: 'win32', isPackaged: true, serviceAuthentication: true },
+        { platform: 'win32', isPackaged: false, serviceAuthentication: true },
+        { platform: 'win32', isPackaged: true, serviceAuthentication: false },
         { platform: 'linux', isPackaged: true, serviceAuthentication: true }
     ])
         assert.equal(resolveSmokeReadinessTimeout(options), 15_000)
