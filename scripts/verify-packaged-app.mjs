@@ -22,7 +22,7 @@ const execute = promisify(execFile)
  */
 export function resolvePackagedSmokeProcessTimeout(options) {
     if (options.installed !== true || options.requireService !== true) return 60_000
-    return options.platform === 'win32' ? 135_000 : options.platform === 'darwin' ? 90_000 : 60_000
+    return options.platform === 'win32' ? 135_000 : options.platform === 'darwin' ? 120_000 : 60_000
 }
 
 /**

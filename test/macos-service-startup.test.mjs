@@ -37,8 +37,9 @@ class VerifiedStartupTransport extends EventEmitter {
         assert.equal(this.proofVerified, true, 'Protocol must follow the native identity gate')
         const request = JSON.parse(bytes.subarray(4).toString())
         if (request.type === 'handshake-request') {
-            // Runtime metadata/hash checks can finish after kernel peer proof.
-            this.timer = setTimeout(() => this.emit('data', frame({ type: 'handshake', protocolVersion: 1, serviceVersion: 'verified-startup-fixture', platform: 'darwin', mode: 'native', privileged: true, platformCapability: { state: 'available' } })), 3_000)
+            // Intel CI evidence places complete server-side checks beyond the
+            // previous ten-second response allowance, after native peer proof.
+            this.timer = setTimeout(() => this.emit('data', frame({ type: 'handshake', protocolVersion: 1, serviceVersion: 'verified-startup-fixture', platform: 'darwin', mode: 'native', privileged: true, platformCapability: { state: 'available' } })), 11_000)
         } else if (request.method === 'devices-list') {
             queueMicrotask(() => this.emit('data', frame({ type: 'response', requestId: request.requestId, ok: true, result: { ok: true, listRevision: 0, devices: [] } })))
         }
@@ -78,7 +79,7 @@ function logStorage() {
     }
 }
 
-test('installed macOS runtime admits a verified service whose reply follows the full startup checks', { timeout: 20_000 }, async () => {
+test('installed macOS runtime admits a verified service whose reply follows the full startup checks', { timeout: 40_000 }, async () => {
     let attempts = 0
     const runtime = createApplicationServiceRuntime({
         appPath: '/controlled/OpenRDXManager.app',

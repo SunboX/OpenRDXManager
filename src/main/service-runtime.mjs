@@ -16,7 +16,7 @@ import { SptiDiagnosticLog } from './spti-diagnostics.mjs'
 
 // The native transport proves the installed helper before becoming ready. Its
 // service then completes fresh runtime and peer checks before replying.
-const MACOS_INSTALLED_HANDSHAKE_TIMEOUT_MS = 10_000
+const MACOS_INSTALLED_HANDSHAKE_TIMEOUT_MS = 30_000
 
 /**
  * Registers and dispatches one firmware operation without exposing local paths.

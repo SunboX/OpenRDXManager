@@ -15,6 +15,16 @@ Electron and its sandboxed renderer remain unprivileged. `npm start` obtains
 administrator authorization and starts only that repository-built helper with
 `sudo` over inherited private stdio pipes.
 
+## Installed service startup
+
+Packaged installations independently verify the service and manager runtimes.
+The client allows 53 seconds for transport establishment and 30 seconds for
+the authenticated handshake response, including the service's own runtime
+checks. Intel macOS installer CI demonstrated that these server-side checks
+can exceed the previous 10-second response allowance. The installed smoke
+budget is 105 seconds, with a 120-second external verifier limit. These bounds
+preserve peer authentication and the service's existing first-frame deadline.
+
 ## One-Time macOS Settings
 
 Current macOS releases can stop a newly linked local helper before its `main`
