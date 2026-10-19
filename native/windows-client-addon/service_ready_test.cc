@@ -19,7 +19,7 @@
 /** Runs real private-pipe I/O only; never names the installed service or dock. */
 void CheckPrivatePipe(std::string bytes, DWORD pause_ms, bool partial,
                       DWORD deadline_ms, DWORD cancel_ms, bool expected,
-                      bool race = false) {
+                      bool race = false, bool after_proof = false) {
   using namespace openrdx::windows_io;
   static unsigned sequence = 0;
   const std::wstring name = L"\\\\.\\pipe\\OpenRDXReadyTest-" +
@@ -60,8 +60,9 @@ void CheckPrivatePipe(std::string bytes, DWORD pause_ms, bool partial,
   if (cancel_ms != INFINITE) canceller = std::thread([&] {
     Sleep(cancel_ms); SetEvent(stop.value);
   });
-  const bool ready = ReadServiceReady(client.value, stop.value,
-                                      DeadlineAfter(deadline_ms));
+  const bool ready = after_proof
+      ? ReadServiceReadyAfterProof(client.value, stop.value)
+      : ReadServiceReady(client.value, stop.value, DeadlineAfter(deadline_ms));
   if (!race) assert(ready == expected);
   if (ready && bytes.size() == 21) {
     DWORD available = 0;
@@ -81,6 +82,10 @@ void CheckWindowsPipeControls() {
   CheckPrivatePipe("OpenRDX:ready:1\n", 0, false, 1000, INFINITE, true);
   CheckPrivatePipe("OpenRDX:ready:1\nFRAME", 0, false, 1000, INFINITE, true);
   CheckPrivatePipe("OpenRDX:ready:1\n", 0, false, 0, INFINITE, false);
+  // Backend verification owns a fresh deadline after completed peer proof;
+  // an expired activation clock cannot cut off its delayed readiness marker.
+  CheckPrivatePipe("OpenRDX:ready:1\n", 30, false, 0, INFINITE, true, false, true);
+  CheckPrivatePipe("OpenRDX:ready:1\n", 100, false, 0, 10, false, false, true);
   CheckPrivatePipe("OpenRDX:ready:1\n", 5, true, 1000, INFINITE, true);
   CheckPrivatePipe("OpenRDX:ready:2\n", 0, false, 1000, INFINITE, false);
   CheckPrivatePipe("OpenRDX", 0, false, 1000, INFINITE, false);

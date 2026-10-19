@@ -6,12 +6,13 @@ const LIFECYCLE_FAILURE_CODES = Object.freeze(new Set(['smoke-renderer-destroyed
 
 /**
  * Allows full-runtime verification for installed Windows and macOS auth smoke.
- * The 53s transport bound and 10s handshake retain 12s for renderer/cleanup work.
+ * Windows retains room for both runtime proofs; macOS keeps its existing budget.
  * @param {{platform: string, isPackaged: boolean, serviceAuthentication: boolean}} options - Main-owned launch state.
  * @returns {number} Fixed smoke deadline; other launches retain their 15s bound.
  */
 export function resolveSmokeReadinessTimeout(options) {
-    return ['darwin', 'win32'].includes(options.platform) && options.isPackaged === true && options.serviceAuthentication === true ? 75_000 : DEFAULT_TIMEOUT_MS
+    if (options.isPackaged !== true || options.serviceAuthentication !== true) return DEFAULT_TIMEOUT_MS
+    return options.platform === 'win32' ? 120_000 : options.platform === 'darwin' ? 75_000 : DEFAULT_TIMEOUT_MS
 }
 
 /**

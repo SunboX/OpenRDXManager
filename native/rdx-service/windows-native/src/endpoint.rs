@@ -20,6 +20,11 @@ use crate::service::diagnostics::{Stage, begin_attempt, record};
 #[cfg(any(windows, test))]
 mod admission;
 
+#[cfg(windows)]
+mod connection_wait;
+#[cfg(windows)]
+use connection_wait::wait_for_manager;
+
 /// Portable installation contract for the protected local named pipe.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NamedPipeEndpointContract {
@@ -106,8 +111,8 @@ pub const fn named_pipe_endpoint_contract() -> NamedPipeEndpointContract {
 
 #[cfg(windows)]
 use windows::Win32::Foundation::{
-    CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_NO_DATA, ERROR_PIPE_CONNECTED,
-    ERROR_PIPE_LISTENING, GENERIC_READ, HANDLE, HLOCAL, LocalFree,
+    CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_NO_DATA, GENERIC_READ, HANDLE,
+    HLOCAL, LocalFree,
 };
 #[cfg(windows)]
 use windows::Win32::Security::Authorization::{
@@ -126,7 +131,7 @@ use windows::Win32::Storage::FileSystem::{
 };
 #[cfg(windows)]
 use windows::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId, GetNamedPipeClientSessionId,
+    CreateNamedPipeW, GetNamedPipeClientProcessId, GetNamedPipeClientSessionId,
     ImpersonateNamedPipeClient, PIPE_NOWAIT, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
     PIPE_TYPE_BYTE, SetNamedPipeHandleState,
 };
@@ -149,8 +154,6 @@ const PIPE_NAME: &str = r"\\.\pipe\OpenRDXHardwareService";
 const MANAGER_PATH: &str = r"C:\Program Files\OpenRDXManager\OpenRDXManager.exe";
 #[cfg(windows)]
 const MAX_ENDPOINT_BYTES: u32 = 65_536 + 4;
-#[cfg(windows)]
-const ACCEPT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[cfg(windows)]
 struct TemporaryHandle(HANDLE);
@@ -663,34 +666,6 @@ where
             .map_err(|_| NativeError::Other),
     )?;
     Ok(())
-}
-
-#[cfg(windows)]
-fn wait_for_manager<F>(handle: HANDLE, stop_requested: &F) -> Result<(), NativeError>
-where
-    F: Fn() -> bool,
-{
-    let deadline = Instant::now() + ACCEPT_TIMEOUT;
-    loop {
-        if stop_requested() {
-            return Err(NativeError::Cancelled);
-        }
-        // SAFETY: the pipe is nonblocking and no overlapped pointer is supplied.
-        match unsafe { ConnectNamedPipe(handle, None) } {
-            Ok(()) => return Ok(()),
-            Err(error) if error.code() == ERROR_PIPE_CONNECTED.to_hresult() => return Ok(()),
-            Err(error)
-                if error.code() == ERROR_PIPE_LISTENING.to_hresult()
-                    || error.code() == ERROR_NO_DATA.to_hresult() =>
-            {
-                let remaining = deadline
-                    .checked_duration_since(Instant::now())
-                    .ok_or(NativeError::TimedOut)?;
-                std::thread::sleep(remaining.min(Duration::from_millis(5)));
-            }
-            Err(_) => return Err(NativeError::Other),
-        }
-    }
 }
 
 #[cfg(windows)]

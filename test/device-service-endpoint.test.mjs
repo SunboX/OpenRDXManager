@@ -271,8 +271,8 @@ test('Windows runtime verification can exceed eight seconds before the post-read
 
     assert.deepEqual(
         scheduled.map(({ delay }) => delay),
-        [53_000],
-        'complete runtime verification needs its own allowance before the native seven-second activation deadline'
+        [98_000],
+        'client and service runtime verification each need an allowance around native seven-second peer proof'
     )
     assert.deepEqual(writes, [])
 
@@ -290,7 +290,7 @@ test('Windows runtime verification can exceed eight seconds before the post-read
 
     assert.deepEqual(
         scheduled.map(({ delay }) => delay),
-        [53_000, 2_000],
+        [98_000, 2_000],
         'the absolute first-frame deadline starts only after verified transport readiness'
     )
     assert.equal(writes.length, 1)

@@ -17,6 +17,7 @@ namespace openrdx::windows_io {
 constexpr DWORD kMaxFrameStorage = 1'048'576;
 constexpr DWORD kIoTimeoutMs = 2'000;
 constexpr DWORD kCancelDrainTimeoutMs = 2'000;
+constexpr DWORD kServiceReadyTimeoutMs = 45'000;
 constexpr size_t kMaxPendingIoCount = 8;
 constexpr size_t kMaxPendingIoBytes = 9 * 1024 * 1024;
 
@@ -181,16 +182,16 @@ inline void CancelAndDrainPendingIo(std::unique_ptr<PendingIo>* owned_operation)
   PreservePendingIoForProcessLifetime(std::move(*owned_operation));
 }
 
-/** Reads only readiness bytes within the original activation deadline.
+/** Reads only readiness bytes within the caller's one absolute deadline.
  * Pending kernel I/O retains its exact storage and reservation until terminal
  * completion, including cancellation; uncertain drain uses the existing bound.
  */
 inline bool ReadServiceReady(HANDLE pipe, HANDLE stop_event,
-                             ULONGLONG activation_deadline) {
+                             ULONGLONG readiness_deadline) {
   openrdx::ServiceReadyPrelude prelude;
   while (!prelude.complete()) {
     if (WaitForSingleObject(stop_event, 0) != WAIT_TIMEOUT ||
-        RemainingMilliseconds(activation_deadline, 1) == 0) return false;
+        RemainingMilliseconds(readiness_deadline, 1) == 0) return false;
     std::unique_ptr<PendingIo> operation;
     if (!CreatePendingIo(prelude.remaining(), &operation) ||
         !DuplicateIoHandle(pipe, operation.get())) return false;
@@ -203,7 +204,7 @@ inline bool ReadServiceReady(HANDLE pipe, HANDLE stop_event,
       // the caller's one deadline; no ready-specific timeout is restarted.
       HANDLE waits[] = {stop_event, operation->event.value};
       const DWORD wait = WaitForMultipleObjects(2, waits, FALSE,
-          RemainingMilliseconds(activation_deadline, MAXDWORD - 1));
+          RemainingMilliseconds(readiness_deadline, MAXDWORD - 1));
       bool succeeded = false;
       const bool terminal = wait == WAIT_OBJECT_0 + 1 &&
           ObservePendingIoTerminal(operation.get(), &read, &succeeded);
@@ -217,10 +218,17 @@ inline bool ReadServiceReady(HANDLE pipe, HANDLE stop_event,
     // Synchronous completion can also cross the deadline or race destroy.
     if (WaitForSingleObject(stop_event, 0) != WAIT_TIMEOUT ||
         !prelude.consume(reinterpret_cast<const char*>(operation->storage.data()),
-            read, RemainingMilliseconds(activation_deadline, 1) != 0))
+            read, RemainingMilliseconds(readiness_deadline, 1) != 0))
       return false;
   }
   return true;
+}
+
+/** Waits after peer proof for the service's fresh runtime verification/backend
+ * preparation, retaining one absolute marker deadline and existing cancellation.
+ */
+inline bool ReadServiceReadyAfterProof(HANDLE pipe, HANDLE stop_event) {
+  return ReadServiceReady(pipe, stop_event, DeadlineAfter(kServiceReadyTimeoutMs));
 }
 
 }  // namespace openrdx::windows_io

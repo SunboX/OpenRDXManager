@@ -9,7 +9,7 @@ import { assertAuthenticatedServiceReadiness, attachSmokeReadinessListeners, get
 
 test('only packaged Windows and macOS service authentication receives the runtime verification budget', () => {
     assert.equal(resolveSmokeReadinessTimeout({ platform: 'darwin', isPackaged: true, serviceAuthentication: true }), 75_000)
-    assert.equal(resolveSmokeReadinessTimeout({ platform: 'win32', isPackaged: true, serviceAuthentication: true }), 75_000)
+    assert.equal(resolveSmokeReadinessTimeout({ platform: 'win32', isPackaged: true, serviceAuthentication: true }), 120_000)
     for (const options of [
         { platform: 'darwin', isPackaged: false, serviceAuthentication: true },
         { platform: 'darwin', isPackaged: true, serviceAuthentication: false },

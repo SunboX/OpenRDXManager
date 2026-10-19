@@ -508,7 +508,11 @@ HANDLE OpenVerifiedPipe(const std::wstring& expected, HANDLE stop_event, const c
       *reason = "service-identity-unverified";
       return INVALID_HANDLE_VALUE;
     }
-    if (!ReadServiceReady(pipe, stop_event, activation_deadline)) {
+    // Peer proof keeps its original activation deadline. The service separately
+    // re-verifies the complete runtime before accepting and preparing a session;
+    // that disk work must not consume the seven-second peer-proof allowance.
+    if (RemainingMilliseconds(activation_deadline, 1) == 0 ||
+        !ReadServiceReadyAfterProof(pipe, stop_event)) {
       CloseHandle(pipe);
       *reason = "service-exited";
       return INVALID_HANDLE_VALUE;

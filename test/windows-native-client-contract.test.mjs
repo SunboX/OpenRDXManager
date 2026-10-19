@@ -148,6 +148,9 @@ test('Windows cold activation uses one deadline and retries only delayed pipe ap
     assert.match(activation, /WaitNamedPipeW\(kPipeName, [^)]+\)[\s\S]*CreateFileW/u)
     assert.match(activation, /VerifyServer[\s\S]*service-identity-unverified/u)
     assert.doesNotMatch(activation, /VerifyServer[\s\S]*(?:continue|Sleep)/u)
+    assert.match(activation, /VerifyServer[\s\S]*RemainingMilliseconds\(activation_deadline, 1\)[\s\S]*ReadServiceReadyAfterProof\(pipe, stop_event\)/u)
+    assert.match(source, /kServiceReadyTimeoutMs = 45'000/u)
+    assert.match(source, /ReadServiceReadyAfterProof\(HANDLE pipe, HANDLE stop_event\)[\s\S]*DeadlineAfter\(kServiceReadyTimeoutMs\)/u)
 })
 
 test('Windows SCM callback owns startup-authorized endpoint creation', async () => {
