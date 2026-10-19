@@ -10,6 +10,12 @@ async function source(name) {
     return readFile(new URL(`../resources/installer/${name}`, import.meta.url), 'utf8')
 }
 
+test('Windows setup completion explains the reconnect needed to activate device permissions', async () => {
+    const installer = await source('windows-installer.nsi')
+    assert.match(installer, /!define MUI_FINISHPAGE_TEXT "[^\n]*Reconnect the RDX dock's USB cable[^\n]*Retry service and Scan/u)
+    assert.ok(installer.indexOf('!define MUI_FINISHPAGE_TEXT') < installer.indexOf('!include "assistedInstaller.nsh"'))
+})
+
 test('pinned templates choose protected temp before any installer or uninstaller work', async () => {
     const installer = await source('windows-installer.nsi')
     const uninstaller = await source('windows-remover.nsi')

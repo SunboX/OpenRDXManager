@@ -35,7 +35,7 @@ fn information(lease: &NativeVolumeLease) -> Result<(String, String), NativeErro
 impl NativeDevice {
     /// Reads only the sole mounted volume belonging to the retained physical disk.
     pub(crate) fn volume_label(&self) -> Result<String, NativeError> {
-        let (_, mounts, _, leases) = self.pin_volumes()?;
+        let (_, mounts, _, leases) = self.pin_volume_metadata()?;
         let [lease] = leases.as_slice() else {
             return Err(NativeError::EvidenceIncomplete);
         };
@@ -49,7 +49,7 @@ impl NativeDevice {
 
     /// Reads the filesystem from the sole retained mounted volume.
     pub(crate) fn volume_filesystem(&self) -> Result<String, NativeError> {
-        let (_, mounts, _, leases) = self.pin_volumes()?;
+        let (_, mounts, _, leases) = self.pin_volume_metadata()?;
         let [lease] = leases.as_slice() else {
             return Err(NativeError::EvidenceIncomplete);
         };

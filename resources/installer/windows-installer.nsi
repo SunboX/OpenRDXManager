@@ -69,6 +69,8 @@ ShowInstDetails show
 
 ; Both the installer and separately compiled remover require administrator admission.
 RequestExecutionLevel admin
+; PnP instance security can remain cached until the dock is re-enumerated.
+!define MUI_FINISHPAGE_TEXT "OpenRDXManager has been installed.$\r$\n$\r$\nReconnect the RDX dock's USB cable after setup so Windows applies its device permissions. Then click Retry service and Scan in OpenRDXManager."
 !include "assistedInstaller.nsh"
 !insertmacro addLangs
 

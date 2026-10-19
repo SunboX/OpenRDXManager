@@ -3,6 +3,8 @@
 
 # Windows service handshake
 
+Read-only Windows discovery, filesystem and label queries retain zero-access volume handles after exact disk membership, topology and mount validation. They do not upgrade a newly inserted cartridge to raw read/write access merely to report it. Mutation leases still require the original read/write open; metadata-only leases reject lock, dismount, format, mount-point changes and file writes before any mutating API. Complete revalidation and ambiguity rejection remain required in both paths.
+
 SCM `RUNNING` means that startup authority and the protected first pipe are established. It does not mean that per-client authentication and backend preparation have finished.
 
 The native client first verifies its enrolled runtime, starts or queries the fixed service and proves the connected server's executable, process, account and SCM identity. The service independently verifies the client's session, process, executable, identification token and user, explicitly reverts identification impersonation, and rechecks its running authority. It retains the protected pipe namespace throughout this admission.

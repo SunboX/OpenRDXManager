@@ -25,7 +25,7 @@ impl NativeDevice {
         else {
             return Ok((false, false, 0, 0, true));
         };
-        let scanned = volumes::pin_disk_volumes(self.identity.disk_number())?;
+        let scanned = volumes::pin_disk_volume_metadata(self.identity.disk_number())?;
         self.revalidate_volume_leases(&scanned.leases)?;
         // Retain the original post-pinning capacity read for present cartridges;
         // the early query only decides whether volume inspection is applicable.

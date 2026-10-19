@@ -154,6 +154,21 @@ impl NativeDevice {
         }
     }
 
+    /// Pins metadata-only volumes for non-mutating filesystem and label queries.
+    pub(super) fn pin_volume_metadata(
+        &self,
+    ) -> Result<(Vec<char>, usize, VolumeInventory, Vec<NativeVolumeLease>), NativeError> {
+        self.revalidate_exact()?;
+        let scanned = volumes::pin_disk_volume_metadata(self.identity.disk_number())?;
+        self.revalidate_volume_leases(&scanned.leases)?;
+        Ok((
+            scanned.drive_letters,
+            scanned.mount_path_count,
+            scanned.inventory,
+            scanned.leases,
+        ))
+    }
+
     /// Pins volumes between exact pre/post instance and handle revalidation.
     pub(super) fn pin_volumes(
         &self,

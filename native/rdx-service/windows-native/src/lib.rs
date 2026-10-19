@@ -28,6 +28,8 @@ const MAX_ADAPTER_ALIGNMENT_MASK: usize = 0x000F_FFFF;
 mod device_access;
 #[cfg(any(windows, test))]
 mod scsi_request;
+#[cfg(any(windows, test))]
+mod volume_access;
 pub use device_access::{rdx_permission_identity, safe_device_acl_repair, safe_device_acl_restore};
 mod drive_letter_policy;
 mod endpoint;

@@ -14,7 +14,7 @@ async function testEmptyBayInspectionOrder() {
     const method = source.slice(start, end)
     const capacity = method.indexOf('crate::media::verified_media_capacity(')
     const emptyBay = method.indexOf('return Ok((false, false, 0, 0, true));')
-    const volumes = method.indexOf('volumes::pin_disk_volumes(')
+    const volumes = method.indexOf('volumes::pin_disk_volume_metadata(')
     assert.ok(capacity >= 0 && emptyBay > capacity && volumes > emptyBay)
     assert.ok(method.indexOf('let capacity = disk_capacity(', volumes) > volumes)
     assert.match(method, /self\.revalidate_exact\(\)\?;/)

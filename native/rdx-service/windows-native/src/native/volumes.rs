@@ -13,8 +13,7 @@ use std::os::windows::ffi::OsStringExt;
 use std::os::windows::fs::OpenOptionsExt;
 
 use windows::Win32::Foundation::{
-    ERROR_INSUFFICIENT_BUFFER, ERROR_MORE_DATA, ERROR_NO_MORE_FILES, GENERIC_READ, GENERIC_WRITE,
-    HANDLE,
+    ERROR_INSUFFICIENT_BUFFER, ERROR_MORE_DATA, ERROR_NO_MORE_FILES, HANDLE,
 };
 use windows::Win32::Storage::FileSystem::{
     DeleteVolumeMountPointW, FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAG_WRITE_THROUGH,
@@ -40,6 +39,9 @@ use super::{
 };
 
 const MAX_VOLUME_NAME_UNITS: usize = 1_024;
+use crate::volume_access::VolumeAccess;
+#[cfg(test)]
+mod metadata_tests;
 const MAX_VOLUMES: usize = 256;
 const MAX_VOLUME_EXTENT_BYTES: usize = 65_536;
 const MAX_VOLUME_EXTENT_RESIZES: usize = 8;
@@ -76,6 +78,7 @@ type VolumeFindHandle = ResourceGuard<isize, VolumeFindCloser>;
 pub(crate) struct NativeVolumeLease {
     handle: KernelHandle,
     record: VolumeRecord,
+    access: VolumeAccess,
 }
 
 impl NativeVolumeLease {
@@ -95,11 +98,13 @@ impl NativeVolumeLease {
 
     /// Locks this retained volume handle for exclusive safe dismount preparation.
     pub(super) fn lock(&self) -> Result<(), NativeError> {
+        self.access.require_mutation()?;
         no_data_volume_control(kernel_handle(&self.handle), VolumeControl::Lock)
     }
 
     /// Dismounts this already-locked retained volume through the same handle.
     pub(super) fn dismount(&self) -> Result<(), NativeError> {
+        self.access.require_mutation()?;
         no_data_volume_control(kernel_handle(&self.handle), VolumeControl::Dismount)
     }
 
@@ -114,7 +119,11 @@ impl NativeVolumeLease {
                 cleanup: HostOperationOutcome::NotAttempted(NativeError::InvalidRequest),
             };
         }
-        if let Err(error) = self.revalidate() {
+        if let Err(error) = self
+            .access
+            .require_mutation()
+            .and_then(|()| self.revalidate())
+        {
             return FileTestOutcome {
                 operation: Err(error),
                 operation_certainty: HostOperationOutcome::NotAttempted(error),
@@ -241,6 +250,7 @@ impl NativeVolumeLease {
     /// VDS can remount it and change its mount associations. The parent must
     /// drop old leases and prove fresh GUID/topology/media identity afterward.
     pub(super) fn format(&self, filesystem: HostFilesystem) -> Result<VolumeRecord, NativeError> {
+        self.access.require_mutation()?;
         self.revalidate()?;
         super::vds::format_volume(self.record.key(), filesystem)?;
         Ok(self.record.clone())
@@ -276,6 +286,9 @@ impl NativeVolumeLease {
 
     /// Applies one unused drive root to this exact retained volume GUID.
     pub(crate) fn set_drive_letter(&self, letter: char) -> crate::HostOperationOutcome {
+        if let Err(error) = self.access.require_mutation() {
+            return crate::HostOperationOutcome::NotAttempted(error);
+        }
         if let Err(error) = self.revalidate() {
             return crate::HostOperationOutcome::NotAttempted(error);
         }
@@ -301,6 +314,7 @@ impl NativeVolumeLease {
 
     /// Deletes only the requested drive root after proving this exact volume owns it.
     pub(crate) fn reset_drive_letter(&self, letter: char) -> Result<(), NativeError> {
+        self.access.require_mutation()?;
         if !self.has_drive_letter(letter) {
             return Err(NativeError::InvalidRequest);
         }
@@ -403,6 +417,19 @@ pub(super) struct ScannedVolumes {
 
 /// Enumerates and pins only volumes proven to belong exclusively to one retained disk.
 pub(super) fn pin_disk_volumes(disk_number: u32) -> Result<ScannedVolumes, NativeError> {
+    scan_disk_volumes(disk_number, VolumeAccess::Mutation)
+}
+
+/// Retains metadata-only handles for complete, non-mutating cartridge discovery.
+pub(super) fn pin_disk_volume_metadata(disk_number: u32) -> Result<ScannedVolumes, NativeError> {
+    scan_disk_volumes(disk_number, VolumeAccess::Metadata)
+}
+
+/// Revalidates every topology and retains only exact target volumes at fixed access.
+fn scan_disk_volumes(
+    disk_number: u32,
+    access: VolumeAccess,
+) -> Result<ScannedVolumes, NativeError> {
     let mut buffer = vec![0_u16; MAX_VOLUME_NAME_UNITS];
     // SAFETY: buffer is writable and sized for a bounded volume name.
     let cursor = unsafe { FindFirstVolumeW(&mut buffer) }.map_err(map_windows_error)?;
@@ -420,7 +447,7 @@ pub(super) fn pin_disk_volumes(disk_number: u32) -> Result<ScannedVolumes, Nativ
             return Err(NativeError::ResourceLimit);
         }
         let name = nul_terminated_copy(&buffer)?;
-        let (record, lease) = inspect_volume(&name, disk_number)?;
+        let (record, lease) = inspect_volume(&name, disk_number, access)?;
         if let Some(lease) = lease {
             drive_letters.extend(record.drive_letters().iter().copied());
             mount_path_count = mount_path_count
@@ -453,6 +480,7 @@ pub(super) fn pin_disk_volumes(disk_number: u32) -> Result<ScannedVolumes, Nativ
 fn inspect_volume(
     volume_name: &[u16],
     disk_number: u32,
+    access: VolumeAccess,
 ) -> Result<(VolumeRecord, Option<NativeVolumeLease>), NativeError> {
     let open_name = open_volume_name(volume_name)?;
     let inspection = open_path(&open_name, 0)?;
@@ -468,7 +496,12 @@ fn inspect_volume(
         return Ok((record, None));
     }
 
-    let retained = open_path(&open_name, GENERIC_READ.0 | GENERIC_WRITE.0)?;
+    // Metadata queries retain the zero-access handle already bound to this
+    // topology. Mutation leases still require a separate successful raw open.
+    let retained = match access {
+        VolumeAccess::Metadata => inspection,
+        VolumeAccess::Mutation => open_path(&open_name, access.desired_access())?,
+    };
     record.revalidate(
         &volume_topology(kernel_handle(&retained))?,
         &volume_mount_paths(volume_name)?,
@@ -478,6 +511,7 @@ fn inspect_volume(
         Some(NativeVolumeLease {
             handle: retained,
             record,
+            access,
         }),
     ))
 }
