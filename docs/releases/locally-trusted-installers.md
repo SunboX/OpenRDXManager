@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: 2026 André Fiedler -->
 <!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
 
+Version 1.0.3 prevents Windows setup from silently skipping a connected disk advertising an RDX product when its required open or live identity probe fails. Such failures now stop setup with a bounded diagnostic; device permissions still require a complete positive live RDX identity. Installed-device acceptance can require the exact connected dock in the service's validated scan inventory, independently of service authentication and capability flags.
+
 Version 1.0.2 fixes Windows service connection startup on machines where complete installed-runtime verification takes longer than eight seconds. Client verification and service preparation have their own bounded allowances around peer proof. The service also recovers its listening pipe when an early client disconnects before acceptance. Installed macOS service startup allows time for independent server-side identity checks before the handshake reply, including on Intel machines. Installed authentication verification uses matching outer watchdogs. Runtime integrity, service identity and device access checks remain required.
 
 Windows and macOS installers now include an administrator-approved local installation mode for the hardware service. A public signing certificate is not required for this mode. The app and service still authenticate each other, and editing installed application files disables device access until an administrator runs the installer again.

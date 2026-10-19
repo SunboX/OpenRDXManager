@@ -1,7 +1,7 @@
 {
     "name": "openrdxmanager",
     "productName": "OpenRDXManager",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "description": "Manage OpenRDX docks, cartridges and firmware from your desktop.",
     "private": true,
     "type": "module",

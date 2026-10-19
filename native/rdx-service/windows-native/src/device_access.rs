@@ -3,6 +3,76 @@
 
 //! Positive RDX-only permission admission and safe previous-policy restoration.
 use crate::NativeError;
+
+/// Uses a Plug and Play RDX product hint only to forbid silent probe failures.
+/// This never authorizes a permission grant; complete live identity is mandatory.
+#[cfg(any(windows, test))]
+pub(crate) fn requires_rdx_permission_probe(instance: &str) -> bool {
+    instance.split('\\').nth(1).is_some_and(|device| {
+        device
+            .split('&')
+            .any(|field| field.eq_ignore_ascii_case("PROD_RDX"))
+    })
+}
+
+/// Keeps unrelated failed disks out of enrollment but refuses a skipped RDX hint.
+/// Successful opens still require the separate complete live identity proof.
+#[cfg(any(windows, test))]
+pub(crate) fn permission_probe_result<T>(
+    instance: &str,
+    result: Result<T, NativeError>,
+) -> Result<Option<T>, NativeError> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if requires_rdx_permission_probe(instance) => Err(error),
+        Err(_) => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Known RDX instances cannot be silently skipped, while other disks stay untouched.
+    #[test]
+    fn rdx_hints_require_a_successful_probe_without_authorizing_unknown_disks() {
+        assert!(requires_rdx_permission_probe(
+            "USBSTOR\\DISK&VEN_TANDBERG&PROD_RDX&REV_0110\\dock"
+        ));
+        assert!(requires_rdx_permission_probe(
+            "usbstor\\disk&ven_hp&prod_rdx&rev_1\\dock"
+        ));
+        for instance in [
+            "",
+            "RDX",
+            "USBSTOR\\DISK&VEN_TANDBERG&PROD_BACKUP\\dock",
+            "USBSTOR\\DISK&PROD_RDXFAKE\\dock",
+        ] {
+            assert!(!requires_rdx_permission_probe(instance));
+        }
+    }
+
+    /// Every known-dock failure remains fatal; success alone grants no permissions.
+    #[test]
+    fn failed_rdx_probes_are_not_silently_converted_to_successful_setup() {
+        let rdx = "USBSTOR\\DISK&VEN_TANDBERG&PROD_RDX&REV_0110\\dock";
+        for error in [
+            NativeError::AccessDenied,
+            NativeError::EvidenceIncomplete,
+            NativeError::DeviceRemoved,
+        ] {
+            assert_eq!(permission_probe_result::<()>(rdx, Err(error)), Err(error));
+            assert_eq!(
+                permission_probe_result::<()>("USBSTOR\\DISK&PROD_OTHER\\disk", Err(error)),
+                Ok(None)
+            );
+        }
+        assert_eq!(
+            permission_probe_result(rdx, Ok("live evidence")),
+            Ok(Some("live evidence"))
+        );
+    }
+}
 /// Validates the complete standard/VPD identity pair before device ACL setup.
 ///
 /// # Errors

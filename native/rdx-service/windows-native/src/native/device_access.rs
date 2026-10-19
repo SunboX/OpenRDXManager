@@ -28,6 +28,7 @@ use windows::core::PWSTR;
 
 const RECORD: &str = "device-access.json";
 const SERVICE_ACCOUNT: &str = "NT SERVICE\\OpenRDXHardwareService";
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct PreviousPolicy {
@@ -353,13 +354,25 @@ pub(crate) fn provision(administrator_sid: &str) -> Result<(), NativeError> {
     let set = open_device_info_set()?;
     let mut records = read_records()?;
     for candidate in enumerate_disk_candidates()? {
-        let mut device = match device_for(&candidate) {
-            Ok(v) => v,
-            Err(_) => continue,
+        let Some(mut device) = crate::device_access::permission_probe_result(
+            &candidate.instance_id,
+            device_for(&candidate),
+        )
+        .inspect_err(|error| {
+            eprintln!("OpenRDX device permission failure: phase=open reason={error:?}")
+        })?
+        else {
+            continue;
         };
-        let serial = match rdx_identity(&mut device) {
-            Ok(v) => v,
-            Err(_) => continue,
+        let Some(serial) = crate::device_access::permission_probe_result(
+            &candidate.instance_id,
+            rdx_identity(&mut device),
+        )
+        .inspect_err(|error| {
+            eprintln!("OpenRDX device permission failure: phase=identity reason={error:?}")
+        })?
+        else {
+            continue;
         };
         let info = instance_info(&set, &candidate.instance_id)?;
         let previous = instance_policy(&set, &info)?;

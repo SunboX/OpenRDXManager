@@ -30,6 +30,7 @@ import { ShutdownController } from './main/shutdown-controller.mjs'
 import { StartupFailureExitController } from './main/startup-failure-exit.mjs'
 import { containBrokenConsolePipes } from './main/process-output.mjs'
 import { assertAuthenticatedServiceReadiness, attachSmokeReadinessListeners, getServiceReadinessFailureReason, resolveSmokeReadinessTimeout, SmokeReadinessError, SmokeReadinessGate } from './main/smoke-readiness.mjs'
+import { assertInstalledDeviceDiscovery } from './main/installed-device-verification.mjs'
 import { createSupportRuntimeServices, runStartupUpdateCheck } from './main/support-runtime.mjs'
 import { AutoScanController, DesktopLifecycleController, TrayController } from './main/tray-controller.mjs'
 import { createTranslator } from './renderer/i18n.mjs'
@@ -45,7 +46,8 @@ const htmlUrl = pathToFileURL(htmlPath).href
 // A renamed development executable still runs the default app with an explicit
 // source directory. Actual packaged launches do not carry process.defaultApp.
 const isPackagedRuntime = app.isPackaged && process.defaultApp !== true
-const isServiceAuthenticationTest = process.argv.includes('--service-auth-test')
+const isServiceScanTest = process.argv.includes('--service-scan-test')
+const isServiceAuthenticationTest = process.argv.includes('--service-auth-test') || isServiceScanTest
 const isSmokeTest = process.argv.includes('--smoke-test') || isServiceAuthenticationTest
 const trustedWebContents = new Set()
 let serviceRuntime = null
@@ -499,6 +501,11 @@ async function start() {
     if (isSmokeTest) {
         const readiness = await smokeCompletion
         if (isServiceAuthenticationTest) assertAuthenticatedServiceReadiness(readiness.service)
+        if (isServiceScanTest) {
+            const expectedId = process.argv.find((argument) => argument.startsWith('--expected-device-id='))?.slice('--expected-device-id='.length)
+            const count = assertInstalledDeviceDiscovery(readiness.service, await services.devices.list(), expectedId)
+            console.log(`OpenRDXManager installed device discovery passed: count=${count} selected=${expectedId === undefined ? 'any' : 'matched'}`)
+        }
         await autoScanController.stop()
         trayController.destroy()
         await stopApplicationRuntime()
