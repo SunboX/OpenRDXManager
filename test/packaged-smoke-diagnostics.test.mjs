@@ -11,6 +11,11 @@ import { EventLogger } from '../src/main/event-logger.mjs'
 import { WindowsLogSecurityAdapter } from '../src/main/windows-log-security-adapter.mjs'
 import { ownWindowsFixture } from './helpers/windows-fixture-owner.mjs'
 
+test('firmware acceptance rejects an older executable ignoring the flag and partial version matches', () => {
+    assert.doesNotThrow(() => verifier.assertPackagedFirmwareReadback('OpenRDXManager installed firmware verification passed: revision=0111\r\n', '0111'))
+    for (const output of ['OpenRDXManager installed device discovery passed: count=1 selected=matched', 'OpenRDXManager installed firmware verification passed: revision=0110', 'OpenRDXManager installed firmware verification passed: revision=01110', 'prefix OpenRDXManager installed firmware verification passed: revision=0111']) assert.throws(() => verifier.assertPackagedFirmwareReadback(output, '0111'), /installed-firmware-verification-marker-missing/u)
+})
+
 test('installed auth failure exports actual lifecycle envelopes before deleting the profile and preserves the error', async () => {
     assert.equal(typeof verifier.withPackagedSmokeProfile, 'function')
     const failure = new Error('controlled-smoke-failure')

@@ -16,6 +16,17 @@ export { withPackagedSmokeProfile } from './packaged-smoke-diagnostics.mjs'
 const execute = promisify(execFile)
 
 /**
+ * Rejects older executables that ignore firmware acceptance flags or report another revision.
+ * @param {string} output - Captured installed executable output.
+ * @param {string} revision - Exact expected non-sensitive firmware revision.
+ * @returns {void} Returns only for a complete matching readback marker line.
+ * @throws {Error} When explicit firmware verification is absent or mismatched.
+ */
+export function assertPackagedFirmwareReadback(output, revision) {
+    if (!/^[a-z0-9._-]{1,32}$/iu.test(revision) || !output.split(/\r?\n/u).includes(`OpenRDXManager installed firmware verification passed: revision=${revision}`)) throw new Error('installed-firmware-verification-marker-missing')
+}
+
+/**
  * Keeps the external watchdog above each installed Windows/macOS auth smoke gate.
  * @param {{platform: string, installed: boolean, requireService: boolean}} options - Verifier-owned launch state.
  * @returns {number} Fixed watchdog; all other verification stays at 60 seconds.
@@ -129,6 +140,7 @@ async function verifyPackagedApplication() {
             if (!output.includes('OpenRDXManager smoke test passed: renderer=mounted')) throw new Error(`packaged-smoke-marker-missing: ${output}`)
             if (requireService && !output.includes(`OpenRDXManager installed service authentication passed: platform=${process.platform}`)) throw new Error(`installed-service-authentication-marker-missing: ${output}`)
             if (requireDevice && !/OpenRDXManager installed device discovery passed: count=[1-9][0-9]* selected=(?:any|matched)/u.test(output)) throw new Error('installed-device-discovery-marker-missing')
+            if (expectedFirmware) assertPackagedFirmwareReadback(output, expectedFirmware.slice('--expected-firmware-revision='.length))
             console.log(output.trim())
             const resources = process.platform === 'darwin' ? join(dirname(dirname(executable)), 'Resources') : join(dirname(executable), 'resources')
             console.log(await verifyPackagedMcpBridge(resources))
