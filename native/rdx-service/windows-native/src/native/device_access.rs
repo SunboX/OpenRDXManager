@@ -549,7 +549,9 @@ pub(crate) fn provision(_administrator_sid: &str) -> Result<(), NativeError> {
 }
 /// Restores only still-matching recorded device policy; preserves foreign/admin changes.
 pub(crate) fn restore() -> Result<(), NativeError> {
-    let mut records = read_records()?;
+    let mut records = read_records().inspect_err(|error| {
+        eprintln!("OpenRDX removal permission failure: phase=journal-read reason={error:?}");
+    })?;
     let set = open_device_info_set()?;
     for candidate in enumerate_disk_candidates()? {
         let Some(record) = records
@@ -559,8 +561,12 @@ pub(crate) fn restore() -> Result<(), NativeError> {
         else {
             continue;
         };
-        let mut device = device_for(&candidate)?;
-        let serial = rdx_identity(&mut device)?;
+        let mut device = device_for(&candidate).inspect_err(|error| {
+            eprintln!("OpenRDX removal permission failure: phase=device-open reason={error:?}");
+        })?;
+        let serial = rdx_identity(&mut device).inspect_err(|error| {
+            eprintln!("OpenRDX removal permission failure: phase=device-identity reason={error:?}");
+        })?;
         let info = instance_info(&set, &candidate.instance_id)?;
         device.revalidate_exact()?;
         let current = instance_policy(&set, &info)?;
@@ -585,13 +591,23 @@ pub(crate) fn restore() -> Result<(), NativeError> {
             &serial,
             current.as_deref().unwrap_or(""),
         ) {
-            set_instance_policy(&set, &info, record.previous.as_deref())?;
+            set_instance_policy(&set, &info, record.previous.as_deref()).inspect_err(|error| {
+                eprintln!(
+                    "OpenRDX removal permission failure: phase=device-policy reason={error:?}"
+                );
+            })?;
             if instance_policy(&set, &info)? != record.previous {
                 return Err(NativeError::AccessDenied);
             }
         }
         let volume_set = volume_info_set()?;
-        for volume in mapped_volumes_for_device(&volume_set, &device, candidate.disk_number)? {
+        for volume in mapped_volumes_for_device(&volume_set, &device, candidate.disk_number)
+            .inspect_err(|error| {
+                eprintln!(
+                    "OpenRDX removal permission failure: phase=volume-mapping reason={error:?}"
+                );
+            })?
+        {
             let Some(recorded) = record.volumes.iter().find(|v| {
                 v.instance == volume.instance && v.topology == topology_key(&volume.topology)
             }) else {
@@ -623,7 +639,9 @@ pub(crate) fn restore() -> Result<(), NativeError> {
                 {
                     continue;
                 }
-                set_instance_policy(&volume_set, &volume.info, recorded.previous.as_deref())?;
+                set_instance_policy(&volume_set, &volume.info, recorded.previous.as_deref()).inspect_err(|error| {
+                    eprintln!("OpenRDX removal permission failure: phase=volume-policy reason={error:?}");
+                })?;
                 if instance_policy(&volume_set, &volume.info)? != recorded.previous {
                     return Err(NativeError::AccessDenied);
                 }
@@ -632,7 +650,13 @@ pub(crate) fn restore() -> Result<(), NativeError> {
     }
     // Disconnected device records remain protected for later administrator repair;
     // removal does not invent a device instance or overwrite another policy.
-    crate::volume_privilege::journal::restore(&mut VolumeRightJournal(&mut records))?;
+    crate::volume_privilege::journal::restore(&mut VolumeRightJournal(&mut records)).inspect_err(
+        |error| {
+            eprintln!(
+                "OpenRDX removal permission failure: phase=volume-privilege reason={error:?}"
+            );
+        },
+    )?;
     Ok(())
 }
 

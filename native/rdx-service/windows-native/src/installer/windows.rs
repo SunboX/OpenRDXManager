@@ -346,7 +346,7 @@ pub(super) fn apply(command: LocalInstallCommand) -> Result<(), NativeError> {
         LocalInstallAction::Remove => {
             let _lease = verify_owned_runtime_lease()?;
             require_stopped(&service)?;
-            crate::native::device_access::restore()?;
+            diagnostic(Stage::DeviceAccess, crate::native::device_access::restore())?;
             unsafe { DeleteService(service.0) }.map_err(|_| NativeError::AccessDenied)?;
             drop(_lease);
             remove_enrollment()?;

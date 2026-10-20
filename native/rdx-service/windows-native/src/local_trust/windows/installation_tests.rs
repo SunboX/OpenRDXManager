@@ -261,3 +261,60 @@ fn native_runtime_history_renews_protected_first_install_intent() {
     drop(retained_history);
     drop(_parents);
 }
+
+/// Removal keeps history/runtime immutable while publishing its restoration journal.
+#[test]
+fn native_removal_lease_allows_atomic_device_journal_restoration() {
+    let root = Path::new(r"C:\ProgramData").join(format!(
+        "openrdx-removal-fixture-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    create_protected_directory(&root).unwrap();
+    let fixture = Fixture { root, child: None };
+    let runtime = fixture.root.join("runtime");
+    let enrollment = fixture.root.join("LocalTrust");
+    create_protected_directory(&runtime).unwrap();
+    create_protected_directory(&enrollment).unwrap();
+    let component = runtime.join("component");
+    std::fs::write(&component, b"retained-runtime").unwrap();
+    protect(&component, &test_administrator_sid()).unwrap();
+    let inventory = RuntimeInventory {
+        schema_version: 1,
+        platform: "windows".into(),
+        files: vec![rdx_local_trust::RuntimeFile {
+            path: "component".into(),
+            size: 16,
+            sha256: "0".repeat(64),
+        }],
+        links: vec![],
+        manager_cd_hash: String::new(),
+        helper_cd_hash: String::new(),
+    };
+    let history = enrollment.join("history.json");
+    write_policy_at(
+        &enrollment,
+        &serde_json::to_vec(&inventory).unwrap(),
+        "history",
+    )
+    .unwrap();
+    write_policy_at(&enrollment, b"owned-grant", "device-access").unwrap();
+    // Reproduce the old removal lease's conflicting enrollment-directory handle.
+    let conflicting = ancestors(&history).unwrap();
+    assert!(write_pinned_policy_at(&enrollment, b"restored", "device-access").is_err());
+    assert_eq!(
+        std::fs::read(enrollment.join("device-access.json")).unwrap(),
+        b"owned-grant"
+    );
+    drop(conflicting);
+    let lease = verify_owned_runtime_at(&runtime, &history).unwrap();
+    write_pinned_policy_at(&enrollment, b"restored", "device-access").unwrap();
+    assert_eq!(
+        std::fs::read(enrollment.join("device-access.json")).unwrap(),
+        b"restored"
+    );
+    assert!(std::fs::write(&component, b"foreign").is_err());
+    assert!(write_pinned_policy_at(&enrollment, b"foreign", "history").is_err());
+    assert!(std::fs::rename(&enrollment, fixture.root.join("replacement")).is_err());
+    drop(lease);
+}

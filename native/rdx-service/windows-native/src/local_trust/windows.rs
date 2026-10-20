@@ -346,9 +346,18 @@ pub(crate) fn verify_fresh_install_root() -> Result<(), NativeError> {
 pub(crate) fn verify_owned_runtime_lease() -> Result<RuntimeLease, NativeError> {
     let runtime = Path::new(LOCAL_RUNTIME_ROOT);
     let history = Path::new(LOCAL_ENROLLMENT_ROOT).join("history.json");
+    verify_owned_runtime_at(runtime, &history)
+}
+/// Pins removal authority while allowing atomic updates to sibling policy journals.
+fn verify_owned_runtime_at(runtime: &Path, history: &Path) -> Result<RuntimeLease, NativeError> {
     let mut files = ancestors(runtime)?;
-    files.extend(ancestors(&history)?);
-    verify_owned_objects(runtime, &history, files)
+    let enrollment = history.parent().ok_or(NativeError::AccessDenied)?;
+    // A retained read lease on LocalTrust blocks its children's atomic rename.
+    // Pin its protected parent namespace instead, exactly as the policy writer
+    // does; retain the history file and every runtime object below as before.
+    files.extend(ancestors(enrollment)?);
+    validate_runtime_acl(&evidence(&open(enrollment, false)?)?)?;
+    verify_owned_objects(runtime, history, files)
 }
 /// Checks a retained historical record and every remaining runtime object, without hashes.
 pub(super) fn verify_owned_objects(
