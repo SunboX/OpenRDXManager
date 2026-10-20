@@ -65,6 +65,8 @@ mod service_acl;
 mod service_identity_access;
 #[cfg(any(windows, test))]
 mod spti_diagnostics;
+#[cfg(windows)]
+mod volume_privilege;
 
 #[cfg(windows)]
 mod drive_letter;

@@ -99,12 +99,14 @@ impl NativeVolumeLease {
     /// Locks this retained volume handle for exclusive safe dismount preparation.
     pub(super) fn lock(&self) -> Result<(), NativeError> {
         self.access.require_mutation()?;
+        let _privilege = crate::volume_privilege::VolumePrivilege::acquire()?;
         no_data_volume_control(kernel_handle(&self.handle), VolumeControl::Lock)
     }
 
     /// Dismounts this already-locked retained volume through the same handle.
     pub(super) fn dismount(&self) -> Result<(), NativeError> {
         self.access.require_mutation()?;
+        let _privilege = crate::volume_privilege::VolumePrivilege::acquire()?;
         no_data_volume_control(kernel_handle(&self.handle), VolumeControl::Dismount)
     }
 
@@ -453,6 +455,13 @@ fn scan_disk_volumes(
     disk_number: u32,
     access: VolumeAccess,
 ) -> Result<ScannedVolumes, NativeError> {
+    // Raw NTFS opens check a token privilege in addition to the enrolled device
+    // ACL. Observation never enables it; mutation scopes cannot cross threads.
+    let _privilege = if access == VolumeAccess::Mutation {
+        Some(crate::volume_privilege::VolumePrivilege::acquire()?)
+    } else {
+        None
+    };
     let mut buffer = vec![0_u16; MAX_VOLUME_NAME_UNITS];
     // SAFETY: buffer is writable and sized for a bounded volume name.
     let cursor = unsafe { FindFirstVolumeW(&mut buffer) }.map_err(map_windows_error)?;

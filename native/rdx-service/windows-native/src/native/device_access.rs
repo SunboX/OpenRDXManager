@@ -33,6 +33,8 @@ const SERVICE_ACCOUNT: &str = "NT SERVICE\\OpenRDXHardwareService";
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct PreviousPolicy {
     schema_version: u32,
+    #[serde(default)]
+    previous_volume_maintenance_right: Option<bool>,
     devices: Vec<DevicePolicy>,
 }
 #[derive(Serialize, Deserialize)]
@@ -308,6 +310,7 @@ fn read_records() -> Result<PreviousPolicy, NativeError> {
     if !path.exists() {
         return Ok(PreviousPolicy {
             schema_version: 1,
+            previous_volume_maintenance_right: None,
             devices: Vec::new(),
         });
     }
@@ -353,6 +356,13 @@ fn write_records(records: &PreviousPolicy, _administrator_sid: &str) -> Result<(
 pub(crate) fn provision(administrator_sid: &str) -> Result<(), NativeError> {
     let set = open_device_info_set()?;
     let mut records = read_records()?;
+    if records.previous_volume_maintenance_right.is_none() {
+        records.previous_volume_maintenance_right =
+            Some(crate::volume_privilege::has_service_right()?);
+        // Write-ahead ownership survives failed installation and subsequent Repair.
+        write_records(&records, administrator_sid)?;
+    }
+    crate::volume_privilege::set_service_right(true)?;
     for candidate in enumerate_disk_candidates()? {
         let Some(mut device) = crate::device_access::permission_probe_result(
             &candidate.instance_id,
@@ -557,7 +567,40 @@ pub(crate) fn restore() -> Result<(), NativeError> {
     }
     // Disconnected device records remain protected for later administrator repair;
     // removal does not invent a device instance or overwrite another policy.
+    if records.previous_volume_maintenance_right == Some(false)
+        && crate::volume_privilege::has_service_right()?
+    {
+        crate::volume_privilege::set_service_right(false)?;
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod privilege_journal_tests {
+    use super::*;
+
+    /// Legacy journals mean unrecorded, never an inferred pre-existing privilege.
+    #[test]
+    fn legacy_device_policy_requires_volume_right_enrollment() {
+        let record: PreviousPolicy =
+            serde_json::from_str(r#"{"schemaVersion":1,"devices":[]}"#).unwrap();
+        assert_eq!(record.previous_volume_maintenance_right, None);
+    }
+
+    /// Repair round trips keep original privilege ownership for safe uninstall.
+    #[test]
+    fn volume_right_journal_preserves_both_prior_states() {
+        for previous in [false, true] {
+            let record = PreviousPolicy {
+                schema_version: 1,
+                previous_volume_maintenance_right: Some(previous),
+                devices: Vec::new(),
+            };
+            let encoded = serde_json::to_vec(&record).unwrap();
+            let restored: PreviousPolicy = serde_json::from_slice(&encoded).unwrap();
+            assert_eq!(restored.previous_volume_maintenance_right, Some(previous));
+        }
+    }
 }
 
 /// Opens only the present volume-interface information set, with no class mutation rights.

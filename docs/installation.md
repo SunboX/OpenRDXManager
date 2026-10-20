@@ -22,6 +22,8 @@ These Windows and macOS installers use administrator-approved local trust and do
 
 Available actions depend on the operating system, service privileges, dock firmware and inserted media. An unavailable action includes a reason; a visible application window alone does not establish hardware access.
 
+On Windows, setup grants the volume-maintenance privilege to `NT SERVICE\OpenRDXHardwareService`, not to the shared LocalService account. The service enables it on a temporary thread token for mutation-volume opens, locks and dismounts. This is separate from the dock's device permissions and is needed for safe eject of a mounted cartridge. Setup records the prior grant so removal can preserve existing administrator policy. See [Microsoft's filesystem privilege documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/privileges).
+
 ## Repair and update
 
 Use the installer again to update an installed app. Replacing or editing its files manually can disable hardware access; the app will show installation or repair guidance. Close OpenRDXManager after all device operations have finished before running an update or repair. Keep backups and user settings outside the installation folder.

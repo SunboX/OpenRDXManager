@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: 2026 André Fiedler -->
 <!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
 
+Windows setup now journals and enrolls `SeManageVolumePrivilege` for the fixed `NT SERVICE\OpenRDXHardwareService` identity. The service enables it only on a temporary thread token while opening mutation volume handles, locking or dismounting; metadata discovery does not enable it. This addresses the missing filesystem privilege behind safe-eject failures during Host Unmounting. Setup preserves a pre-existing grant, and removal revokes only a grant introduced by this installation. Device identity, exact topology, read/write access and exclusive-lock checks remain required.
+
 Mounted Windows cartridges now use an independently verified volume-root filesystem query when a metadata-only volume handle does not support that query. This fixes cartridge scans rejected as `candidate-host-facts-failed` while preserving RAW-media and failure checks.
 
 Cartridges inserted after Windows setup no longer need raw volume write access merely to appear in discovery. Read-only metadata queries retain exact disk/volume topology and mount checks; mutating operations keep their existing separately checked read/write volume leases. Windows setup now explicitly explains reconnecting the dock to activate its per-instance permissions.

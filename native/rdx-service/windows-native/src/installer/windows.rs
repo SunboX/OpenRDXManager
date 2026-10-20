@@ -331,6 +331,7 @@ pub(super) fn apply(command: LocalInstallCommand) -> Result<(), NativeError> {
         }
         LocalInstallAction::Verify => {
             diagnostic(Stage::ServiceSid, verify_service_sid(&service))?;
+            diagnostic(Stage::DeviceAccess, verify_volume_maintenance_right())?;
             let _lease = diagnostic(Stage::VerifyEnrollment, verify_runtime_lease())?;
             if let Some(pid) = command.manager_process_id() {
                 let pid = pid.to_string();
@@ -352,6 +353,15 @@ pub(super) fn apply(command: LocalInstallCommand) -> Result<(), NativeError> {
         }
     }
     Ok(())
+}
+
+/// Verifies the installer enrolled the fixed service-specific filesystem privilege.
+fn verify_volume_maintenance_right() -> Result<(), NativeError> {
+    if crate::volume_privilege::has_service_right()? {
+        Ok(())
+    } else {
+        Err(NativeError::AccessDenied)
+    }
 }
 
 /// Closes admission only after acquiring the service's same protected operation lock.
