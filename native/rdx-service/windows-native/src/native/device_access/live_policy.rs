@@ -67,12 +67,18 @@ pub(super) fn grant(previous: &str) -> Result<String, NativeError> {
     canonical(&grant_service(previous)?)
 }
 
+/// Reads the exact live descriptor in Windows' expanded file-access representation.
+pub(super) fn read(handle: HANDLE) -> Result<String, NativeError> {
+    canonical(&current_device_policy(handle)?)
+}
+
 /// Changes only a live DACL after exact readback comparison, preserving owner/group.
 pub(super) fn replace(handle: HANDLE, expected: &str, desired: &str) -> Result<(), NativeError> {
-    if current_device_policy(handle)? != expected {
+    if read(handle)? != canonical(expected)? {
         return Err(NativeError::AccessDenied);
     }
-    let text = wide_null(OsStr::new(desired));
+    let desired = canonical(desired)?;
+    let text = wide_null(OsStr::new(&desired));
     let mut descriptor = PSECURITY_DESCRIPTOR::default();
     // SAFETY: bounded journal text is NUL-terminated; allocation is owned below.
     unsafe {
@@ -116,7 +122,7 @@ pub(super) fn replace(handle: HANDLE, expected: &str, desired: &str) -> Result<(
     }
     .ok()
     .map_err(map_windows_error)?;
-    if current_device_policy(handle)? != desired {
+    if read(handle)? != desired {
         return Err(NativeError::AccessDenied);
     }
     Ok(())
@@ -125,6 +131,51 @@ pub(super) fn replace(handle: HANDLE, expected: &str, desired: &str) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Exercises an explicitly selected dock's live DACL, restoring it before assertions.
+    /// This never transfers firmware, writes media, dismounts or ejects a cartridge.
+    #[test]
+    #[ignore = "requires administrator and explicitly selected live RDX dock"]
+    fn live_physical_dock_grant_readback_and_restoration() {
+        let recipe =
+            std::env::var("OPENRDX_PERMISSION_TEST_RECIPE").expect("explicit dock required");
+        let expected =
+            std::env::var("OPENRDX_PERMISSION_TEST_SERIAL").expect("explicit serial required");
+        let mut device = NativeDevice::open(OsStr::new(&recipe)).unwrap();
+        assert_eq!(rdx_identity(&mut device).unwrap(), expected);
+        let handle = disk_policy_handle(&device).unwrap();
+        let original = current_device_policy(kernel_handle(&handle)).unwrap();
+        let desired = grant(&original).unwrap();
+        let backup = std::env::temp_dir().join("openrdx-physical-policy-original.txt");
+        std::fs::write(&backup, &original).expect("protected fixture rollback evidence");
+        let applied = replace(kernel_handle(&handle), &original, &desired);
+        let observed = current_device_policy(kernel_handle(&handle));
+        // Restore before asserting: even a successful native write followed by
+        // a failed comparison must not leave test-owned permissions installed.
+        let restored = match &observed {
+            Ok(current) if canonical(current) == canonical(&desired) => replace(
+                kernel_handle(&handle),
+                current,
+                &canonical(&original).unwrap(),
+            ),
+            Ok(current) if canonical(current) == canonical(&original) => Ok(()),
+            _ => Err(NativeError::AccessDenied),
+        };
+        let _ = std::fs::write(
+            std::env::temp_dir().join("openrdx-physical-policy-readback.txt"),
+            format!(
+                "original={original}\ndesired={desired}\nobserved={observed:?}\napplied={applied:?}\nrestored={restored:?}\n"
+            ),
+        );
+        assert_eq!(restored, Ok(()), "live original DACL restoration");
+        assert_eq!(
+            canonical(&current_device_policy(kernel_handle(&handle)).unwrap()),
+            canonical(&original)
+        );
+        assert_eq!(applied, Ok(()));
+        assert_eq!(observed, Ok(desired));
+        device.revalidate_exact().unwrap();
+    }
 
     /// Kernel generic mapping must not turn a successful grant into a readback failure.
     #[test]

@@ -45,6 +45,8 @@ struct DevicePolicy {
     serial: String,
     previous: Option<String>,
     installed: String,
+    #[serde(default)]
+    effective: Option<crate::effective_volume_policy::EffectiveVolumePolicy>,
     volumes: Vec<VolumePolicy>,
 }
 struct MappedVolume {
@@ -336,6 +338,9 @@ fn read_records() -> Result<PreviousPolicy, NativeError> {
     let mut seen = BTreeSet::new();
     for entry in &records.devices {
         validate_volume_policies(&entry.volumes)?;
+        if let Some(effective) = &entry.effective {
+            effective.validate()?;
+        }
         if entry.instance.len() > 201
             || entry.serial.len() > 10
             || entry.installed.len() > 65536
@@ -436,10 +441,22 @@ pub(crate) fn provision(_administrator_sid: &str) -> Result<(), NativeError> {
                 serial: serial.clone(),
                 previous,
                 installed: grant_service(&effective)?,
+                effective: None,
                 volumes: Vec::new(),
             });
             records.devices.len() - 1
         };
+        let disk_policy = disk_policy_handle(&device)?;
+        let recorded = &mut records.devices[index];
+        if let Some(effective) = &mut recorded.effective {
+            effective.previous = live_policy::canonical(&effective.previous)?;
+            effective.installed = live_policy::canonical(&effective.installed)?;
+        }
+        recorded.effective = Some(crate::effective_volume_policy::EffectiveVolumePolicy::plan(
+            recorded.effective.as_ref(),
+            live_policy::read(kernel_handle(&disk_policy))?,
+            live_policy::grant,
+        )?);
         let volume_set = volume_info_set()?;
         let mapped = mapped_volumes_for_device(&volume_set, &device, candidate.disk_number)?;
         let observed = mapped
@@ -474,11 +491,12 @@ pub(crate) fn provision(_administrator_sid: &str) -> Result<(), NativeError> {
                 // Earlier setup journals retained generic masks, whereas Windows
                 // stores expanded file rights on live volume objects. Migrate only
                 // that representation before the same exact foreign-policy check.
+                effective.previous = live_policy::canonical(&effective.previous)?;
                 effective.installed = live_policy::canonical(&effective.installed)?;
             }
             recorded.effective = Some(crate::effective_volume_policy::EffectiveVolumePolicy::plan(
                 recorded.effective.as_ref(),
-                current_device_policy(kernel_handle(&volume.handle))?,
+                live_policy::read(kernel_handle(&volume.handle))?,
                 live_policy::grant,
             )?);
         }
@@ -503,6 +521,18 @@ pub(crate) fn provision(_administrator_sid: &str) -> Result<(), NativeError> {
         if instance_policy(&set, &info)?.as_deref() != Some(recorded_device.installed.as_str()) {
             return Err(NativeError::AccessDenied);
         }
+        device.revalidate_exact()?;
+        revalidate_present_identity(&device.identity, &disk_policy)?;
+        let effective = recorded_device
+            .effective
+            .as_ref()
+            .ok_or(NativeError::EvidenceIncomplete)?;
+        let current = live_policy::read(kernel_handle(&disk_policy))?;
+        if current != effective.previous && current != effective.installed {
+            return Err(NativeError::AccessDenied);
+        }
+        live_policy::replace(kernel_handle(&disk_policy), &current, &effective.installed)?;
+        device.revalidate_exact()?;
         for volume in &mapped {
             let recorded = recorded_device
                 .volumes
@@ -536,7 +566,7 @@ pub(crate) fn provision(_administrator_sid: &str) -> Result<(), NativeError> {
                 .effective
                 .as_ref()
                 .ok_or(NativeError::EvidenceIncomplete)?;
-            let current = current_device_policy(kernel_handle(&volume.handle))?;
+            let current = live_policy::read(kernel_handle(&volume.handle))?;
             if current != effective.previous && current != effective.installed {
                 return Err(NativeError::AccessDenied);
             }
@@ -548,7 +578,7 @@ pub(crate) fn provision(_administrator_sid: &str) -> Result<(), NativeError> {
         }
         device.revalidate_exact()?;
         eprintln!(
-            "OpenRDX device permission enrolled: live target volume permissions verified; installed service scan still required"
+            "OpenRDX device permission enrolled: live dock and target volume permissions verified; installed service scan still required"
         );
     }
     Ok(())
@@ -589,6 +619,18 @@ pub(crate) fn restore() -> Result<(), NativeError> {
         ) {
             continue;
         }
+        if let Some(effective) = &record.effective {
+            let disk_policy = disk_policy_handle(&device)?;
+            let mut effective = effective.clone();
+            effective.previous = live_policy::canonical(&effective.previous)?;
+            effective.installed = live_policy::canonical(&effective.installed)?;
+            let current = live_policy::read(kernel_handle(&disk_policy))?;
+            if let Some(previous) = effective.restore_target(&current) {
+                revalidate_present_identity(&device.identity, &disk_policy)?;
+                live_policy::replace(kernel_handle(&disk_policy), &current, previous)?;
+            }
+            device.revalidate_exact()?;
+        }
         if crate::safe_device_acl_restore(
             &record.instance,
             &record.serial,
@@ -626,8 +668,9 @@ pub(crate) fn restore() -> Result<(), NativeError> {
                 {
                     return Err(NativeError::DeviceRemoved);
                 }
-                let current = current_device_policy(kernel_handle(&volume.handle))?;
+                let current = live_policy::read(kernel_handle(&volume.handle))?;
                 let mut effective = effective.clone();
+                effective.previous = live_policy::canonical(&effective.previous)?;
                 effective.installed = live_policy::canonical(&effective.installed)?;
                 if let Some(previous) = effective.restore_target(&current) {
                     live_policy::replace(kernel_handle(&volume.handle), &current, previous)?;
@@ -668,9 +711,47 @@ pub(crate) fn restore() -> Result<(), NativeError> {
     Ok(())
 }
 
+/// Opens ACL authority only after positive RDX identity and rebinds both handles.
+/// The disk number comes from the retained exact SetupAPI proof, never an IPC path.
+fn disk_policy_handle(device: &NativeDevice) -> Result<KernelHandle, NativeError> {
+    device.revalidate_exact()?;
+    let path = wide_null(OsStr::new(&format!(
+        r"\\.\PhysicalDrive{}",
+        device.identity.disk_number()
+    )));
+    let handle = open_path(
+        &path,
+        READ_CONTROL.0 | windows::Win32::Storage::FileSystem::WRITE_DAC.0,
+    )?;
+    revalidate_present_identity(&device.identity, &handle)?;
+    device.revalidate_exact()?;
+    Ok(handle)
+}
+
 #[cfg(test)]
 mod privilege_journal_tests {
     use super::*;
+
+    /// Older device journals remain readable and live restoration evidence round trips.
+    #[test]
+    fn physical_device_live_policy_preserves_legacy_and_original_evidence() {
+        let mut record: DevicePolicy = serde_json::from_str(r#"{"instance":"fixture","serial":"123","previous":null,"installed":"registry-grant","volumes":[]}"#).unwrap();
+        assert!(record.effective.is_none());
+        record.effective = Some(
+            crate::effective_volume_policy::EffectiveVolumePolicy::plan(
+                None,
+                "original".into(),
+                |_| Ok("live-grant".into()),
+            )
+            .unwrap(),
+        );
+        let repaired: DevicePolicy =
+            serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
+        let policy = repaired.effective.unwrap();
+        assert_eq!(policy.previous, "original");
+        assert_eq!(policy.restore_target("live-grant"), Some("original"));
+        assert_eq!(policy.restore_target("administrator-change"), None);
+    }
 
     /// Legacy journals mean unrecorded, never an inferred pre-existing privilege.
     #[test]

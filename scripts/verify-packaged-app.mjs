@@ -113,16 +113,18 @@ async function verifyPackagedApplication() {
     const requireService = process.argv.includes('--require-service')
     const requireDevice = process.argv.includes('--require-device')
     const expectedDevice = process.argv.find((argument) => argument.startsWith('--expected-device-id='))
+    const expectedFirmware = process.argv.find((argument) => argument.startsWith('--expected-firmware-revision='))
     if (requireService && !installed) throw new Error('service-acceptance-requires-installed-runtime')
     if (requireDevice && (!installed || !requireService)) throw new Error('device-acceptance-requires-installed-service')
     if (expectedDevice && !requireDevice) throw new Error('device-target-requires-device-acceptance')
+    if (expectedFirmware && (!requireDevice || !expectedDevice)) throw new Error('firmware-target-requires-exact-device-acceptance')
     const executable = resolvePackagedExecutable({ installed })
     if (process.platform !== 'linux') await verifyPackagedElectronFuses(executable)
     const environment = { ...process.env }
     delete environment.ELECTRON_RUN_AS_NODE
     await withPackagedSmokeProfile(
         async (profile) => {
-            const result = await execute(executable, [requireDevice ? '--service-scan-test' : requireService ? '--service-auth-test' : '--smoke-test', ...(expectedDevice ? [expectedDevice] : []), `--user-data-dir=${profile}`], { env: environment, timeout: resolvePackagedSmokeProcessTimeout({ platform: process.platform, installed, requireService }), maxBuffer: 8 * 1024 * 1024, windowsHide: true })
+            const result = await execute(executable, [requireDevice ? '--service-scan-test' : requireService ? '--service-auth-test' : '--smoke-test', ...(expectedDevice ? [expectedDevice] : []), ...(expectedFirmware ? [expectedFirmware] : []), `--user-data-dir=${profile}`], { env: environment, timeout: resolvePackagedSmokeProcessTimeout({ platform: process.platform, installed, requireService }), maxBuffer: 8 * 1024 * 1024, windowsHide: true })
             const output = `${result.stdout}${result.stderr}`
             if (!output.includes('OpenRDXManager smoke test passed: renderer=mounted')) throw new Error(`packaged-smoke-marker-missing: ${output}`)
             if (requireService && !output.includes(`OpenRDXManager installed service authentication passed: platform=${process.platform}`)) throw new Error(`installed-service-authentication-marker-missing: ${output}`)

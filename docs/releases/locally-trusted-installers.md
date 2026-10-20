@@ -5,6 +5,8 @@ Windows setup now journals and enrolls `SeManageVolumePrivilege` for the fixed `
 
 Windows removal now retains the protected enrollment parent, historical authority and runtime files without retaining a conflicting read lease on the journal directory itself. This allows its atomic restoration journal update to complete during removal or upgrade. Runtime/history replacement and namespace replacement remain refused.
 
+Windows Repair now journals and activates the exact live physical dock's service permissions as well as its persistent device policy. This supports access recovery when a firmware revision creates a new Windows device instance. Recovery still requires administrator-approved Repair and positive dock identity; it does not repeat firmware transfer. Installed-device acceptance can also require the expected reported firmware revision on the exact selected dock.
+
 Mounted Windows cartridges now use an independently verified volume-root filesystem query when a metadata-only volume handle does not support that query. This fixes cartridge scans rejected as `candidate-host-facts-failed` while preserving RAW-media and failure checks.
 
 Cartridges inserted after Windows setup no longer need raw volume write access merely to appear in discovery. Read-only metadata queries retain exact disk/volume topology and mount checks; mutating operations keep their existing separately checked read/write volume leases. Windows setup now explicitly explains reconnecting the dock to activate its per-instance permissions.
@@ -18,7 +20,7 @@ Windows and macOS installers now include an administrator-approved local install
 Choose the package matching your operating system and processor:
 
 - **macOS:** PKG, also supplied inside the DMG, for Apple silicon (ARM64) or Intel (x64). Run the installer and open the installed app from Applications. The ZIP is a portable app without hardware-service setup.
-- **Windows:** EXE installer for ARM64 or x64. Connect the RDX dock during setup. After setup finishes, click **Retry service** if the app still shows a service error. Unplug and reconnect the dock after first-time setup, then scan again if needed. Keep a virtual machine’s dock assigned to that same virtual machine. The ZIP is a portable app without hardware-service setup.
+- **Windows:** EXE installer for ARM64 or x64. Connect the RDX dock during setup. After setup finishes, click **Retry service** if the app still shows a service error. Scan again after setup if needed. Keep a virtual machine’s dock assigned to that same virtual machine. The ZIP is a portable app without hardware-service setup.
 - **Linux:** DEB, AppImage or TAR.GZ for ARM64 or x64. The DEB supplies the system service; an administrator must add the intended desktop user to the `openrdx` group and the user must sign out/in.
 
 Unsigned-download warnings may remain. Approve only an installer from a source you trust. Local installation does not add a certificate authority to the computer. `SHA256SUMS.txt` lists all installer checksums.

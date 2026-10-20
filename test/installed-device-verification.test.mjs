@@ -7,6 +7,16 @@ import { assertInstalledDeviceDiscovery } from '../src/main/installed-device-ver
 
 const readiness = { status: 'ready', mode: 'native', privileged: true, hardwareReady: true }
 
+test('firmware acceptance requires the reported revision on the exact selected dock', () => {
+    const device = { id: 'rdx:selected', drive: { details: { firmwareRevision: { availability: 'reported', value: '0111' } } } }
+    const inventory = { ok: true, devices: [device] }
+    assert.equal(assertInstalledDeviceDiscovery(readiness, inventory, device.id, '0111'), 1)
+    assert.throws(() => assertInstalledDeviceDiscovery(readiness, inventory, device.id, '0110'), /installed-firmware-revision-mismatch/u)
+    assert.throws(() => assertInstalledDeviceDiscovery(readiness, inventory, undefined, '0111'), /installed-firmware-target-invalid/u)
+    assert.throws(() => assertInstalledDeviceDiscovery(readiness, { ok: true, devices: [{ id: device.id }] }, device.id, '0111'), /installed-firmware-revision-mismatch/u)
+    assert.throws(() => assertInstalledDeviceDiscovery(readiness, { ok: true, devices: [{ id: device.id }, { ...device, id: 'rdx:other' }] }, device.id, '0111'), /installed-firmware-revision-mismatch/u)
+})
+
 test('installed device acceptance rejects empty discovery despite authenticated hardware capability', () => {
     for (const result of [undefined, { ok: false }, { ok: true, devices: [] }]) assert.throws(() => assertInstalledDeviceDiscovery(readiness, result), /installed-device-discovery-empty/u)
 })
