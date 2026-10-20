@@ -21,6 +21,9 @@ pub(crate) struct VolumePolicy {
     pub(crate) previous: Option<String>,
     /// Exact descriptor installed by this setup transaction.
     pub(crate) installed: String,
+    /// Original and installed live DACL, absent in older installer journals.
+    #[cfg_attr(windows, serde(default))]
+    pub(crate) effective: Option<crate::effective_volume_policy::EffectiveVolumePolicy>,
 }
 
 /// Read-only evidence collected before planning any journal or permission write.
@@ -49,6 +52,9 @@ pub(crate) fn validate_volume_policies(policies: &[VolumePolicy]) -> Result<(), 
     }
     let mut seen = BTreeSet::new();
     for policy in policies {
+        if let Some(effective) = &policy.effective {
+            effective.validate()?;
+        }
         if policy.instance.is_empty()
             || policy.instance.len() > 201
             || policy.topology.is_empty()
@@ -113,6 +119,7 @@ pub(crate) fn plan_volume_policies(
                 topology: current.topology.clone(),
                 previous: current.current.clone(),
                 installed: build_installed(index)?,
+                effective: None,
             });
         }
     }
@@ -131,6 +138,7 @@ mod tests {
             topology: "old-geometry".to_owned(),
             previous: None,
             installed: "system-and-fixed-service".to_owned(),
+            effective: None,
         }
     }
 

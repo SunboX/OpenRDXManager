@@ -32,6 +32,8 @@ mod scsi_request;
 mod volume_access;
 pub use device_access::{rdx_permission_identity, safe_device_acl_repair, safe_device_acl_restore};
 mod drive_letter_policy;
+#[cfg(any(windows, test))]
+mod effective_volume_policy;
 mod endpoint;
 #[cfg(any(windows, test))]
 mod filesystem_facts;

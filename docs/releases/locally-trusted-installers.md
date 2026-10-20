@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: 2026 André Fiedler -->
 <!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
 
-Windows setup now journals and enrolls `SeManageVolumePrivilege` for the fixed `NT SERVICE\OpenRDXHardwareService` identity. The service enables it only on a temporary thread token while opening mutation volume handles, locking or dismounting; metadata discovery does not enable it. This addresses the missing filesystem privilege behind safe-eject failures during Host Unmounting. Setup preserves a pre-existing grant, and removal revokes only a grant introduced by this installation. Device identity, exact topology, read/write access and exclusive-lock checks remain required.
+Windows setup now journals and enrolls `SeManageVolumePrivilege` for the fixed `NT SERVICE\OpenRDXHardwareService` identity. The service enables it only on a temporary thread token while opening mutation volume handles, locking or dismounting; metadata discovery does not enable it. Setup also journals, applies and reads back the exact live cartridge volume device DACL: the persistent device registry property alone can leave an already mounted NTFS volume inaccessible to the service. Both are required to address safe-eject failures during Host Unmounting. Setup preserves a pre-existing privilege grant, removal revokes only its own grant, and live volume restoration preserves later administrator changes. Device identity, exact topology, read/write access and exclusive-lock checks remain required.
 
 Mounted Windows cartridges now use an independently verified volume-root filesystem query when a metadata-only volume handle does not support that query. This fixes cartridge scans rejected as `candidate-host-facts-failed` while preserving RAW-media and failure checks.
 

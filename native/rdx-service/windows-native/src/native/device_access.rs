@@ -25,6 +25,7 @@ use windows::Win32::Security::Authorization::{
 use windows::Win32::Security::*;
 use windows::Win32::Storage::FileSystem::READ_CONTROL;
 use windows::core::PWSTR;
+mod live_policy;
 
 const RECORD: &str = "device-access.json";
 const SERVICE_ACCOUNT: &str = "NT SERVICE\\OpenRDXHardwareService";
@@ -459,6 +460,22 @@ pub(crate) fn provision(_administrator_sid: &str) -> Result<(), NativeError> {
             grant_service(&effective)
         })?;
         records.devices[index].volumes = planned;
+        // Registry properties affect future PnP generations, not necessarily the
+        // live NTFS volume object. Journal its independent DACL before updating it.
+        for volume in &mapped {
+            let recorded = records.devices[index]
+                .volumes
+                .iter_mut()
+                .find(|v| {
+                    v.instance == volume.instance && v.topology == topology_key(&volume.topology)
+                })
+                .ok_or(NativeError::EvidenceIncomplete)?;
+            recorded.effective = Some(crate::effective_volume_policy::EffectiveVolumePolicy::plan(
+                recorded.effective.as_ref(),
+                current_device_policy(kernel_handle(&volume.handle))?,
+                grant_service,
+            )?);
+        }
         // Initial installation and Repair share the same write-ahead boundary.
         // Absent volumes stay recorded; newly ready cartridges are added here.
         write_records(&records)?;
@@ -505,10 +522,27 @@ pub(crate) fn provision(_administrator_sid: &str) -> Result<(), NativeError> {
             {
                 return Err(NativeError::AccessDenied);
             }
+            device.revalidate_exact()?;
+            if super::volumes::volume_topology(kernel_handle(&volume.handle))? != volume.topology {
+                return Err(NativeError::DeviceRemoved);
+            }
+            let effective = recorded
+                .effective
+                .as_ref()
+                .ok_or(NativeError::EvidenceIncomplete)?;
+            let current = current_device_policy(kernel_handle(&volume.handle))?;
+            if current != effective.previous && current != effective.installed {
+                return Err(NativeError::AccessDenied);
+            }
+            live_policy::replace(
+                kernel_handle(&volume.handle),
+                &current,
+                &effective.installed,
+            )?;
         }
         device.revalidate_exact()?;
         eprintln!(
-            "OpenRDX device permission enrolled: reconnect/restart the device and run Repair; effective disk and volume access remain unverified"
+            "OpenRDX device permission enrolled: live target volume permissions verified; installed service scan still required"
         );
     }
     Ok(())
@@ -563,6 +597,18 @@ pub(crate) fn restore() -> Result<(), NativeError> {
             }) else {
                 continue;
             };
+            if let Some(effective) = &recorded.effective {
+                device.revalidate_exact()?;
+                if super::volumes::volume_topology(kernel_handle(&volume.handle))?
+                    != volume.topology
+                {
+                    return Err(NativeError::DeviceRemoved);
+                }
+                let current = current_device_policy(kernel_handle(&volume.handle))?;
+                if let Some(previous) = effective.restore_target(&current) {
+                    live_policy::replace(kernel_handle(&volume.handle), &current, previous)?;
+                }
+            }
             if instance_policy(&volume_set, &volume.info)?.as_deref()
                 == Some(recorded.installed.as_str())
             {
@@ -707,7 +753,10 @@ fn mapped_volumes(set: &DeviceInfoSet, disk_number: u32) -> Result<Vec<MappedVol
             // Only a verified target needs ACL-query rights. Re-prove its exact
             // topology and instance across the new handle; unrelated volumes keep
             // the zero-access metadata query used by strict classification.
-            let policy_handle = open_path(&path, READ_CONTROL.0)?;
+            let policy_handle = open_path(
+                &path,
+                READ_CONTROL.0 | windows::Win32::Storage::FileSystem::WRITE_DAC.0,
+            )?;
             if super::volumes::volume_topology(kernel_handle(&policy_handle))? != topology
                 || device_instance_id(set, &info)? != instance
             {

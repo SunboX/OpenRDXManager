@@ -24,6 +24,8 @@ Available actions depend on the operating system, service privileges, dock firmw
 
 On Windows, setup grants the volume-maintenance privilege to `NT SERVICE\OpenRDXHardwareService`, not to the shared LocalService account. The service enables it on a temporary thread token for mutation-volume opens, locks and dismounts. This is separate from the dock's device permissions and is needed for safe eject of a mounted cartridge. Setup records the prior grant so removal can preserve existing administrator policy. See [Microsoft's filesystem privilege documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/privileges).
 
+With a cartridge inserted, Windows setup also applies and verifies the service's read/write grant on the exact live volume device. The persistent device-instance registry policy alone does not update an already mounted NTFS volume. Setup journals the original live permissions before changing them; removal restores only a matching installer-owned grant and preserves later administrator changes. Keep the cartridge inserted during Repair so setup can enroll its volume.
+
 ## Repair and update
 
 Use the installer again to update an installed app. Replacing or editing its files manually can disable hardware access; the app will show installation or repair guidance. Close OpenRDXManager after all device operations have finished before running an update or repair. Keep backups and user settings outside the installation folder.
