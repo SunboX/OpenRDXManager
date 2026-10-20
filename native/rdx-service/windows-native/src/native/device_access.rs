@@ -347,22 +347,41 @@ fn read_records() -> Result<PreviousPolicy, NativeError> {
     Ok(records)
 }
 /// Durably records exact prior policy before touching a device permission.
-fn write_records(records: &PreviousPolicy, _administrator_sid: &str) -> Result<(), NativeError> {
+fn write_records(records: &PreviousPolicy) -> Result<(), NativeError> {
     let bytes = serde_json::to_vec(records).map_err(|_| NativeError::Other)?;
     crate::local_trust::windows::write_device_policy(&bytes)
 }
+struct VolumeRightJournal<'a>(&'a mut PreviousPolicy);
+impl crate::volume_privilege::journal::PrivilegeJournal for VolumeRightJournal<'_> {
+    /// Reads this installation's protected original privilege ownership.
+    fn previous(&self) -> Option<bool> {
+        self.0.previous_volume_maintenance_right
+    }
+    /// Reads only the compiled service SID's current volume-maintenance right.
+    fn current(&self) -> Result<bool, NativeError> {
+        crate::volume_privilege::has_service_right()
+    }
+    /// Publishes the complete protected journal before advancing in-memory ownership.
+    fn store(&mut self, previous: Option<bool>) -> Result<(), NativeError> {
+        let original = self.0.previous_volume_maintenance_right;
+        self.0.previous_volume_maintenance_right = previous;
+        if let Err(error) = write_records(self.0) {
+            self.0.previous_volume_maintenance_right = original;
+            return Err(error);
+        }
+        Ok(())
+    }
+    /// Changes only the fixed service-specific right through the closed LSA adapter.
+    fn set(&mut self, present: bool) -> Result<(), NativeError> {
+        crate::volume_privilege::set_service_right(present)
+    }
+}
 /// Enrolls only positively identified RDX instances, preserving prior policy for safe removal.
 /// Effective permissions require driver restart/physical acceptance; no LocalSystem fallback.
-pub(crate) fn provision(administrator_sid: &str) -> Result<(), NativeError> {
+pub(crate) fn provision(_administrator_sid: &str) -> Result<(), NativeError> {
     let set = open_device_info_set()?;
     let mut records = read_records()?;
-    if records.previous_volume_maintenance_right.is_none() {
-        records.previous_volume_maintenance_right =
-            Some(crate::volume_privilege::has_service_right()?);
-        // Write-ahead ownership survives failed installation and subsequent Repair.
-        write_records(&records, administrator_sid)?;
-    }
-    crate::volume_privilege::set_service_right(true)?;
+    crate::volume_privilege::journal::enroll(&mut VolumeRightJournal(&mut records))?;
     for candidate in enumerate_disk_candidates()? {
         let Some(mut device) = crate::device_access::permission_probe_result(
             &candidate.instance_id,
@@ -442,7 +461,7 @@ pub(crate) fn provision(administrator_sid: &str) -> Result<(), NativeError> {
         records.devices[index].volumes = planned;
         // Initial installation and Repair share the same write-ahead boundary.
         // Absent volumes stay recorded; newly ready cartridges are added here.
-        write_records(&records, administrator_sid)?;
+        write_records(&records)?;
         let recorded_device = &records.devices[index];
         device.revalidate_exact()?;
         let current = instance_policy(&set, &info)?;
@@ -496,7 +515,7 @@ pub(crate) fn provision(administrator_sid: &str) -> Result<(), NativeError> {
 }
 /// Restores only still-matching recorded device policy; preserves foreign/admin changes.
 pub(crate) fn restore() -> Result<(), NativeError> {
-    let records = read_records()?;
+    let mut records = read_records()?;
     let set = open_device_info_set()?;
     for candidate in enumerate_disk_candidates()? {
         let Some(record) = records
@@ -567,11 +586,7 @@ pub(crate) fn restore() -> Result<(), NativeError> {
     }
     // Disconnected device records remain protected for later administrator repair;
     // removal does not invent a device instance or overwrite another policy.
-    if records.previous_volume_maintenance_right == Some(false)
-        && crate::volume_privilege::has_service_right()?
-    {
-        crate::volume_privilege::set_service_right(false)?;
-    }
+    crate::volume_privilege::journal::restore(&mut VolumeRightJournal(&mut records))?;
     Ok(())
 }
 
