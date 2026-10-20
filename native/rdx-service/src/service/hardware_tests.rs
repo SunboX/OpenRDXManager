@@ -721,9 +721,11 @@ fn production_backend_dispatches_self_and_led_diagnostics() {
             .unwrap();
         backend.release_operation(&operation_id).unwrap();
         let terminal = (0..4).find_map(|_| {
-            // The original LED sequence remains active for 7.8 seconds before restoration.
+            // The original sequence sleeps for at least 7.8 seconds. Shared CI
+            // runners can oversleep its 26 ticks; this bounds event observation,
+            // not protocol timing (checked deterministically in diagnostics.rs).
             let event = receiver
-                .recv_timeout(Duration::from_secs(10))
+                .recv_timeout(Duration::from_secs(30))
                 .unwrap()
                 .event;
             matches!(
