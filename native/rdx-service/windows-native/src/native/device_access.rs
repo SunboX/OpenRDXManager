@@ -470,10 +470,16 @@ pub(crate) fn provision(_administrator_sid: &str) -> Result<(), NativeError> {
                     v.instance == volume.instance && v.topology == topology_key(&volume.topology)
                 })
                 .ok_or(NativeError::EvidenceIncomplete)?;
+            if let Some(effective) = &mut recorded.effective {
+                // Earlier setup journals retained generic masks, whereas Windows
+                // stores expanded file rights on live volume objects. Migrate only
+                // that representation before the same exact foreign-policy check.
+                effective.installed = live_policy::canonical(&effective.installed)?;
+            }
             recorded.effective = Some(crate::effective_volume_policy::EffectiveVolumePolicy::plan(
                 recorded.effective.as_ref(),
                 current_device_policy(kernel_handle(&volume.handle))?,
-                grant_service,
+                live_policy::grant,
             )?);
         }
         // Initial installation and Repair share the same write-ahead boundary.
@@ -621,6 +627,8 @@ pub(crate) fn restore() -> Result<(), NativeError> {
                     return Err(NativeError::DeviceRemoved);
                 }
                 let current = current_device_policy(kernel_handle(&volume.handle))?;
+                let mut effective = effective.clone();
+                effective.installed = live_policy::canonical(&effective.installed)?;
                 if let Some(previous) = effective.restore_target(&current) {
                     live_policy::replace(kernel_handle(&volume.handle), &current, previous)?;
                 }
