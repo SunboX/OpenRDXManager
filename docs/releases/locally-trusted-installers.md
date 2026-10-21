@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: 2026 André Fiedler -->
 <!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
 
+Version 1.0.4 keeps the Windows Manager hidden while setup validates and enrolls its active user. After native installation and verification succeed, Manager starts its normal authenticated service connection before opening the window. Failed setup does not open a premature service-recovery window. This changes startup ordering; it does not resolve the separately reported `device-access / AccessDenied` installation failure or establish physical dock acceptance.
+
 Windows setup now journals and enrolls `SeManageVolumePrivilege` for the fixed `NT SERVICE\OpenRDXHardwareService` identity. The service enables it only on a temporary thread token while opening mutation volume handles, locking or dismounting; metadata discovery does not enable it. Setup also journals, applies and reads back the exact live cartridge volume device DACL: the persistent device registry property alone can leave an already mounted NTFS volume inaccessible to the service. Both are required to address safe-eject failures during Host Unmounting. Setup preserves a pre-existing privilege grant, removal revokes only its own grant, and live volume restoration preserves later administrator changes. Device identity, exact topology, read/write access and exclusive-lock checks remain required.
 
 Windows removal now retains the protected enrollment parent, historical authority and runtime files without retaining a conflicting read lease on the journal directory itself. This allows its atomic restoration journal update to complete during removal or upgrade. Runtime/history replacement and namespace replacement remain refused.

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { readFileSync } from 'node:fs'
+import { waitForInstallerResult } from './main/installer-startup.mjs'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { pathToFileURL, fileURLToPath } from 'node:url'
@@ -392,6 +393,10 @@ async function start() {
         void observeEarlySmokeFailure()
     }
     await app.whenReady()
+    if (process.platform === 'win32' && isPackagedRuntime) {
+        const resultFile = process.argv.find((argument) => argument.startsWith('--installer-result-file='))?.slice('--installer-result-file='.length)
+        if (resultFile !== undefined) await waitForInstallerResult(resultFile)
+    }
     // Hidden title bars need an explicit native menu in non-default-app launches.
     if (Menu.getApplicationMenu() === null) {
         Menu.setApplicationMenu(Menu.buildFromTemplate([...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []), { role: 'fileMenu' }, { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' }]))

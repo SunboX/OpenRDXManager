@@ -285,6 +285,9 @@ ${StrStr}
     SetDetailsView show
     MessageBox MB_ICONSTOP "$R7"
   ${EndIf}
+  FileOpen $R8 "$PLUGINSDIR\manager-setup-result" w
+  FileWrite $R8 "failed"
+  FileClose $R8
   SetErrorLevel 3
   Abort
 !macroend
@@ -326,10 +329,22 @@ ${StrStr}
 !macroend
 
 !macro customInstall
+  ; Only the acknowledgment file is user-writable; completion stays administrator-owned.
+  FileOpen $R8 "$PLUGINSDIR\manager-setup-result.ack" w
+  FileClose $R8
+  System::Call 'advapi32::ConvertStringSecurityDescriptorToSecurityDescriptorW(w "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFW;;;BU)", i 1, *p .r0, p 0)i .r1'
+  ${If} $1 == 0
+    !insertmacro OpenRDXFail "launch-signal" "$1" "OpenRDX setup could not prepare launch synchronization."
+  ${EndIf}
+  System::Call 'advapi32::SetFileSecurityW(w "$PLUGINSDIR\manager-setup-result.ack", i 0x80000004, p r0)i .r1'
+  System::Call 'kernel32::LocalFree(p r0)p .r0'
+  ${If} $1 == 0
+    !insertmacro OpenRDXFail "launch-signal" "$1" "OpenRDX setup could not protect launch synchronization."
+  ${EndIf}
   ; Requests Explorer user launch; StdUtils fallback may retain elevation.
   ; Native token/session/principal checks decide whether Manager can be enrolled.
   ; https://muldersoft.com/docs/stdutils_readme.html
-  ${StdUtils.ExecShellAsUser} $0 "${OPENRDX_FIXED_ROOT}\OpenRDXManager.exe" "open" ""
+  ${StdUtils.ExecShellAsUser} $0 "${OPENRDX_FIXED_ROOT}\OpenRDXManager.exe" "open" '--installer-result-file=$\"$PLUGINSDIR\manager-setup-result$\"'
   !insertmacro OpenRDXSanitizeLaunchResult "$0" $R4
   !insertmacro OpenRDXWriteDiagnostic "OpenRDX Manager launch: result=$R4"
   ${If} $0 != "ok"
@@ -364,6 +379,28 @@ ${StrStr}
   ${If} $0 != 0
     !insertmacro OpenRDXNativeFail "verify" "OpenRDX installed trust verification failed. Run the installer again with the installed Manager open."
   ${EndIf}
+  ; This signal only releases UI startup; native authentication remains mandatory.
+  FileOpen $R8 "$PLUGINSDIR\manager-setup-result" w
+  FileWrite $R8 "ready"
+  FileClose $R8
+  ; Keep the signal alive through silent-installer cleanup until Manager reads it.
+  StrCpy $R3 0
+  openrdx_manager_signal_wait:
+    ClearErrors
+    FileOpen $R8 "$PLUGINSDIR\manager-setup-result.ack" r
+    FileRead $R8 $R9
+    FileClose $R8
+    ${If} $R9 == "received"
+      Goto openrdx_manager_signal_done
+    ${EndIf}
+    IntOp $R3 $R3 + 1
+    ${If} $R3 < 40
+      Sleep 250
+      Goto openrdx_manager_signal_wait
+    ${EndIf}
+  openrdx_manager_signal_done:
+  ; Empty acknowledgment reads set NSIS EOF; do not leak that flag to the framework.
+  ClearErrors
 !macroend
 
 !macro OpenRDXPrepareRemoval
